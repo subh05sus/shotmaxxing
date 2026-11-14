@@ -16,6 +16,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tiny-skia = "0.11"
+gif = "0.13"
+color_quant = "1.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"

@@ -12,6 +12,7 @@ mod video;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::ptr::NonNull;
 
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
@@ -30,7 +31,7 @@ use self::video::VideoWriter;
 use crate::model::RenderProject;
 use crate::scene::{Frame, Layout, frame_at};
 use crate::sprites::{self, Palette, Sprite};
-use crate::{ExportOptions, Format, RenderError, wallpaper};
+use crate::{ExportOptions, Format, RenderError, animated, wallpaper};
 
 /// Line height of titles and keystrokes, as in the editor.
 const LINE_HEIGHT: f64 = 1.25;
@@ -358,58 +359,176 @@ fn remove_partial(temp: &Path) {
     }
 }
 
+/// Draws `image` into RGBA bytes, top row first.
+fn render_rgba(context: &CIContext, image: &CIImage, width: usize, height: usize, space: &CGColorSpace, out: &mut Vec<u8>) {
+    out.resize(width * height * 4, 0);
+    let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width as f64, height as f64));
+    // SAFETY: `out` holds exactly `height` rows of `width` RGBA pixels and outlives the call.
+    unsafe {
+        context.render_toBitmap_rowBytes_bounds_format_colorSpace(
+            image,
+            NonNull::new_unchecked(out.as_mut_ptr().cast()),
+            (width * 4) as isize,
+            bounds,
+            kCIFormatRGBA8,
+            Some(space),
+        );
+    }
+}
+
+/// Everything one export needs to draw its frames, in order.
+struct Job<'a> {
+    project: &'a RenderProject,
+    layout: Layout,
+    compositor: Compositor<'a>,
+    decoder: Decoder,
+    context: Retained<CIContext>,
+    fps: u32,
+    /// Frames in the exported video.
+    total: u64,
+    /// Where the recording ends, for a last frame that rounding pushes past the final clip.
+    last: f64,
+}
+
+impl<'a> Job<'a> {
+    fn new(project: &'a RenderProject, options: &ExportOptions) -> Result<Self, RenderError> {
+        let screen =
+            project.screen.as_ref().ok_or_else(|| RenderError::Project("there's no recording to export".into()))?;
+        let layout = Layout::new(project, options.width, options.height);
+        let fps = if options.format == Format::Gif { options.fps.clamp(1, 50) } else { options.fps.clamp(1, 120) };
+        Ok(Self {
+            project,
+            layout,
+            compositor: Compositor::new(project, layout)?,
+            decoder: Decoder::open(screen)?,
+            context: context(),
+            fps,
+            total: (project.output_duration() * f64::from(fps) - 1e-6).ceil().max(1.0) as u64,
+            last: project.clips.last().map_or(0.0, |c| (c.end - 1e-3).max(c.start)),
+        })
+    }
+
+    /// The moment of the recording that frame `i` shows.
+    fn time(&self, i: u64) -> f64 {
+        self.project.source_time(i as f64 / f64::from(self.fps)).unwrap_or(self.last)
+    }
+
+    /// Draws frame `i`. Frames must be asked for in order.
+    fn draw(&mut self, i: u64) -> Result<Retained<CIImage>, RenderError> {
+        let t = self.time(i);
+        let picture = self.decoder.frame_at(t)?.ok_or_else(|| system("the recording has no frames"))?;
+        let frame = frame_at(self.project, &self.layout, t);
+        Ok(self.compositor.compose(&frame, &picture))
+    }
+}
+
 pub fn export(
     project: &RenderProject,
     options: &ExportOptions,
     progress: &mut dyn FnMut(f64) -> bool,
 ) -> Result<(), RenderError> {
-    let screen = project.screen.as_ref().ok_or_else(|| RenderError::Project("there's no recording to export".into()))?;
-    if options.format == Format::Gif {
-        return Err(RenderError::Unsupported);
-    }
-    let (width, height) = (options.width as usize, options.height as usize);
-    let layout = Layout::new(project, options.width, options.height);
-    let mut compositor = Compositor::new(project, layout)?;
-    let mut decoder = Decoder::open(screen)?;
-    let context = context();
-    let fps = options.fps.clamp(1, 120);
-    let total = (project.output_duration() * f64::from(fps) - 1e-6).ceil().max(1.0) as u64;
-    let last = project.clips.last().map_or(0.0, |c| (c.end - 1e-3).max(c.start));
     let temp = partial(&options.output);
-
     let started = std::time::Instant::now();
-    let mut writer = VideoWriter::new(&temp, width, height, fps, options.format, options.bitrate)?;
-    let result = (|| {
-        for i in 0..total {
-            if !progress(i as f64 / total as f64) {
-                return Err(RenderError::Cancelled);
-            }
-            let t = project.source_time(i as f64 / f64::from(fps)).unwrap_or(last);
-            autoreleasepool(|_| -> Result<(), RenderError> {
-                let picture = decoder.frame_at(t)?.ok_or_else(|| system("the recording has no frames"))?;
-                let frame = frame_at(project, &layout, t);
-                let image = compositor.compose(&frame, &picture);
-                writer.write(&context, &image, &compositor.space)
-            })?;
-        }
-        Ok(())
-    })();
+    let result = match options.format {
+        Format::Gif => export_gif(project, options, &temp, progress),
+        Format::H264 | Format::Hevc => export_video(project, options, &temp, progress),
+    };
     match result {
-        Ok(()) => {
-            if let Err(error) = writer.finish() {
-                remove_partial(&temp);
-                return Err(error);
-            }
+        Ok(frames) => {
             std::fs::rename(&temp, &options.output)?;
             remove_partial(&temp);
-            tracing::info!(frames = total, seconds = started.elapsed().as_secs_f64(), "exported {width}×{height}");
+            let seconds = started.elapsed().as_secs_f64();
+            tracing::info!(frames, seconds, "exported {}×{}", options.width, options.height);
             progress(1.0);
             Ok(())
         }
         Err(error) => {
-            writer.cancel();
             remove_partial(&temp);
             Err(error)
         }
     }
+}
+
+fn export_video(
+    project: &RenderProject,
+    options: &ExportOptions,
+    temp: &Path,
+    progress: &mut dyn FnMut(f64) -> bool,
+) -> Result<u64, RenderError> {
+    let mut job = Job::new(project, options)?;
+    let (width, height) = (options.width as usize, options.height as usize);
+    let mut writer = VideoWriter::new(temp, width, height, job.fps, options.format, options.bitrate)?;
+    let drawn = (|| {
+        for i in 0..job.total {
+            if !progress(i as f64 / job.total as f64) {
+                return Err(RenderError::Cancelled);
+            }
+            autoreleasepool(|_| -> Result<(), RenderError> {
+                let image = job.draw(i)?;
+                writer.write(&job.context, &image, &job.compositor.space)
+            })?;
+        }
+        Ok(())
+    })();
+    match drawn {
+        Ok(()) => writer.finish().map(|()| job.total),
+        Err(error) => {
+            writer.cancel();
+            Err(error)
+        }
+    }
+}
+
+/// Frames sampled across the clip to learn a GIF's palette from.
+const PALETTE_SAMPLES: u64 = 16;
+
+fn export_gif(
+    project: &RenderProject,
+    options: &ExportOptions,
+    temp: &Path,
+    progress: &mut dyn FnMut(f64) -> bool,
+) -> Result<u64, RenderError> {
+    let (width, height) = (options.width as usize, options.height as usize);
+    if width > usize::from(u16::MAX) || height > usize::from(u16::MAX) {
+        return Err(RenderError::Project("that's too large for a GIF".into()));
+    }
+    let mut rgba = Vec::new();
+
+    // A first, quick pass over a few frames finds the colours the whole clip needs.
+    let mut sampler = Job::new(project, options)?;
+    let count = PALETTE_SAMPLES.min(sampler.total);
+    let mut samples = Vec::new();
+    for k in 0..count {
+        if !progress(0.08 * k as f64 / count as f64) {
+            return Err(RenderError::Cancelled);
+        }
+        autoreleasepool(|_| -> Result<(), RenderError> {
+            let image = sampler.draw(k * sampler.total / count)?;
+            render_rgba(&sampler.context, &image, width, height, &sampler.compositor.space, &mut rgba);
+            // Every other row is plenty to learn colours from.
+            for row in rgba.chunks_exact(width * 4).step_by(2) {
+                samples.extend_from_slice(row);
+            }
+            Ok(())
+        })?;
+    }
+    drop(sampler);
+
+    let mut job = Job::new(project, options)?;
+    let file = std::io::BufWriter::new(std::fs::File::create(temp)?);
+    let mut writer = animated::GifWriter::new(file, width as u16, height as u16, job.fps, &samples)?;
+    drop(samples);
+    for i in 0..job.total {
+        if !progress(0.08 + 0.92 * i as f64 / job.total as f64) {
+            return Err(RenderError::Cancelled);
+        }
+        autoreleasepool(|_| -> Result<(), RenderError> {
+            let image = job.draw(i)?;
+            render_rgba(&job.context, &image, width, height, &job.compositor.space, &mut rgba);
+            writer.write(&rgba)
+        })?;
+    }
+    let mut file = writer.finish()?;
+    std::io::Write::flush(&mut file)?;
+    Ok(job.total)
 }

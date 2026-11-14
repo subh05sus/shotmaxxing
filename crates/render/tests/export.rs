@@ -158,6 +158,27 @@ fn exports_every_frame_at_the_right_size() {
 }
 
 #[test]
+fn exports_a_looping_gif() {
+    if !has_ffmpeg() {
+        eprintln!("skipped: ffmpeg isn't installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = make_project(dir.path());
+    let output = dir.path().join("Export test.gif");
+    let options =
+        ExportOptions { width: 640, height: 400, fps: 15, format: Format::Gif, bitrate: 0.0, output: output.clone() };
+    export(&root, &options, &mut |_| true).unwrap();
+    let bytes = std::fs::read(&output).unwrap();
+    assert_eq!(&bytes[..6], b"GIF89a");
+    // 3.6 seconds at 15 fps.
+    assert_eq!(probe(&output), Some((640, 400, 54)));
+    if let Ok(keep) = std::env::var("SHOTMAXXING_KEEP_EXPORT") {
+        std::fs::copy(&output, Path::new(&keep).join("export-test.gif")).unwrap();
+    }
+}
+
+#[test]
 fn cancelling_leaves_nothing_behind() {
     if !has_ffmpeg() {
         eprintln!("skipped: ffmpeg isn't installed");

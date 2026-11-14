@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+mod animated;
 mod model;
 pub mod scene;
 mod sprites;
