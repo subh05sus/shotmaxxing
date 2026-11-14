@@ -105,7 +105,8 @@ fn run<R: Runtime>(
         Some(folder) => expand_home(folder, home.as_deref()),
         None => project.parent().map(Path::to_path_buf).ok_or("this project isn't in a folder")?,
     };
-    std::fs::create_dir_all(&folder).map_err(|e| format!("couldn't make the folder {}: {e}", folder.display()))?;
+    std::fs::create_dir_all(&folder)
+        .map_err(|e| format!("couldn't make the folder {}: {e}", folder.display()))?;
     let ext = if request.format == Format::Gif { "gif" } else { "mp4" };
     let output = unique_path(&folder, &sanitize_file_name(&request.name), ext);
     let options = ExportOptions {

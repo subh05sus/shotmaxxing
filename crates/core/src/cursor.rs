@@ -27,7 +27,11 @@ pub struct PathSettings {
 
 /// The cursor path as drawn: smoothed, snapped onto clicks, eased back to its start when looping, and thinned to 60
 /// samples a second. The editor's preview and the exporter both draw from this path, so they always agree.
-pub fn render_path(samples: &[CursorSample], events: &[InputEvent], settings: PathSettings) -> Vec<CursorSample> {
+pub fn render_path(
+    samples: &[CursorSample],
+    events: &[InputEvent],
+    settings: PathSettings,
+) -> Vec<CursorSample> {
     let mut path = smooth(samples, settings.smoothing);
     if settings.snap_to_clicks {
         snap_to_clicks(&mut path, events);

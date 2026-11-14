@@ -8,7 +8,8 @@ fn main() {
     let width: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(640);
     let height: u32 = args.next().and_then(|a| a.parse().ok()).unwrap_or(360);
     for w in shotmaxxing_render::wallpaper::wallpapers() {
-        let pixels = shotmaxxing_render::wallpaper::rasterize(&w.css, width, height).expect("a built-in wallpaper");
+        let pixels =
+            shotmaxxing_render::wallpaper::rasterize(&w.css, width, height).expect("a built-in wallpaper");
         let size = tiny_skia::IntSize::from_wh(width, height).expect("a valid size");
         let pixmap = tiny_skia::Pixmap::from_vec(pixels, size).expect("pixels of that size");
         let path = dir.join(format!("{}.png", w.id));

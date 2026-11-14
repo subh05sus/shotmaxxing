@@ -111,7 +111,11 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
 fn clamp_camera(c: Camera, w: f64, h: f64) -> Camera {
     let hw = w / (2.0 * c.scale);
     let hh = h / (2.0 * c.scale);
-    Camera { scale: c.scale, x: c.x.clamp(hw.min(w - hw), hw.max(w - hw)), y: c.y.clamp(hh.min(h - hh), hh.max(h - hh)) }
+    Camera {
+        scale: c.scale,
+        x: c.x.clamp(hw.min(w - hw), hw.max(w - hw)),
+        y: c.y.clamp(hh.min(h - hh), hh.max(h - hh)),
+    }
 }
 
 /// The camera at `t` seconds. `zooms` must be sorted by start. `cursor` is used when the camera follows it.
@@ -216,7 +220,8 @@ pub fn frame_at(project: &RenderProject, layout: &Layout, t: f64) -> Frame {
             .rev()
             .find(|c| c.t_us as f64 / 1_000_000.0 <= t)
             .map_or(f64::NEG_INFINITY, |c| c.t_us as f64 / 1_000_000.0);
-        let last_click = project.clicks.iter().rev().find(|(ct, _)| *ct <= t).map_or(f64::NEG_INFINITY, |c| c.0);
+        let last_click =
+            project.clicks.iter().rev().find(|(ct, _)| *ct <= t).map_or(f64::NEG_INFINITY, |c| c.0);
         let idle = project.hide_idle && t - last_sample.max(last_click) > IDLE_S && t > IDLE_S;
         if idle {
             return None;
@@ -234,7 +239,9 @@ pub fn frame_at(project: &RenderProject, layout: &Layout, t: f64) -> Frame {
     Frame {
         view,
         cursor,
-        blurs: (0..project.blurs.len()).filter(|&i| active(project.blurs[i].start, project.blurs[i].end)).collect(),
+        blurs: (0..project.blurs.len())
+            .filter(|&i| active(project.blurs[i].start, project.blurs[i].end))
+            .collect(),
         arrows: (0..project.arrows.len())
             .filter(|&i| active(project.arrows[i].start, project.arrows[i].end))
             .collect(),

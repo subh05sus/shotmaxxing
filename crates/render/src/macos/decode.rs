@@ -12,7 +12,9 @@ use objc2_av_foundation::{
     AVAssetReader, AVAssetReaderStatus, AVAssetReaderTrackOutput, AVMediaTypeVideo, AVURLAsset,
 };
 use objc2_core_foundation::{CFRetained, CFString};
-use objc2_core_video::{CVPixelBuffer, kCVPixelBufferIOSurfacePropertiesKey, kCVPixelBufferPixelFormatTypeKey};
+use objc2_core_video::{
+    CVPixelBuffer, kCVPixelBufferIOSurfacePropertiesKey, kCVPixelBufferPixelFormatTypeKey,
+};
 use objc2_foundation::{NSDictionary, NSNumber, NSString, NSURL};
 
 use crate::RenderError;
@@ -61,8 +63,10 @@ impl Decoder {
                 &[ns(kCVPixelBufferPixelFormatTypeKey), ns(kCVPixelBufferIOSurfacePropertiesKey)],
                 &[format.as_ref(), surface.as_ref()],
             );
-            let output =
-                AVAssetReaderTrackOutput::assetReaderTrackOutputWithTrack_outputSettings(&track, Some(&settings));
+            let output = AVAssetReaderTrackOutput::assetReaderTrackOutputWithTrack_outputSettings(
+                &track,
+                Some(&settings),
+            );
             output.setAlwaysCopiesSampleData(false);
             if !reader.canAddOutput(&output) {
                 return Err(system("the recording's video can't be decoded"));

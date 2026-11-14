@@ -64,8 +64,12 @@ impl<W: Write> GifWriter<W> {
         }
         let quant = NeuQuant::new(10, COLOURS, samples);
         let rgb = quant.color_map_rgb();
-        let palette: Vec<[i32; 3]> =
-            rgb.as_chunks::<3>().0.iter().map(|c| [i32::from(c[0]), i32::from(c[1]), i32::from(c[2])]).collect();
+        let palette: Vec<[i32; 3]> = rgb
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|c| [i32::from(c[0]), i32::from(c[1]), i32::from(c[2])])
+            .collect();
         let mut global = rgb;
         global.resize(256 * 3, 0);
         let mut encoder = Encoder::new(out, width, height, &global).map_err(gif_error)?;
@@ -86,14 +90,20 @@ impl<W: Write> GifWriter<W> {
 
     fn nearest(&mut self, r: u8, g: u8, b: u8) -> u8 {
         let shift = 8 - CACHE_BITS;
-        let key = (usize::from(r >> shift) << (CACHE_BITS * 2)) | (usize::from(g >> shift) << CACHE_BITS) | usize::from(b >> shift);
+        let key = (usize::from(r >> shift) << (CACHE_BITS * 2))
+            | (usize::from(g >> shift) << CACHE_BITS)
+            | usize::from(b >> shift);
         let cached = self.cache[key];
         if cached != u16::MAX {
             return cached as u8;
         }
         // The centre of the cache cell, matched with weights roughly following how sensitive eyes are to each channel.
         let half = 1 << (shift - 1);
-        let (r, g, b) = (i32::from(r >> shift << shift) + half, i32::from(g >> shift << shift) + half, i32::from(b >> shift << shift) + half);
+        let (r, g, b) = (
+            i32::from(r >> shift << shift) + half,
+            i32::from(g >> shift << shift) + half,
+            i32::from(b >> shift << shift) + half,
+        );
         let mut best = (i32::MAX, 0usize);
         for (i, c) in self.palette.iter().enumerate() {
             let (dr, dg, db) = (r - c[0], g - c[1], b - c[2]);

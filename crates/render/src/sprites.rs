@@ -106,7 +106,8 @@ pub fn blur_alpha(buf: &mut [f32], w: usize, h: usize, sigma: f64) {
         wl -= 1;
     }
     let wu = wl + 2;
-    let m = ((12.0 * sigma * sigma - n * (wl * wl) as f64 - 4.0 * n * wl as f64 - 3.0 * n) / (-4.0 * wl as f64 - 4.0))
+    let m = ((12.0 * sigma * sigma - n * (wl * wl) as f64 - 4.0 * n * wl as f64 - 3.0 * n)
+        / (-4.0 * wl as f64 - 4.0))
         .round() as i64;
     let mut tmp = vec![0f32; buf.len()];
     for pass in 0..3 {
@@ -152,7 +153,8 @@ pub fn background(layout: &Layout, wallpaper: Vec<u8>, palette: &Palette) -> Opt
         layout.radius as f32,
     )?;
     mask.fill_path(&path, &paint(Color::WHITE), FillRule::Winding, Transform::identity(), None);
-    let mut alpha: Vec<f32> = mask.data().as_chunks::<4>().0.iter().map(|p| f32::from(p[3]) / 255.0).collect();
+    let mut alpha: Vec<f32> =
+        mask.data().as_chunks::<4>().0.iter().map(|p| f32::from(p[3]) / 255.0).collect();
     blur_alpha(&mut alpha, w as usize, h as usize, layout.shadow_sigma);
     let ink = palette.shadow_ink;
     let strength = layout.shadow_alpha as f32;
@@ -185,9 +187,21 @@ pub fn cursor(look: CursorLook, cursor_px: f64, res: f64, palette: &Palette) -> 
             let mut pixmap = Pixmap::new(side, side)?;
             let c = side as f32 / 2.0;
             let outer = PathBuilder::from_circle(c, c, d / 2.0)?;
-            pixmap.fill_path(&outer, &paint(palette.cursor_light), FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &outer,
+                &paint(palette.cursor_light),
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
             let inner = PathBuilder::from_circle(c, c, (d / 2.0 - ring).max(0.5))?;
-            pixmap.fill_path(&inner, &paint(palette.cursor_dark), FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &inner,
+                &paint(palette.cursor_dark),
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
             Some(Sprite { pixmap, x: -f64::from(c) / res, y: -f64::from(c) / res, scale: res })
         }
         CursorLook::Mac | CursorLook::Windows => {
@@ -197,7 +211,15 @@ pub fn cursor(look: CursorLook, cursor_px: f64, res: f64, palette: &Palette) -> 
             let (wpx, hpx) = ((20.0 * u + pad * 2.0).ceil() as u32, (28.0 * u + pad * 2.0).ceil() as u32);
             let mut pixmap = Pixmap::new(wpx, hpx)?;
             let mut pb = PathBuilder::new();
-            let pts = [(2.0, 1.5), (2.0, 22.0), (7.2, 17.4), (10.6, 25.6), (14.0, 24.2), (10.7, 16.2), (17.6, 16.2)];
+            let pts = [
+                (2.0, 1.5),
+                (2.0, 22.0),
+                (7.2, 17.4),
+                (10.6, 25.6),
+                (14.0, 24.2),
+                (10.7, 16.2),
+                (17.6, 16.2),
+            ];
             for (i, (x, y)) in pts.iter().enumerate() {
                 let (px, py) = (pad + x * u, pad + y * u);
                 if i == 0 { pb.move_to(px, py) } else { pb.line_to(px, py) }
@@ -233,7 +255,8 @@ pub fn ring(cursor_px: f64, res: f64, palette: &Palette) -> Option<Sprite> {
 
     let mut mask = Pixmap::new(side, side)?;
     mask.stroke_path(&path, &paint(Color::WHITE), &stroke, Transform::identity(), None);
-    let mut alpha: Vec<f32> = mask.data().as_chunks::<4>().0.iter().map(|p| f32::from(p[3]) / 255.0).collect();
+    let mut alpha: Vec<f32> =
+        mask.data().as_chunks::<4>().0.iter().map(|p| f32::from(p[3]) / 255.0).collect();
     blur_alpha(&mut alpha, side as usize, side as usize, sigma);
     let mut pixmap = Pixmap::new(side, side)?;
     let shadow = palette.cursor_shadow;
@@ -276,7 +299,13 @@ pub fn spotlight(cursor_px: f64, res: f64, palette: &Palette) -> Option<Sprite> 
 }
 
 /// An arrow from `from` to `to` (frame pixels in the camera layer), drawn `res` times larger.
-pub fn arrow(layout: &Layout, from: (f64, f64), to: (f64, f64), res: f64, palette: &Palette) -> Option<Sprite> {
+pub fn arrow(
+    layout: &Layout,
+    from: (f64, f64),
+    to: (f64, f64),
+    res: f64,
+    palette: &Palette,
+) -> Option<Sprite> {
     let k = layout.k;
     let width = f64::max(3.0, 7.0 * k);
     let head = f64::max(10.0, 26.0 * k);
@@ -293,7 +322,8 @@ pub fn arrow(layout: &Layout, from: (f64, f64), to: (f64, f64), res: f64, palett
     let min_y = points.iter().map(|p| p.1).fold(f64::INFINITY, f64::min) - pad;
     let max_x = points.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max) + pad;
     let max_y = points.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max) + pad;
-    let mut pixmap = Pixmap::new(((max_x - min_x) * res).ceil() as u32, ((max_y - min_y) * res).ceil() as u32)?;
+    let mut pixmap =
+        Pixmap::new(((max_x - min_x) * res).ceil() as u32, ((max_y - min_y) * res).ceil() as u32)?;
     let at = |p: (f64, f64)| (((p.0 - min_x) * res) as f32, ((p.1 - min_y) * res) as f32);
     let mut pb = PathBuilder::new();
     let (s, e, h1, h2) = (at(points[0]), at(points[1]), at(points[2]), at(points[3]));
@@ -303,8 +333,12 @@ pub fn arrow(layout: &Layout, from: (f64, f64), to: (f64, f64), res: f64, palett
     pb.line_to(e.0, e.1);
     pb.line_to(h2.0, h2.1);
     let path = pb.finish()?;
-    let stroke =
-        Stroke { width: (width * res) as f32, line_cap: LineCap::Round, line_join: LineJoin::Round, ..Stroke::default() };
+    let stroke = Stroke {
+        width: (width * res) as f32,
+        line_cap: LineCap::Round,
+        line_join: LineJoin::Round,
+        ..Stroke::default()
+    };
     pixmap.stroke_path(&path, &paint(palette.accent), &stroke, Transform::identity(), None);
     Some(Sprite { pixmap, x: min_x, y: min_y, scale: res })
 }
@@ -327,9 +361,11 @@ pub fn label(
     let body = rounded_rect(margin as f32, margin as f32, bw as f32, bh as f32, radius as f32)?;
     if let Some((offset, sigma, strength)) = shadow {
         let mut mask = Pixmap::new(w, h)?;
-        let moved = rounded_rect(margin as f32, (margin + offset) as f32, bw as f32, bh as f32, radius as f32)?;
+        let moved =
+            rounded_rect(margin as f32, (margin + offset) as f32, bw as f32, bh as f32, radius as f32)?;
         mask.fill_path(&moved, &paint(Color::BLACK), FillRule::Winding, Transform::identity(), None);
-        let mut alpha: Vec<f32> = mask.data().as_chunks::<4>().0.iter().map(|p| f32::from(p[3]) / 255.0).collect();
+        let mut alpha: Vec<f32> =
+            mask.data().as_chunks::<4>().0.iter().map(|p| f32::from(p[3]) / 255.0).collect();
         blur_alpha(&mut alpha, w as usize, h as usize, sigma);
         for (px, a) in pixmap.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(alpha) {
             px[3] = ((a * strength) * 255.0).round().clamp(0.0, 255.0) as u8;

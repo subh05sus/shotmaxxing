@@ -8,8 +8,8 @@ use objc2_core_foundation::{
 };
 use objc2_core_graphics::{CGColorSpace, CGContext, kCGColorSpaceSRGB};
 use objc2_core_text::{
-    CTFont, CTFontDescriptor, CTFontUIFontType, CTLine, kCTFontAttributeName,
-    kCTForegroundColorFromContextAttributeName, kCTFontTraitsAttribute, kCTFontWeightTrait,
+    CTFont, CTFontDescriptor, CTFontUIFontType, CTLine, kCTFontAttributeName, kCTFontTraitsAttribute,
+    kCTFontWeightTrait, kCTForegroundColorFromContextAttributeName,
 };
 use tiny_skia::{Color, IntSize, Pixmap};
 

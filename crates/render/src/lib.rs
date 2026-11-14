@@ -84,7 +84,11 @@ pub fn unique_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
 
 /// Exports the project at `root` (an `.smx` folder). `progress` receives 0 to 1 and returns `false` to cancel.
 /// Nothing is left behind if the export fails or is cancelled.
-pub fn export(root: &Path, options: &ExportOptions, progress: &mut dyn FnMut(f64) -> bool) -> Result<(), RenderError> {
+pub fn export(
+    root: &Path,
+    options: &ExportOptions,
+    progress: &mut dyn FnMut(f64) -> bool,
+) -> Result<(), RenderError> {
     if options.width < 16 || options.height < 16 || options.width > 7680 || options.height > 7680 {
         return Err(RenderError::Project(format!(
             "{} × {} isn't a size that can be exported",
