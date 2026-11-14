@@ -1,6 +1,4 @@
-# Untitled Recorder
-
-> Working title. The final name will be chosen before the first public release.
+# Shotmaxxing
 
 An open-source screen recorder and studio editor for demos, walkthroughs and product videos.
 You can drive it by hand, or let an AI agent such as Claude or Codex film the demo for you.
