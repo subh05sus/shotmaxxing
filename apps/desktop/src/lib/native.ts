@@ -205,6 +205,27 @@ export interface TrackMedia {
   path: string;
   /** Where it starts on the screen's timeline; negative when it started first. */
   offset_us: number;
+  /** The cleaned-up copy of the microphone, once voice cleanup has made one. */
+  cleaned: string | null;
+}
+
+/** A stretch of the recording, in seconds. */
+export interface Span {
+  start: number;
+  end: number;
+}
+
+/** The long pauses in a take's voice where nothing happens on screen: what "Cut silences" takes out. */
+export function findPauses(project: string): Promise<Span[]> {
+  return call('find_pauses', { path: project }, () => [
+    { start: 12.4, end: 14.1 },
+    { start: 27.2, end: 28.9 },
+  ]);
+}
+
+/** Makes the cleaned-up copy of a take's voice; returns its path. */
+export function cleanVoice(project: string): Promise<string> {
+  return call('clean_voice', { path: project }, () => new Promise((done) => setTimeout(() => done(''), 900)));
 }
 
 export interface LoadedProject {

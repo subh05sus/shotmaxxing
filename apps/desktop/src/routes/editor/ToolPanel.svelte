@@ -21,6 +21,7 @@
     ProgressRing,
     Segmented,
     Slider,
+    Spinner,
     Switch,
     toast,
   } from '@shotmaxxing/ui';
@@ -46,6 +47,7 @@
   const pct = (v: number) => `${Math.round(v * 100)}%`;
 
   let captionProgress = $state(0);
+  const silenceSeconds = $derived(p.audio.silences.reduce((sum, s) => sum + s.end - s.start, 0));
   function generateCaptions() {
     ed.change('Generate captions', () => (p.captions.state = 'busy'));
     captionProgress = 0;
@@ -507,28 +509,30 @@
           format={pct}
           onchange={(v) => ed.change('System volume', () => (p.audio.system = v))}
         />{/if}
-      {#if p.has.mic}<label class="mt-1 flex h-9 items-center justify-between text-callout">
-          <span class="flex items-center gap-1"
+      {#if p.has.mic}<label class="mt-1 flex h-9 items-center justify-between gap-2 text-callout">
+          <span class="flex flex-1 items-center gap-1"
             >Clean up my voice <InfoTip
-              text="Removes hum, fans and room echo. Runs on this computer."
+              text="Turns down hum, fan noise and hiss, and evens out your level. Runs on this computer."
             /></span
           >
+          {#if ed.voiceBusy === 'cleanup'}<Spinner size={14} label="Cleaning up the voice" />{/if}
           <Switch
-            checked={p.audio.cleanup}
+            bind:checked={() => p.audio.cleanup, (v) => void ed.setCleanup(v)}
             label="Clean up my voice"
-            onchange={(v) => ed.change('Voice cleanup', () => (p.audio.cleanup = v))}
+            disabled={ed.voiceBusy !== null}
           />
         </label>
-        <label class="flex h-9 items-center justify-between text-callout">
-          <span class="flex items-center gap-1"
+        <label class="flex h-9 items-center justify-between gap-2 text-callout">
+          <span class="flex flex-1 items-center gap-1"
             >Cut long silences <InfoTip
-              text="Pauses longer than a second become short ones. You can bring any back on the timeline."
+              text="Pauses over a second where nothing happens on screen become short ones. Turn it off to bring them back."
             /></span
           >
+          {#if ed.voiceBusy === 'silence'}<Spinner size={14} label="Looking for pauses" />{/if}
           <Switch
-            checked={p.audio.silence}
+            bind:checked={() => p.audio.silence, (v) => void ed.setCutSilences(v)}
             label="Cut long silences"
-            onchange={(v) => ed.change('Cut silences', () => (p.audio.silence = v))}
+            disabled={ed.voiceBusy !== null}
           />
         </label>{/if}
     {:else if !p.has.mic}
@@ -547,59 +551,68 @@
         <h3 class="flex items-center gap-2 text-callout font-semibold">
           <Captions size={15} aria-hidden="true" /> Captions
         </h3>
-        <p class="mt-1 text-footnote text-fg-muted">
-          Transcribes your voice with Whisper, word by word, in 99 languages.
-        </p>
-        <div class="mt-2.5 flex items-center gap-2">
+        {#if ed.path}
+          <p class="mt-1 text-footnote text-fg-muted">
+            Coming soon: your words transcribed on this computer and timed to the video.
+          </p>
+        {:else}
+          <p class="mt-1 text-footnote text-fg-muted">
+            Transcribes your voice with Whisper, word by word, in 99 languages.
+          </p>
+          <div class="mt-2.5 flex items-center gap-2">
+            {#if p.captions.state === 'ready'}
+              <span class="flex items-center gap-1.5 text-footnote font-semibold text-success"
+                ><CheckDraw size={14} /> 6 lines</span
+              >
+              <span class="flex-1"></span>
+              <Switch
+                checked={p.captions.show}
+                label="Show captions"
+                onchange={(v) => ed.change('Show captions', () => (p.captions.show = v))}
+              />
+            {:else if p.captions.state === 'busy'}
+              <ProgressRing value={captionProgress} label="Transcribing" />
+              <span class="text-footnote text-fg-muted tabular"
+                >Transcribing… {Math.round(captionProgress * 100)}%</span
+              >
+            {:else}
+              <div class="flex flex-col items-start gap-1.5">
+                <Button size="sm" icon={Sparkles} onclick={generateCaptions}>Generate captions</Button>
+                <span class="text-caption text-fg-subtle">The first time downloads a 140 MB model.</span>
+              </div>
+            {/if}
+          </div>
           {#if p.captions.state === 'ready'}
-            <span class="flex items-center gap-1.5 text-footnote font-semibold text-success"
-              ><CheckDraw size={14} /> 6 lines</span
-            >
-            <span class="flex-1"></span>
-            <Switch
-              checked={p.captions.show}
-              label="Show captions"
-              onchange={(v) => ed.change('Show captions', () => (p.captions.show = v))}
-            />
-          {:else if p.captions.state === 'busy'}
-            <ProgressRing value={captionProgress} label="Transcribing" />
-            <span class="text-footnote text-fg-muted tabular"
-              >Transcribing… {Math.round(captionProgress * 100)}%</span
-            >
-          {:else}
-            <div class="flex flex-col items-start gap-1.5">
-              <Button size="sm" icon={Sparkles} onclick={generateCaptions}>Generate captions</Button>
-              <span class="text-caption text-fg-subtle">The first time downloads a 140 MB model.</span>
+            <div class="mt-2.5">
+              <Segmented
+                label="Caption style"
+                size="sm"
+                value={p.captions.style}
+                onchange={(v) => ed.change('Caption style', () => (p.captions.style = v))}
+                options={[
+                  { value: 'bar', label: 'Bar' },
+                  { value: 'bold', label: 'Bold' },
+                ]}
+              />
             </div>
           {/if}
-        </div>
-        {#if p.captions.state === 'ready'}
-          <div class="mt-2.5">
-            <Segmented
-              label="Caption style"
-              size="sm"
-              value={p.captions.style}
-              onchange={(v) => ed.change('Caption style', () => (p.captions.style = v))}
-              options={[
-                { value: 'bar', label: 'Bar' },
-                { value: 'bold', label: 'Bold' },
-              ]}
-            />
-          </div>
         {/if}
       </section>
       <section class="mt-2 rounded-[10px] border border-border p-3">
         <h3 class="flex items-center gap-2 text-callout font-semibold">
           <WandSparkles size={15} aria-hidden="true" /> Voice cleanup
         </h3>
-        <p class="mt-1 text-footnote text-fg-muted">Removes background noise and evens out your level.</p>
-        <div class="mt-2">
+        <p class="mt-1 text-footnote text-fg-muted">
+          Turns down hum, fan noise and hiss, and evens out your level.
+        </p>
+        <div class="mt-2 flex items-center gap-2">
           <Switch
-            checked={p.audio.cleanup}
+            bind:checked={() => p.audio.cleanup, (v) => void ed.setCleanup(v)}
             label="Voice cleanup"
             hideLabel={false}
-            onchange={(v) => ed.change('Voice cleanup', () => (p.audio.cleanup = v))}
+            disabled={ed.voiceBusy !== null}
           />
+          {#if ed.voiceBusy === 'cleanup'}<Spinner size={14} label="Cleaning up the voice" />{/if}
         </div>
       </section>
       <section class="mt-2 rounded-[10px] border border-border p-3">
@@ -607,15 +620,22 @@
           <Sparkles size={15} aria-hidden="true" /> Cut silences
         </h3>
         <p class="mt-1 text-footnote text-fg-muted">
-          Shortens long pauses. Found 2 in this take, 3.4 s in all.
+          {#if p.audio.silence}
+            Cut {p.audio.silences.length}
+            {p.audio.silences.length === 1 ? 'pause' : 'pauses'}, {silenceSeconds.toFixed(1)} s in all. Turn it
+            off to bring them back.
+          {:else}
+            Shortens pauses over a second where nothing happens on screen.
+          {/if}
         </p>
-        <div class="mt-2">
+        <div class="mt-2 flex items-center gap-2">
           <Switch
-            checked={p.audio.silence}
+            bind:checked={() => p.audio.silence, (v) => void ed.setCutSilences(v)}
             label="Cut silences"
             hideLabel={false}
-            onchange={(v) => ed.change('Cut silences', () => (p.audio.silence = v))}
+            disabled={ed.voiceBusy !== null}
           />
+          {#if ed.voiceBusy === 'silence'}<Spinner size={14} label="Looking for pauses" />{/if}
         </div>
       </section>
     {/if}

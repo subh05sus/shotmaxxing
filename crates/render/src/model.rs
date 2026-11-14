@@ -176,7 +176,7 @@ fn zoom_of(z: &ZoomRegion) -> Zoom {
     Zoom { start: sec(z.start_us), end: sec(z.end_us), scale: z.scale, focus: z.focus }
 }
 
-fn read_telemetry(root: &Path) -> (Vec<CursorSample>, Vec<InputEvent>) {
+pub(crate) fn read_telemetry(root: &Path) -> (Vec<CursorSample>, Vec<InputEvent>) {
     let cursor = std::fs::read(root.join(CURSOR_FILE))
         .ok()
         .and_then(|bytes| decode_cursor(&bytes).ok())
@@ -262,7 +262,16 @@ impl RenderProject {
                     && !t.muted
                     && t.volume > 0.0
             })
-            .map(|t| (t, root.join(&t.path)))
+            .map(|t| {
+                // With cleanup on, the voice plays from its cleaned copy, as in the editor.
+                let clean = root.join(crate::CLEAN_MIC);
+                let path = if t.kind == TrackKind::Microphone && project.voice.cleanup && clean.exists() {
+                    clean
+                } else {
+                    root.join(&t.path)
+                };
+                (t, path)
+            })
             .filter(|(_, path)| path.exists())
             .map(|(t, path)| Sound {
                 path,

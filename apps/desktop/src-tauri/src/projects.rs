@@ -30,6 +30,8 @@ pub struct TrackMedia {
     kind: TrackKind,
     path: String,
     offset_us: i64,
+    /// The cleaned-up copy of the microphone, once voice cleanup has made one.
+    cleaned: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -73,8 +75,43 @@ fn track_media(root: &Path, project: &Project) -> Vec<TrackMedia> {
             kind: t.kind,
             path: path.to_string_lossy().into_owned(),
             offset_us: t.offset_us,
+            cleaned: (t.kind == TrackKind::Microphone)
+                .then(|| root.join(shotmaxxing_render::CLEAN_MIC))
+                .filter(|p| p.exists())
+                .map(|p| p.to_string_lossy().into_owned()),
         })
         .collect()
+}
+
+/// A stretch of the recording, in seconds.
+#[derive(Serialize)]
+pub struct Span {
+    start: f64,
+    end: f64,
+}
+
+/// The long pauses in the take's voice where nothing happens on screen: what "Cut silences" takes out.
+#[tauri::command]
+pub async fn find_pauses(path: String) -> Result<Vec<Span>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        shotmaxxing_render::find_pauses(Path::new(&path))
+            .map(|cuts| cuts.into_iter().map(|(start, end)| Span { start, end }).collect())
+            .map_err(text)
+    })
+    .await
+    .map_err(text)?
+}
+
+/// Makes the cleaned-up copy of the take's voice and returns where it is.
+#[tauri::command]
+pub async fn clean_voice(path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        shotmaxxing_render::clean_voice(Path::new(&path), &mut |_| true)
+            .map(|p| p.to_string_lossy().into_owned())
+            .map_err(text)
+    })
+    .await
+    .map_err(text)?
 }
 
 fn read_telemetry(root: &Path) -> (Vec<CursorSample>, Vec<InputEvent>) {

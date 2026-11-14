@@ -12,7 +12,16 @@ import {
   type EffectBlock,
   type ZoomBlock,
 } from '../../lib/sample';
-import { cursorPath, loadProject, mediaUrl, planAutoZooms, saveProject } from '../../lib/native';
+import {
+  cleanVoice,
+  cursorPath,
+  findPauses,
+  loadProject,
+  mediaUrl,
+  planAutoZooms,
+  saveProject,
+} from '../../lib/native';
+import { dropRanges, keepRanges } from './clips';
 import { fromCore, toCore, zoomFromCore, type CoreProject } from '../../lib/project';
 
 export interface TimedPoint {
@@ -72,7 +81,16 @@ export interface Project {
     mirror: boolean;
     shadow: boolean;
   };
-  audio: { mic: number; system: number; cleanup: boolean; silence: boolean };
+  audio: {
+    mic: number;
+    system: number;
+    /** Play and export the cleaned-up copy of the voice. */
+    cleanup: boolean;
+    /** Long pauses where nothing happens are cut. */
+    silence: boolean;
+    /** The pauses that were cut, in seconds of the recording, so turning it off brings exactly those back. */
+    silences: { start: number; end: number }[];
+  };
   captions: { state: 'none' | 'busy' | 'ready'; style: 'bar' | 'bold'; show: boolean };
   keystrokes: boolean;
   /** Which tracks the take has, so panels only offer what exists. */
@@ -130,7 +148,7 @@ function sampleProject(): Project {
     zooms: SAMPLE_PROJECT.zooms.map((z) => ({ ...z, focus: { ...z.focus } })),
     effects: SAMPLE_PROJECT.effects.map((e) => ({ ...e })),
     webcam: { on: false, shape: 'circle', size: 0.2, corner: 'br', shrink: true, mirror: true, shadow: true },
-    audio: { mic: 0.9, system: 0.6, cleanup: true, silence: false },
+    audio: { mic: 0.9, system: 0.6, cleanup: true, silence: false, silences: [] },
     captions: { state: 'none', style: 'bar', show: true },
     keystrokes: true,
     has: { mic: true, system: true, camera: true },
@@ -150,6 +168,8 @@ export class EditorState {
   media = $state<string | null>(null);
   /** The camera recording, for takes filmed with one. The offset places it on the screen's timeline. */
   camera = $state<{ url: string; offset: number } | null>(null);
+  /** A voice tool at work: making the cleaned-up voice, or finding pauses. */
+  voiceBusy = $state<'cleanup' | 'silence' | null>(null);
   /** What was recorded besides the video, in seconds and capture points. */
   cursorPath = $state.raw<TimedPoint[]>(SAMPLE_CURSOR);
   clicks = $state.raw<TimedPoint[]>(SAMPLE_PROJECT.clicks);
@@ -177,8 +197,8 @@ export class EditorState {
   #core: CoreProject | null = null;
   #video: HTMLVideoElement | null = null;
   #cameraVideo: HTMLVideoElement | null = null;
-  /** The recorded sound, each on the screen's timeline. */
-  #sounds: { kind: string; el: HTMLAudioElement; offset: number }[] = [];
+  /** The recorded sound, each on the screen's timeline. The microphone may also have a cleaned-up copy. */
+  #sounds: { kind: string; el: HTMLAudioElement; offset: number; raw: string; clean: string | null }[] = [];
 
   constructor() {
     const json = JSON.stringify(this.project);
@@ -209,7 +229,8 @@ export class EditorState {
           const el = new Audio();
           el.preload = 'auto';
           el.src = url;
-          this.#sounds.push({ kind: track.kind, el, offset });
+          const clean = track.cleaned ? await mediaUrl(track.cleaned) : null;
+          this.#sounds.push({ kind: track.kind, el, offset, raw: url, clean });
         }
       }
       this.cursorPath = loaded.cursor.map((c) => ({ t: c.t_us / 1e6, x: c.x, y: c.y }));
@@ -272,6 +293,10 @@ export class EditorState {
   #syncMedia(t: number): void {
     const speed = this.rate * (this.clipAt(t)?.speed ?? 1);
     for (const sound of this.#sounds) {
+      // The microphone plays from its cleaned-up copy while cleanup is on, as the export will.
+      const source =
+        sound.kind === 'microphone' && this.project.audio.cleanup && sound.clean ? sound.clean : sound.raw;
+      if (sound.el.getAttribute('src') !== source) sound.el.src = source;
       const level =
         sound.kind === 'microphone'
           ? this.project.audio.mic
@@ -283,6 +308,72 @@ export class EditorState {
       this.#follow(sound.el, sound.offset, t, speed);
     }
     if (this.#cameraVideo && this.camera) this.#follow(this.#cameraVideo, this.camera.offset, t, speed);
+  }
+
+  /** Turns voice cleanup on or off. The cleaned-up copy is made the first time, on this computer. */
+  async setCleanup(on: boolean): Promise<void> {
+    const mic = this.#sounds.find((s) => s.kind === 'microphone');
+    if (on && this.path && mic && !mic.clean) {
+      this.voiceBusy = 'cleanup';
+      try {
+        mic.clean = await mediaUrl(await cleanVoice(this.path));
+      } catch (error) {
+        toast(`Couldn’t clean up the voice: ${error instanceof Error ? error.message : String(error)}`, {
+          tone: 'danger',
+          timeout: 8000,
+        });
+        return;
+      } finally {
+        this.voiceBusy = null;
+      }
+    }
+    this.change(on ? 'Voice cleanup' : 'Original voice', () => (this.project.audio.cleanup = on));
+    this.#syncMedia(this.time);
+  }
+
+  /** Cuts the long pauses where nothing happens on screen, or brings exactly those back. */
+  async setCutSilences(on: boolean): Promise<void> {
+    const p = this.project;
+    if (!on) {
+      this.change('Bring back pauses', () => {
+        p.clips = keepRanges(p.clips, p.audio.silences);
+        p.audio.silence = false;
+        p.audio.silences = [];
+      });
+      return;
+    }
+    this.voiceBusy = 'silence';
+    let found: { start: number; end: number }[];
+    try {
+      // The sample has no recording to listen to; it shows two typical pauses.
+      found = this.path
+        ? await findPauses(this.path)
+        : [
+            { start: 12.4, end: 14.1 },
+            { start: 27.2, end: 28.9 },
+          ];
+    } catch (error) {
+      toast(`Couldn’t look for pauses: ${error instanceof Error ? error.message : String(error)}`, {
+        tone: 'danger',
+        timeout: 8000,
+      });
+      return;
+    } finally {
+      this.voiceBusy = null;
+    }
+    if (!found.length) {
+      toast('No long pauses to cut. Every pause over a second has something happening on screen.');
+      return;
+    }
+    this.change('Cut silences', () => {
+      p.clips = dropRanges(p.clips, found);
+      p.audio.silence = true;
+      p.audio.silences = found;
+    });
+    const seconds = found.reduce((sum, s) => sum + s.end - s.start, 0);
+    toast(`Cut ${found.length} ${found.length === 1 ? 'pause' : 'pauses'}, ${seconds.toFixed(1)} s in all.`, {
+      action: { label: 'Undo', run: () => this.undo() },
+    });
   }
 
   #releaseSounds(): void {

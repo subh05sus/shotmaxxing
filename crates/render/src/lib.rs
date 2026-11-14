@@ -13,12 +13,44 @@ mod animated;
 mod model;
 pub mod scene;
 mod sprites;
+pub mod voice;
 pub mod wallpaper;
 
 #[cfg(target_os = "macos")]
 mod macos;
 
 pub use model::RenderProject;
+
+/// Where a project's cleaned-up voice goes, next to the original.
+pub const CLEAN_MIC: &str = "media/microphone-clean.m4a";
+
+/// The long pauses in a project's voice where nothing happens on screen, as (start, end) seconds of the screen
+/// recording: what "Cut silences" takes out. Each keeps a short breath at both ends.
+pub fn find_pauses(root: &Path) -> Result<Vec<(f64, f64)>, RenderError> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::voice::find_pauses(root)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = root;
+        Err(RenderError::Unsupported)
+    }
+}
+
+/// Writes a cleaned-up copy of a project's voice (less hum, fan noise and hiss, an even level) to [`CLEAN_MIC`]
+/// and says where it is. `progress` gets 0 to 1 and returns `false` to stop.
+pub fn clean_voice(root: &Path, progress: &mut dyn FnMut(f64) -> bool) -> Result<PathBuf, RenderError> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::voice::clean_voice(root, progress)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (root, progress);
+        Err(RenderError::Unsupported)
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {

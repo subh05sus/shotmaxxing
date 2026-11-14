@@ -25,6 +25,8 @@ pub struct Project {
     pub zooms: Vec<ZoomRegion>,
     pub edits: Edits,
     pub webcam: WebcamStyle,
+    /// Voice cleanup and cut silences.
+    pub voice: VoiceSettings,
     pub captions: Vec<Caption>,
     pub export: ExportSettings,
     /// Set when an agent filmed the project.
@@ -47,6 +49,7 @@ impl Default for Project {
             zooms: Vec::new(),
             edits: Edits::default(),
             webcam: WebcamStyle::default(),
+            voice: VoiceSettings::default(),
             captions: Vec::new(),
             export: ExportSettings::default(),
             agent: None,
@@ -568,6 +571,18 @@ impl Default for WebcamStyle {
             shrink_on_zoom: true,
         }
     }
+}
+
+/// What the editor does to the recorded voice.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct VoiceSettings {
+    /// Play and export the cleaned-up copy of the microphone (less hum, fan noise and hiss, an even level).
+    pub cleanup: bool,
+    /// Long pauses where nothing happens are cut.
+    pub cut_silences: bool,
+    /// The pauses "Cut silences" took out, so turning it off brings exactly those back.
+    pub silences: Vec<TimeRange>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

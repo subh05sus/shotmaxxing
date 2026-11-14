@@ -111,6 +111,7 @@ export interface CoreProject {
     [key: string]: unknown;
   };
   captions: { range: CoreRange; text: string }[];
+  voice?: { cleanup: boolean; cut_silences: boolean; silences: CoreRange[] };
   [key: string]: unknown;
 }
 
@@ -251,7 +252,13 @@ export function fromCore(core: CoreProject, os: Os): Project {
       mirror: core.webcam.mirror,
       shadow: core.webcam.shadow,
     },
-    audio: { mic: mic?.volume ?? 1, system: system?.volume ?? 1, cleanup: false, silence: false },
+    audio: {
+      mic: mic?.volume ?? 1,
+      system: system?.volume ?? 1,
+      cleanup: core.voice?.cleanup ?? false,
+      silence: core.voice?.cut_silences ?? false,
+      silences: (core.voice?.silences ?? []).map((r) => ({ start: sec(r.start_us), end: sec(r.end_us) })),
+    },
     captions: { state: core.captions.length ? 'ready' : 'none', style: 'bar', show: true },
     keystrokes: core.zoom.keystrokes,
     has: { mic: !!mic, system: !!system, camera: core.tracks.some((t) => t.kind === 'camera') },
@@ -375,6 +382,11 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
     if (track.kind === 'microphone') track.volume = p.audio.mic;
     if (track.kind === 'system_audio') track.volume = p.audio.system;
   }
+  core.voice = {
+    cleanup: p.audio.cleanup,
+    cut_silences: p.audio.silence,
+    silences: p.audio.silences.map((s) => range(s.start, s.end)),
+  };
   return core;
 }
 

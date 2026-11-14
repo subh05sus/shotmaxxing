@@ -10,6 +10,7 @@ mod decode;
 mod sound;
 mod text;
 mod video;
+pub mod voice;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

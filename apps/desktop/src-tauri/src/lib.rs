@@ -71,6 +71,8 @@ pub fn run() {
             projects::save_project,
             projects::list_projects,
             projects::plan_auto_zooms,
+            projects::find_pauses,
+            projects::clean_voice,
             projects::rename_project,
             projects::duplicate_project,
             projects::trash_project,

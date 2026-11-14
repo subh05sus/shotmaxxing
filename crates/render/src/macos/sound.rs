@@ -15,6 +15,7 @@ use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL, ns_stri
 use super::decode::system;
 use crate::RenderError;
 use crate::model::RenderProject;
+use crate::voice::soft_limit;
 
 /// How long each cut edge fades, in seconds.
 const FADE: f64 = 0.008;
@@ -28,13 +29,6 @@ fn time(seconds: f64) -> CMTime {
 
 fn span(start: f64, duration: f64) -> CMTimeRange {
     CMTimeRange { start: time(start), duration: time(duration) }
-}
-
-/// Keeps peaks under full scale without the harshness of clipping: untouched below the knee, rounded off above.
-fn soft_limit(x: f32) -> f32 {
-    const KNEE: f32 = 0.9;
-    let level = x.abs();
-    if level <= KNEE { x } else { (KNEE + (1.0 - KNEE) * ((level - KNEE) / (1.0 - KNEE)).tanh()).copysign(x) }
 }
 
 pub struct Sound {
@@ -242,20 +236,5 @@ impl Drop for Sound {
     fn drop(&mut self) {
         // SAFETY: cancelling is allowed in any state.
         unsafe { self.reader.cancelReading() };
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::soft_limit;
-
-    #[test]
-    fn the_limiter_leaves_normal_levels_alone_and_rounds_off_peaks() {
-        assert_eq!(soft_limit(0.5), 0.5);
-        assert_eq!(soft_limit(-0.9), -0.9);
-        // Far above full scale it settles at full scale, never beyond.
-        assert!(soft_limit(3.0) <= 1.0 && soft_limit(3.0) > 0.99);
-        assert!(soft_limit(-3.0) >= -1.0);
-        assert!(soft_limit(0.95) > 0.9 && soft_limit(0.95) < 0.95);
     }
 }
