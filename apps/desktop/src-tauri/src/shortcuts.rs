@@ -1,11 +1,13 @@
 //! Global shortcuts, available from any app.
 
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+use crate::recording::{self, Recordings};
 use crate::windows;
 
-/// ⌥⇧5 (Alt+Shift+5): new recording. Close to the system's own ⇧⌘5 screenshot shortcut without clashing with it.
+/// ⌥⇧5 (Alt+Shift+5): start a new recording, or stop the one running and open it. Close to the system's own ⇧⌘5
+/// screenshot shortcut without clashing with it.
 fn record() -> Shortcut {
     Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::Digit5)
 }
@@ -15,10 +17,12 @@ pub fn register<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     app.plugin(
         tauri_plugin_global_shortcut::Builder::new()
             .with_handler(move |app, shortcut, event| {
-                if *shortcut == record
-                    && event.state() == ShortcutState::Pressed
-                    && let Err(error) = windows::open_record(app)
-                {
+                if *shortcut != record || event.state() != ShortcutState::Pressed {
+                    return;
+                }
+                if app.state::<Recordings>().is_recording() {
+                    recording::stop_and_edit(app);
+                } else if let Err(error) = windows::open_record(app) {
                     tracing::warn!(%error, "could not open the record dialog");
                 }
             })

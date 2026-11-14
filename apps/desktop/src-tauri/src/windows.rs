@@ -42,7 +42,7 @@ fn standard<'a, R: Runtime, M: Manager<R>>(
     let builder = builder
         .title_bar_style(TitleBarStyle::Overlay)
         .hidden_title(true)
-        .traffic_light_position(LogicalPosition::new(20.0, 19.0));
+        .traffic_light_position(LogicalPosition::new(20.0, 27.5));
     builder
 }
 
@@ -77,7 +77,7 @@ pub fn open_home<R: Runtime>(app: &AppHandle<R>, route: Option<&str>) -> tauri::
 
 pub fn open_editor<R: Runtime>(app: &AppHandle<R>, project: &str) -> tauri::Result<()> {
     set_dock_visible(app, true);
-    let label = format!("editor-{}", sanitize_label(project));
+    let label = editor_label(project);
     if let Some(window) = app.get_webview_window(&label) {
         return focus(&window, None);
     }
@@ -140,7 +140,7 @@ fn floating<'a, R: Runtime>(
     width: f64,
     height: f64,
 ) -> tauri::Result<WebviewWindowBuilder<'a, R, AppHandle<R>>> {
-    Ok(WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
         .title("Shotmaxxing")
         .inner_size(width, height)
         .decorations(false)
@@ -150,9 +150,12 @@ fn floating<'a, R: Runtime>(
         .always_on_top(true)
         .skip_taskbar(true)
         .visible_on_all_workspaces(true)
-        .focused(false)
-        // Excluded from screen capture on both macOS and Windows, so it never appears in a recording.
-        .content_protected(true))
+        .focused(false);
+    // Keeping these windows out of recordings: on macOS the capture filter leaves out the whole app, so screenshots
+    // and screen sharing still see them. Windows has no such filter, so there the window opts out of capture.
+    #[cfg(windows)]
+    let builder = builder.content_protected(true);
+    Ok(builder)
 }
 
 fn monitor_size<R: Runtime>(app: &AppHandle<R>) -> Option<(f64, f64)> {
@@ -166,6 +169,20 @@ fn monitor_width<R: Runtime>(app: &AppHandle<R>) -> Option<f64> {
 }
 
 /// Window labels allow only letters, digits and `-/:_`.
+/// One editor window per project. Paths are long and can share a prefix, so the label uses a hash of the whole
+/// target; the sample keeps a readable label.
+fn editor_label(target: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    // `?export=1` and other options don't make it a different project.
+    let project = target.split('?').next().unwrap_or(target);
+    if project.len() <= 32 && project.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return format!("editor-{}", sanitize_label(project));
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    project.hash(&mut hasher);
+    format!("editor-{:016x}", hasher.finish())
+}
+
 fn sanitize_label(input: &str) -> String {
     input
         .chars()

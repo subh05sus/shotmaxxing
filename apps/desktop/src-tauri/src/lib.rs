@@ -4,8 +4,11 @@
 //! project, the record dialog, and the two floating windows shown while filming (the recording pill and the
 //! agent take card). Video pixels never pass through the web view; the UI only drives the native core.
 
+mod agents;
 mod commands;
 mod platform;
+mod projects;
+mod recording;
 mod shortcuts;
 mod tray;
 mod windows;
@@ -30,6 +33,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(recording::Recordings::default())
         .setup(|app| {
             let handle = app.handle();
             tray::create(handle)?;
@@ -43,9 +47,23 @@ pub fn run() {
             commands::open_permission_settings,
             commands::power_status,
             commands::list_sources,
+            commands::source_thumbnails,
+            commands::list_devices,
+            agents::detect_agents,
             commands::open_window,
             commands::reveal_in_folder,
             commands::connect_agent,
+            recording::start_recording,
+            recording::stop_recording,
+            recording::discard_recording,
+            recording::restart_recording,
+            projects::load_project,
+            projects::save_project,
+            projects::list_projects,
+            projects::plan_auto_zooms,
+            projects::rename_project,
+            projects::duplicate_project,
+            projects::trash_project,
         ])
         .build(tauri::generate_context!())
         .expect("Shotmaxxing could not start");
@@ -53,6 +71,8 @@ pub fn run() {
     app.run(|app, event| match event {
         // Closing the last window keeps the app running in the menu bar. Quit from the menu ends it.
         RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
+        // Quitting mid-recording keeps the take.
+        RunEvent::Exit => app.state::<recording::Recordings>().finish_on_quit(),
         RunEvent::WindowEvent { event: WindowEvent::Destroyed, .. } => {
             if app.webview_windows().is_empty() {
                 windows::set_dock_visible(app, false);

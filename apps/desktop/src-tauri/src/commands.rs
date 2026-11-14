@@ -111,25 +111,105 @@ pub struct CaptureSource {
     id: String,
     kind: &'static str,
     title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app: Option<String>,
     width: u32,
     height: u32,
 }
 
-/// Screens that can be recorded. Windows are listed by the capture engine once recording lands.
+/// Screens and windows that can be recorded. Windows smaller than a thumbnail, and the app's own windows, are left
+/// out.
 #[tauri::command]
-pub fn list_sources<R: Runtime>(app: AppHandle<R>) -> Result<Vec<CaptureSource>, String> {
-    let monitors = app.available_monitors().map_err(|e| e.to_string())?;
-    Ok(monitors
-        .into_iter()
-        .enumerate()
-        .map(|(i, m)| CaptureSource {
-            id: format!("display-{}", i + 1),
-            kind: "display",
-            title: m.name().cloned().unwrap_or_else(|| format!("Display {}", i + 1)),
-            width: m.size().width,
-            height: m.size().height,
-        })
-        .collect())
+pub async fn list_sources<R: Runtime>(app: AppHandle<R>) -> Result<Vec<CaptureSource>, String> {
+    let found = tauri::async_runtime::spawn_blocking(shotmaxxing_capture::sources)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    if found.displays.is_empty() && found.windows.is_empty() {
+        // No capture backend on this platform yet: list the screens the window system knows about.
+        let monitors = app.available_monitors().map_err(|e| e.to_string())?;
+        return Ok(monitors
+            .into_iter()
+            .enumerate()
+            .map(|(i, m)| CaptureSource {
+                id: format!("display-{}", i + 1),
+                kind: "display",
+                title: m.name().cloned().unwrap_or_else(|| format!("Display {}", i + 1)),
+                app: None,
+                width: m.size().width,
+                height: m.size().height,
+            })
+            .collect());
+    }
+    let displays = found.displays.into_iter().map(|d| CaptureSource {
+        id: format!("display-{}", d.id),
+        kind: "display",
+        title: d.name,
+        app: None,
+        width: d.width.round() as u32,
+        height: d.height.round() as u32,
+    });
+    let windows = found.windows.into_iter().map(|w| CaptureSource {
+        id: format!("window-{}", w.id),
+        kind: "window",
+        title: if w.title.is_empty() { w.app.clone() } else { w.title },
+        app: Some(w.app),
+        width: w.width.round() as u32,
+        height: w.height.round() as u32,
+    });
+    Ok(displays.chain(windows).collect())
+}
+
+/// Small pictures of the given sources (ids from `list_sources`), as JPEG data URLs keyed by id. Sources that can't
+/// be pictured are left out, and the picker keeps its placeholder for them.
+#[tauri::command]
+pub async fn source_thumbnails(
+    ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    use base64::Engine;
+    use shotmaxxing_capture::Target;
+    tauri::async_runtime::spawn_blocking(move || {
+        let parsed: Vec<(String, Target)> = ids
+            .into_iter()
+            .filter_map(|id| {
+                let target = if let Some(rest) = id.strip_prefix("display-") {
+                    Target::Display(Some(rest.parse().ok()?))
+                } else {
+                    Target::Window(id.strip_prefix("window-")?.parse().ok()?)
+                };
+                Some((id, target))
+            })
+            .collect();
+        let targets: Vec<Target> = parsed.iter().map(|(_, t)| *t).collect();
+        let pictures = shotmaxxing_capture::thumbnails(&targets, 480).map_err(|e| e.to_string())?;
+        Ok(parsed
+            .into_iter()
+            .zip(pictures)
+            .filter_map(|((id, _), bytes)| {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(bytes?);
+                Some((id, format!("data:image/jpeg;base64,{encoded}")))
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+pub struct Devices {
+    microphones: Vec<shotmaxxing_capture::Device>,
+    cameras: Vec<shotmaxxing_capture::Device>,
+}
+
+/// Microphones and cameras, the system default first in each list.
+#[tauri::command]
+pub async fn list_devices() -> Result<Devices, String> {
+    tauri::async_runtime::spawn_blocking(|| Devices {
+        microphones: shotmaxxing_capture::microphones(),
+        cameras: shotmaxxing_capture::cameras(),
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
