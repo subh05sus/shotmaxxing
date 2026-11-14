@@ -1,0 +1,28 @@
+[package]
+name = "shotmaxxing-cli"
+description = "The shotmaxxing command: record, plan zooms, validate take scripts, and serve agents over MCP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "shotmaxxing"
+path = "src/main.rs"
+
+[dependencies]
+shotmaxxing-core.workspace = true
+shotmaxxing-capture.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+ctrlc = "3"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
