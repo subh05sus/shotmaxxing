@@ -1,0 +1,57 @@
+name: Bug report
+description: Something doesn't work the way it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time. Please check the open issues first; someone may have reported it already.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Click …
+        3. See …
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS 14 Sonoma
+        - macOS 15 Sequoia
+        - macOS 26 Tahoe or later
+        - Windows 10
+        - Windows 11
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Shotmaxxing version
+      placeholder: Settings › About, e.g. 0.1.0
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Did an AI agent drive the recording?
+      options:
+        - 'No'
+        - Claude Code
+        - Claude Desktop
+        - Codex
+        - Cursor
+        - Another agent
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Drag files here. Please blur anything private.
