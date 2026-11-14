@@ -1,6 +1,6 @@
 //! Platforms without a capture backend yet.
 
-use crate::{CaptureError, RecordOptions, Recording, Sources};
+use crate::{CaptureError, Device, RecordOptions, Recording, Sources, Target};
 
 pub fn sources() -> Result<Sources, CaptureError> {
     Ok(Sources::default())
@@ -8,6 +8,20 @@ pub fn sources() -> Result<Sources, CaptureError> {
 
 pub fn has_permission() -> bool {
     true
+}
+
+pub fn prepare() {}
+
+pub fn thumbnails(targets: &[Target], _max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
+    Ok(vec![None; targets.len()])
+}
+
+pub fn microphones() -> Vec<Device> {
+    Vec::new()
+}
+
+pub fn cameras() -> Vec<Device> {
+    Vec::new()
 }
 
 pub struct Recorder;

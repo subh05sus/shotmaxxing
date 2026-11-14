@@ -73,6 +73,15 @@ pub struct WindowInfo {
     pub height: f64,
 }
 
+/// A microphone or camera.
+#[derive(Clone, Debug, Serialize)]
+pub struct Device {
+    pub id: String,
+    pub name: String,
+    /// The one the system uses unless told otherwise.
+    pub is_default: bool,
+}
+
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Sources {
     pub displays: Vec<DisplayInfo>,
@@ -127,6 +136,32 @@ pub struct Recording {
 /// Lists displays and on-screen windows.
 pub fn sources() -> Result<Sources, CaptureError> {
     imp::sources()
+}
+
+/// A JPEG of each target, at most `max_width` pixels wide, in the same order; `None` where no picture could be
+/// taken. Used for the source picker.
+pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
+    imp::thumbnails(targets, max_width)
+}
+
+/// Microphones, the system default first.
+pub fn microphones() -> Vec<Device> {
+    let mut found = imp::microphones();
+    found.sort_by_key(|d| !d.is_default);
+    found
+}
+
+/// Cameras, the system default first.
+pub fn cameras() -> Vec<Device> {
+    let mut found = imp::cameras();
+    found.sort_by_key(|d| !d.is_default);
+    found
+}
+
+/// Command-line tools call this once from their main thread before recording from another thread. Apps don't need
+/// to: they are connected to the window server already.
+pub fn prepare() {
+    imp::prepare();
 }
 
 /// Whether the app may capture the screen right now.

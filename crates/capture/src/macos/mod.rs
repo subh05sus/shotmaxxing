@@ -2,7 +2,10 @@
 
 mod clock;
 mod input;
+mod preview;
 mod writer;
+
+pub use preview::{cameras, microphones, thumbnails};
 
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};
@@ -16,8 +19,8 @@ use objc2::{AllocAnyThread, DefinedClass, define_class, msg_send};
 use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
 use objc2_screen_capture_kit::{
-    SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutput, SCStreamOutputType,
-    SCWindow,
+    SCContentFilter, SCRunningApplication, SCShareableContent, SCStream, SCStreamConfiguration,
+    SCStreamOutput, SCStreamOutputType,
 };
 
 use crate::{CaptureError, DisplayInfo, RecordOptions, Recording, Sources, Target, WindowInfo};
@@ -35,11 +38,23 @@ unsafe extern "C" {
 
 /// Connects to the window server. The app already is connected; a command-line process isn't until something
 /// asks, and CoreGraphics asserts if an input or cursor call comes first from a background thread.
+pub fn prepare() {
+    ensure_window_server();
+}
+
 fn ensure_window_server() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        NSApplicationLoad();
+        // An app is connected already, and its recordings start off the main thread; only a command-line tool
+        // starting from its main thread needs the explicit connection.
+        if pthread_main_np() != 0 {
+            NSApplicationLoad();
+        }
     });
+}
+
+unsafe extern "C" {
+    safe fn pthread_main_np() -> i32;
 }
 
 /// Moves a value to another thread. Used only for framework objects that are documented as safe to hand over.
@@ -111,7 +126,8 @@ pub fn sources() -> Result<Sources, CaptureError> {
             .filter(|w| w.windowLayer() == 0 && w.isOnScreen())
             .filter_map(|w| {
                 let app = w.owningApplication()?;
-                if app.processID() == own_pid {
+                let bundle = app.bundleIdentifier().to_string();
+                if app.processID() == own_pid || is_system_ui(&bundle) {
                     return None;
                 }
                 let title = w.title().map(|t| t.to_string()).unwrap_or_default();
@@ -123,7 +139,7 @@ pub fn sources() -> Result<Sources, CaptureError> {
                     id: w.windowID(),
                     title,
                     app: app.applicationName().to_string(),
-                    bundle_id: app.bundleIdentifier().to_string(),
+                    bundle_id: bundle,
                     x: frame.origin.x,
                     y: frame.origin.y,
                     width: frame.size.width,
@@ -133,6 +149,23 @@ pub fn sources() -> Result<Sources, CaptureError> {
             .collect();
         Ok(Sources { displays, windows })
     }
+}
+
+/// Parts of macOS itself that own windows but aren't worth recording on their own (overlays, the Dock, menus).
+fn is_system_ui(bundle: &str) -> bool {
+    const SYSTEM: [&str; 10] = [
+        "com.apple.WindowManager",
+        "com.apple.dock",
+        "com.apple.controlcenter",
+        "com.apple.notificationcenterui",
+        "com.apple.Spotlight",
+        "com.apple.systemuiserver",
+        "com.apple.TextInputMenuAgent",
+        "com.apple.screencaptureui",
+        "com.apple.wallpaper.agent",
+        "com.apple.loginwindow",
+    ];
+    bundle.is_empty() || SYSTEM.contains(&bundle)
 }
 
 /// What the stream output shares with the recorder.
@@ -207,18 +240,24 @@ impl Recorder {
                         None => displays.iter().next(),
                     }
                     .ok_or_else(|| CaptureError::SourceNotFound("that display".into()))?;
-                    // Leave our own windows (the recording pill, the take card) out of the video.
-                    let own: Vec<Retained<SCWindow>> = content
-                        .windows()
-                        .iter()
-                        .filter(|w| w.owningApplication().is_some_and(|a| a.processID() == own_pid))
-                        .collect();
-                    let excluded = NSArray::from_retained_slice(&own);
-                    let filter = SCContentFilter::initWithDisplay_excludingWindows(
-                        SCContentFilter::alloc(),
-                        &display,
-                        &excluded,
-                    );
+                    // Leave this app out of the video, including windows it opens later (the recording pill and
+                    // the take card).
+                    let own_app: Vec<Retained<SCRunningApplication>> =
+                        content.applications().iter().filter(|a| a.processID() == own_pid).collect();
+                    let filter = if own_app.is_empty() {
+                        SCContentFilter::initWithDisplay_excludingWindows(
+                            SCContentFilter::alloc(),
+                            &display,
+                            &NSArray::new(),
+                        )
+                    } else {
+                        SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
+                            SCContentFilter::alloc(),
+                            &display,
+                            &NSArray::from_retained_slice(&own_app),
+                            &NSArray::new(),
+                        )
+                    };
                     (filter, display.frame().origin, None, None)
                 }
                 Target::Window(id) => {
