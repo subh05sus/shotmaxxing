@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Bot, Check, Circle, Download, Play, Scissors } from '@lucide/svelte';
+  import { Bot, Check, Download, MonitorDot, Play, Scissors } from '@lucide/svelte';
   import { Button, CheckDraw, Sheet } from '@shotmaxxing/ui';
   import Scene from '../../components/Scene.svelte';
   import { GUIDES, type Guide } from '../../lib/sample';
@@ -8,8 +8,8 @@
   import { go } from '../../lib/router.svelte';
   import { wallpaper } from '../../lib/wallpapers';
 
-  const GROUPS: { id: Guide['group']; icon: typeof Circle; blurb: string }[] = [
-    { id: 'Record', icon: Circle, blurb: 'Film a window, a screen or yourself.' },
+  const GROUPS: { id: Guide['group']; icon: typeof MonitorDot; blurb: string }[] = [
+    { id: 'Record', icon: MonitorDot, blurb: 'Film a window, a screen or yourself.' },
     { id: 'Edit', icon: Scissors, blurb: 'Zooms, cursor, trims and privacy.' },
     { id: 'Export', icon: Download, blurb: 'The right file for where it’s going.' },
     { id: 'Use with AI', icon: Bot, blurb: 'Let an agent film the demo for you.' },

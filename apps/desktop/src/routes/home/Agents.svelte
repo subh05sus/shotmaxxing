@@ -134,7 +134,7 @@
       </Group>
     </div>
 
-    <aside class="flex flex-col gap-6">
+    <aside class="flex flex-col gap-6 lg:pt-[calc(var(--text-caption--line-height)+6px)]">
       <section class="rounded-card border border-border bg-surface p-4 shadow-[var(--elev-1)]">
         <h3 class="flex items-center gap-2 text-callout font-semibold">
           <Sparkles size={15} class="text-accent-text" aria-hidden="true" /> Try asking

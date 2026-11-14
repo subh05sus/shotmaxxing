@@ -249,6 +249,7 @@ export function fromCore(core: CoreProject, os: Os): Project {
     audio: { mic: mic?.volume ?? 1, system: system?.volume ?? 1, cleanup: false, silence: false },
     captions: { state: core.captions.length ? 'ready' : 'none', style: 'bar', show: true },
     keystrokes: core.zoom.keystrokes,
+    has: { mic: !!mic, system: !!system, camera: core.tracks.some((t) => t.kind === 'camera') },
   };
 }
 

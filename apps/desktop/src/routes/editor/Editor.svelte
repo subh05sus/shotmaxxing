@@ -446,13 +446,16 @@
             aria-pressed={ed.tool === tool.id}
             class={[
               'press-icon flex w-14 flex-col items-center gap-1 rounded-[9px] py-2 text-caption font-medium transition-colors duration-[var(--dur-fast)]',
-              ed.tool === tool.id
-                ? 'bg-accent-tint text-accent-text'
-                : 'text-fg-muted hover:bg-fill hover:text-fg',
+              ed.tool === tool.id ? 'bg-fill-strong text-fg' : 'text-fg-muted hover:bg-fill hover:text-fg',
             ]}
             onclick={() => (ed.tool = tool.id)}
           >
-            <Icon size={19} strokeWidth={1.9} aria-hidden="true" />
+            <Icon
+              size={19}
+              strokeWidth={1.9}
+              class={ed.tool === tool.id ? 'text-accent-text' : undefined}
+              aria-hidden="true"
+            />
             {tool.label}
           </button>
         </Tooltip>

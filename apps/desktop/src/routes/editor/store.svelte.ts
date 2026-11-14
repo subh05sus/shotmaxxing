@@ -72,6 +72,8 @@ export interface Project {
   audio: { mic: number; system: number; cleanup: boolean; silence: boolean };
   captions: { state: 'none' | 'busy' | 'ready'; style: 'bar' | 'bold'; show: boolean };
   keystrokes: boolean;
+  /** Which tracks the take has, so panels only offer what exists. */
+  has: { mic: boolean; system: boolean; camera: boolean };
 }
 
 export type Selection = { kind: 'zoom' | 'effect' | 'clip'; id: string } | null;
@@ -126,6 +128,7 @@ function sampleProject(): Project {
     audio: { mic: 0.9, system: 0.6, cleanup: true, silence: false },
     captions: { state: 'none', style: 'bar', show: true },
     keystrokes: true,
+    has: { mic: true, system: true, camera: true },
   };
 }
 

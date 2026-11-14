@@ -1,5 +1,8 @@
 <script lang="ts">
   import {
+    ArrowDownLeft,
+    ArrowDownRight,
+    ArrowUpLeft,
     ArrowUpRight,
     BookOpen,
     Captions,
@@ -300,7 +303,7 @@
               type="button"
               class={[
                 'ring-inside flex w-full items-center gap-2 rounded-[7px] px-2 py-1.5 text-left',
-                ed.selection?.id === z.id ? 'bg-accent-tint' : 'hover:bg-fill',
+                ed.selection?.id === z.id ? 'bg-fill-strong' : 'hover:bg-fill',
               ]}
               onclick={() => {
                 ed.selection = { kind: 'zoom', id: z.id };
@@ -395,7 +398,7 @@
                 type="button"
                 class={[
                   'ring-inside flex w-full items-center gap-2 rounded-[7px] px-2 py-1.5 text-left text-footnote',
-                  ed.selection?.id === e.id ? 'bg-accent-tint' : 'hover:bg-fill',
+                  ed.selection?.id === e.id ? 'bg-fill-strong' : 'hover:bg-fill',
                 ]}
                 onclick={() => {
                   ed.selection = { kind: 'effect', id: e.id };
@@ -409,6 +412,11 @@
           {/each}
         </ul>
       {/if}
+    {:else if ed.tool === 'camera' && !p.has.camera}
+      <p class="text-footnote text-fg-muted">
+        This take was recorded without a camera. Turn on Camera in the record dialog to put yourself in a
+        bubble next time.
+      </p>
     {:else if ed.tool === 'camera'}
       <label class="flex h-10 items-center justify-between text-callout font-medium">
         Show camera
@@ -418,12 +426,6 @@
           onchange={(v) => ed.change('Camera', () => (p.webcam.on = v))}
         />
       </label>
-      {#if !p.webcam.on}
-        <p class="text-footnote text-fg-muted">
-          This take has no camera track. Turn on Camera in the record dialog next time, or try the layout
-          here.
-        </p>
-      {/if}
       <p class="eyebrow mt-2">Shape</p>
       <Segmented
         label="Bubble shape"
@@ -449,13 +451,14 @@
       <Segmented
         label="Corner"
         size="sm"
+        iconsOnly
         value={p.webcam.corner}
         onchange={(v) => ed.change('Bubble corner', () => (p.webcam.corner = v))}
         options={[
-          { value: 'tl', label: 'Top left' },
-          { value: 'tr', label: 'Top right' },
-          { value: 'bl', label: 'Bottom left' },
-          { value: 'br', label: 'Bottom right' },
+          { value: 'tl', label: 'Top left', icon: ArrowUpLeft },
+          { value: 'tr', label: 'Top right', icon: ArrowUpRight },
+          { value: 'bl', label: 'Bottom left', icon: ArrowDownLeft },
+          { value: 'br', label: 'Bottom right', icon: ArrowDownRight },
         ]}
       />
       <label class="mt-1 flex h-9 items-center justify-between text-callout">
@@ -470,47 +473,62 @@
           onchange={(v) => ed.change('Shrink', () => (p.webcam.shrink = v))}
         />
       </label>
+    {:else if ed.tool === 'audio' && !p.has.mic && !p.has.system}
+      <p class="text-footnote text-fg-muted">
+        This take was recorded without sound. Turn on Microphone or System audio in the record dialog to
+        record it next time.
+      </p>
     {:else if ed.tool === 'audio'}
-      <Slider
-        label="Microphone"
-        value={p.audio.mic}
-        min={0}
-        max={1.5}
-        step={0.05}
-        format={pct}
-        onchange={(v) => ed.change('Mic volume', () => (p.audio.mic = v))}
-      />
-      <Slider
-        label="System audio"
-        value={p.audio.system}
-        min={0}
-        max={1.5}
-        step={0.05}
-        format={pct}
-        onchange={(v) => ed.change('System volume', () => (p.audio.system = v))}
-      />
-      <label class="mt-1 flex h-9 items-center justify-between text-callout">
-        <span class="flex items-center gap-1"
-          >Clean up my voice <InfoTip text="Removes hum, fans and room echo. Runs on this computer." /></span
-        >
-        <Switch
-          checked={p.audio.cleanup}
-          label="Clean up my voice"
-          onchange={(v) => ed.change('Voice cleanup', () => (p.audio.cleanup = v))}
-        />
-      </label>
-      <label class="flex h-9 items-center justify-between text-callout">
-        <span class="flex items-center gap-1"
-          >Cut long silences <InfoTip
-            text="Pauses longer than a second become short ones. You can bring any back on the timeline."
-          /></span
-        >
-        <Switch
-          checked={p.audio.silence}
-          label="Cut long silences"
-          onchange={(v) => ed.change('Cut silences', () => (p.audio.silence = v))}
-        />
-      </label>
+      {#if p.has.mic}<Slider
+          label="Microphone"
+          value={p.audio.mic}
+          min={0}
+          max={1.5}
+          step={0.05}
+          format={pct}
+          onchange={(v) => ed.change('Mic volume', () => (p.audio.mic = v))}
+        />{/if}
+      {#if p.has.system}<Slider
+          label="System audio"
+          value={p.audio.system}
+          min={0}
+          max={1.5}
+          step={0.05}
+          format={pct}
+          onchange={(v) => ed.change('System volume', () => (p.audio.system = v))}
+        />{/if}
+      {#if p.has.mic}<label class="mt-1 flex h-9 items-center justify-between text-callout">
+          <span class="flex items-center gap-1"
+            >Clean up my voice <InfoTip
+              text="Removes hum, fans and room echo. Runs on this computer."
+            /></span
+          >
+          <Switch
+            checked={p.audio.cleanup}
+            label="Clean up my voice"
+            onchange={(v) => ed.change('Voice cleanup', () => (p.audio.cleanup = v))}
+          />
+        </label>
+        <label class="flex h-9 items-center justify-between text-callout">
+          <span class="flex items-center gap-1"
+            >Cut long silences <InfoTip
+              text="Pauses longer than a second become short ones. You can bring any back on the timeline."
+            /></span
+          >
+          <Switch
+            checked={p.audio.silence}
+            label="Cut long silences"
+            onchange={(v) => ed.change('Cut silences', () => (p.audio.silence = v))}
+          />
+        </label>{/if}
+    {:else if !p.has.mic}
+      <p class="flex items-center gap-1.5 rounded-[8px] bg-fill px-2.5 py-2 text-footnote text-fg-muted">
+        <Lock size={13} aria-hidden="true" /> Everything here runs on this computer. Nothing is uploaded.
+      </p>
+      <p class="mt-3 text-footnote text-fg-muted">
+        Captions, voice cleanup and cutting silences work on your voice. This take was recorded without a
+        microphone.
+      </p>
     {:else}
       <p class="flex items-center gap-1.5 rounded-[8px] bg-fill px-2.5 py-2 text-footnote text-fg-muted">
         <Lock size={13} aria-hidden="true" /> Everything here runs on this computer. Nothing is uploaded.
@@ -539,8 +557,10 @@
               >Transcribing… {Math.round(captionProgress * 100)}%</span
             >
           {:else}
-            <Button size="sm" icon={Sparkles} onclick={generateCaptions}>Generate captions</Button>
-            <span class="text-caption text-fg-subtle">First run downloads a 140 MB model</span>
+            <div class="flex flex-col items-start gap-1.5">
+              <Button size="sm" icon={Sparkles} onclick={generateCaptions}>Generate captions</Button>
+              <span class="text-caption text-fg-subtle">The first time downloads a 140 MB model.</span>
+            </div>
           {/if}
         </div>
         {#if p.captions.state === 'ready'}

@@ -103,7 +103,7 @@
         aria-checked={preset === item.id}
         class={[
           'ring-inside press-card flex items-center gap-3 rounded-[10px] border px-3 py-2.5 text-left',
-          preset === item.id ? 'border-transparent bg-accent-tint' : 'border-border hover:bg-fill',
+          preset === item.id ? 'border-transparent bg-fill-strong' : 'border-border hover:bg-fill',
         ]}
         onclick={() => (preset = item.id)}
       >
