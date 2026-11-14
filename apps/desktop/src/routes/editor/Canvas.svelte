@@ -54,6 +54,25 @@
   const win = $derived(placeWindow(frame, capture, p.canvas.padding));
   const k = $derived(win.width / capture.width);
   const cursor = $derived(cursorAt(ed.time, ed.cursorPath));
+
+  // Motion blur, as the export draws it: copies from where the cursor was 15 ms ago to where it is, added together
+  // (plus-lighter is the browser's version of the export's additive blend) with more weight at the front.
+  const SMEAR_S = 0.3 * 0.05;
+  const smear = $derived.by(() => {
+    if (!p.cursor.motionBlur) return null;
+    const back = cursorAt(Math.max(0, ed.time - SMEAR_S), ed.cursorPath);
+    const dx = (back.x - cursor.x) * k;
+    const dy = (back.y - cursor.y) * k;
+    const distance = Math.hypot(dx, dy);
+    if (distance < k) return null;
+    const count = Math.min(10, Math.max(2, Math.ceil(distance / (cursorPx * 0.12))));
+    const weights = Array.from({ length: count }, (_, i) => 1 + (2 * i) / (count - 1));
+    const total = weights.reduce((a, b) => a + b, 0);
+    return weights.map((w, i) => {
+      const behind = 1 - i / (count - 1);
+      return { x: dx * behind, y: dy * behind, opacity: w / total };
+    });
+  });
   const cam = $derived(
     cameraAt(ed.time, p.zooms, capture, { motion: p.zoom.motion, follow: p.zoom.follow, cursor }),
   );
@@ -266,34 +285,20 @@
                 style:background={SPOTLIGHT}
               ></span>
             {/if}
-            {#if p.cursor.style === 'dot'}
-              <span
-                class="absolute rounded-full border-solid border-[var(--cursor-light)] bg-[var(--cursor-dark)]"
-                style:left="{-cursorPx * 0.35}px"
-                style:top="{-cursorPx * 0.35}px"
-                style:width="{cursorPx * 0.7}px"
-                style:height="{cursorPx * 0.7}px"
-                style:border-width="{ringPx}px"
-              ></span>
+            {#if smear}
+              <div class="absolute left-0 top-0 isolate">
+                {#each smear as copy, i (i)}
+                  <div
+                    class="absolute left-0 top-0 mix-blend-plus-lighter"
+                    style:transform="translate({copy.x}px, {copy.y}px)"
+                    style:opacity={copy.opacity}
+                  >
+                    {@render pointer()}
+                  </div>
+                {/each}
+              </div>
             {:else}
-              <!-- The arrow's tip sits at (2, 1.5) in its box, so the box is moved back by that much. -->
-              <svg
-                width={cursorPx}
-                height={cursorPx * 1.4}
-                viewBox="0 0 20 28"
-                class="absolute overflow-visible"
-                style:left="{-2 * unit}px"
-                style:top="{-1.5 * unit}px"
-                aria-hidden="true"
-              >
-                <path
-                  d="M2 1.5 L2 22 L7.2 17.4 L10.6 25.6 L14 24.2 L10.7 16.2 L17.6 16.2 Z"
-                  fill={p.cursor.style === 'mac' ? 'var(--cursor-dark)' : 'var(--cursor-light)'}
-                  stroke={p.cursor.style === 'mac' ? 'var(--cursor-light)' : 'var(--cursor-dark)'}
-                  stroke-width="1.6"
-                  stroke-linejoin="round"
-                />
-              </svg>
+              {@render pointer()}
             {/if}
           </div>
         {/if}
@@ -360,3 +365,35 @@
     </div>
   {/if}
 </div>
+
+{#snippet pointer()}
+  {#if p.cursor.style === 'dot'}
+    <span
+      class="absolute rounded-full border-solid border-[var(--cursor-light)] bg-[var(--cursor-dark)]"
+      style:left="{-cursorPx * 0.35}px"
+      style:top="{-cursorPx * 0.35}px"
+      style:width="{cursorPx * 0.7}px"
+      style:height="{cursorPx * 0.7}px"
+      style:border-width="{ringPx}px"
+    ></span>
+  {:else}
+    <!-- The arrow's tip sits at (2, 1.5) in its box, so the box is moved back by that much. -->
+    <svg
+      width={cursorPx}
+      height={cursorPx * 1.4}
+      viewBox="0 0 20 28"
+      class="absolute overflow-visible"
+      style:left="{-2 * unit}px"
+      style:top="{-1.5 * unit}px"
+      aria-hidden="true"
+    >
+      <path
+        d="M2 1.5 L2 22 L7.2 17.4 L10.6 25.6 L14 24.2 L10.7 16.2 L17.6 16.2 Z"
+        fill={p.cursor.style === 'mac' ? 'var(--cursor-dark)' : 'var(--cursor-light)'}
+        stroke={p.cursor.style === 'mac' ? 'var(--cursor-light)' : 'var(--cursor-dark)'}
+        stroke-width="1.6"
+        stroke-linejoin="round"
+      />
+    </svg>
+  {/if}
+{/snippet}

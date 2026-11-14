@@ -19,6 +19,9 @@ const IDLE_S: f64 = 2.5;
 const KEY_S: f64 = 0.9;
 /// The cursor's drawn width at size 1, in capture points: about the real cursor's size.
 pub const CURSOR_POINTS: f64 = 20.0;
+/// How long the cursor smears at full motion blur. The editor's switch uses 0.3 of it: 15 ms, which only shows on
+/// fast moves.
+pub const MOTION_BLUR_S: f64 = 0.05;
 
 /// Sizes that stay the same for a whole export.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -185,6 +188,8 @@ pub struct CursorDraw {
     pub press: f64,
     /// How far a click ring has grown, 0 to 1.
     pub ripple: Option<f64>,
+    /// Where the hotspot was when the motion-blur shutter opened, when the cursor moved since.
+    pub from: Option<Point>,
 }
 
 /// Everything that changes from frame to frame. Effects are indexes into the project's lists.
@@ -228,10 +233,17 @@ pub fn frame_at(project: &RenderProject, layout: &Layout, t: f64) -> Frame {
         }
         let click = project.clicks.iter().find(|(ct, _)| t >= *ct && t < ct + CLICK_S);
         let age = click.map(|(ct, _)| (t - ct) / CLICK_S);
+        let shutter = project.motion_blur * MOTION_BLUR_S;
+        let from = (shutter > 0.0)
+            .then(|| position_at(&project.path, (t - shutter).max(0.0) * 1_000_000.0))
+            .flatten()
+            .filter(|q| q.distance(p) >= 1.0)
+            .map(|q| layout.point_to_frame(q));
         Some(CursorDraw {
             at: layout.point_to_frame(p),
             press: if project.click == Click::Press && age.is_some_and(|a| a < 0.3) { 0.85 } else { 1.0 },
             ripple: if project.click == Click::Ripple { age } else { None },
+            from,
         })
     });
 
@@ -308,5 +320,37 @@ mod tests {
         let frame = frame_at(&project, &layout, 5.0);
         // The top-left corner of the frame stays covered: tx and ty can't go positive.
         assert!(frame.view.tx <= 1e-9 && frame.view.ty <= 1e-9, "{:?}", frame.view);
+    }
+
+    #[test]
+    fn the_cursor_smears_only_while_it_moves() {
+        use shotmaxxing_core::telemetry::CursorSample;
+        let sample = |t_us: u64, x: f64| CursorSample { t_us, x, y: 300.0, ..CursorSample::default() };
+        // A fast move from 100 to 900 between 1 s and 1.3 s, then still, sampled every 10 ms as the recorder does.
+        let path: Vec<CursorSample> = (0..=500u64)
+            .map(|i| {
+                let u = ((i as f64 / 100.0 - 1.0) / 0.3).clamp(0.0, 1.0);
+                sample(i * 10_000, 100.0 + 800.0 * u)
+            })
+            .collect();
+        let mut project = RenderProject::from_parts(
+            std::path::Path::new("/tmp"),
+            &shotmaxxing_core::project::Project::default(),
+            &path,
+            &[],
+        );
+        project.capture = CAPTURE;
+        project.duration = 5.0;
+        project.hide_idle = false;
+        let layout = Layout::new(&project, 1920, 1080);
+
+        project.motion_blur = 1.0;
+        let moving = frame_at(&project, &layout, 1.15).cursor.expect("a cursor mid-move");
+        let from = moving.from.expect("a smear mid-move");
+        assert!(from.x < moving.at.x, "the smear trails behind: {from:?} → {:?}", moving.at);
+        assert!(frame_at(&project, &layout, 4.0).cursor.unwrap().from.is_none(), "no smear when still");
+
+        project.motion_blur = 0.0;
+        assert!(frame_at(&project, &layout, 1.15).cursor.unwrap().from.is_none(), "no smear when it's off");
     }
 }

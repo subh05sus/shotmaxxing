@@ -252,6 +252,44 @@ impl<'a> Compositor<'a> {
         unsafe { top.imageByCompositingOverImage(bottom) }
     }
 
+    /// Adds two premultiplied images, for averaging copies.
+    fn add(top: &CIImage, bottom: &CIImage) -> Retained<CIImage> {
+        // SAFETY: a built-in filter with valid inputs.
+        unsafe {
+            top.imageByApplyingFilter_withInputParameters(
+                ns_string!("CIAdditionCompositing"),
+                &params(&[(ns_string!("inputBackgroundImage"), bottom.as_ref())]),
+            )
+        }
+    }
+
+    /// The cursor smeared along its path during the shutter: copies from where it was (`back`, an offset from its
+    /// place now) to where it is, averaged so the smear never gets darker than the cursor, with more weight at the
+    /// front so it stays easy to follow.
+    fn smear(
+        &self,
+        image: &CIImage,
+        (x, y, w, h): (f64, f64, f64, f64),
+        back: (f64, f64),
+    ) -> Retained<CIImage> {
+        let copies = (back.0.hypot(back.1) / (w.max(1.0) * 0.12)).ceil().clamp(2.0, 10.0) as usize;
+        let weight = |i: usize| 1.0 + 2.0 * i as f64 / (copies - 1) as f64;
+        let total: f64 = (0..copies).map(weight).sum();
+        let mut layer: Option<Retained<CIImage>> = None;
+        for i in 0..copies {
+            let behind = 1.0 - i as f64 / (copies - 1) as f64;
+            let copy = Self::opacity(
+                self.place(image, x + back.0 * behind, y + back.1 * behind, w, h),
+                weight(i) / total,
+            );
+            layer = Some(match layer {
+                Some(layer) => Self::add(&copy, &layer),
+                None => copy,
+            });
+        }
+        layer.unwrap_or_else(|| self.place(image, x, y, w, h))
+    }
+
     /// `image`'s shape in black at `alpha`, for shadows.
     fn shade(image: &CIImage, alpha: f64) -> Retained<CIImage> {
         // SAFETY: a built-in filter with valid inputs.
@@ -401,7 +439,17 @@ impl<'a> Compositor<'a> {
             }
             if let Some(cursor) = &self.cursor {
                 let (x, y, w, h) = at(cursor, 1.0);
-                out = Self::over(&self.place(&cursor.image, x, y, w, h), &out);
+                out = match c.from {
+                    Some(from) => Self::over(
+                        &self.smear(
+                            &cursor.image,
+                            (x, y, w, h),
+                            (v.tx + s * from.x - hx, v.ty + s * from.y - hy),
+                        ),
+                        &out,
+                    ),
+                    None => Self::over(&self.place(&cursor.image, x, y, w, h), &out),
+                };
             }
         }
 

@@ -129,6 +129,8 @@ pub struct RenderProject {
     pub click: Click,
     pub spotlight: bool,
     pub hide_idle: bool,
+    /// Motion blur strength, 0 (off) to 1: the cursor smears over `MOTION_BLUR_S` times this.
+    pub motion_blur: f64,
     /// The drawn cursor path, in seconds and capture points.
     pub path: Vec<CursorSample>,
     pub clicks: Vec<(f64, Point)>,
@@ -326,6 +328,7 @@ impl RenderProject {
             click,
             spotlight: style.spotlight.enabled,
             hide_idle: style.auto_hide_ms.unwrap_or(0) > 0,
+            motion_blur: if style.motion_blur.is_finite() { style.motion_blur.clamp(0.0, 1.0) } else { 0.0 },
             path,
             clicks,
             keys,
