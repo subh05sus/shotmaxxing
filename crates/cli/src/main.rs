@@ -1,5 +1,5 @@
 //! `shotmaxxing`: record from the terminal, export finished videos, re-plan auto zoom, check take scripts, and
-//! (soon) serve AI agents.
+//! serve AI agents over MCP.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,6 +16,8 @@ use shotmaxxing_core::telemetry::{decode_cursor, read_events};
 use shotmaxxing_core::timeparse::{format_timecode, parse_duration_us};
 use shotmaxxing_core::zoom::{ZoomInput, plan_zooms};
 use shotmaxxing_render::{ExportOptions, Format, RenderProject, default_bitrate, output_size, unique_path};
+
+mod mcp;
 
 #[derive(Parser)]
 #[command(
@@ -56,6 +58,8 @@ enum Command {
     /// Check or describe take scripts.
     #[command(subcommand)]
     Take(TakeCommand),
+    /// Serve AI agents over MCP, on stdin and stdout. Agents start this themselves once connected.
+    Mcp,
 }
 
 #[derive(Args)]
@@ -181,6 +185,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Info { project } => info(&project, cli.json),
         Command::Zoom { project, depth } => zoom(&project, depth.into(), cli.json),
         Command::Take(TakeCommand::Validate { file }) => validate(&file, cli.json),
+        Command::Mcp => mcp::serve(),
         Command::Take(TakeCommand::Schema) => {
             println!("{}", serde_json::to_string_pretty(&shotmaxxing_core::take::json_schema())?);
             Ok(())
@@ -435,6 +440,17 @@ fn info(path: &Path, json: bool) -> Result<()> {
 }
 
 fn zoom(path: &Path, depth: ZoomDepth, json: bool) -> Result<()> {
+    let (root, project) = replan(path, depth)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&project.zooms)?);
+    } else {
+        print_summary(&root, &project);
+    }
+    Ok(())
+}
+
+/// Plans a project's automatic zooms again from its recorded clicks and typing, keeping a version first.
+fn replan(path: &Path, depth: ZoomDepth) -> Result<(PathBuf, Project)> {
     let (bundle, mut project) =
         ProjectBundle::open(path).with_context(|| format!("couldn't open {}", path.display()))?;
     let cursor = std::fs::read(bundle.root().join(CURSOR_FILE))
@@ -459,12 +475,7 @@ fn zoom(path: &Path, depth: ZoomDepth, json: bool) -> Result<()> {
     };
     project.zooms = plan_zooms(&input, &project.zoom.tuning, depth, project.zoom.motion.transition_ms());
     bundle.save(&mut project)?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&project.zooms)?);
-    } else {
-        print_summary(bundle.root(), &project);
-    }
-    Ok(())
+    Ok((bundle.root().to_path_buf(), project))
 }
 
 fn validate(file: &Path, json: bool) -> Result<()> {
