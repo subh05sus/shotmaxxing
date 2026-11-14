@@ -1,0 +1,55 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds the app and drafts a GitHub release with it. Windows joins once its capture
+# and export land.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS on ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple silicon
+            target: aarch64-apple-darwin
+          - name: Intel
+            target: x86_64-apple-darwin
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      # Agents start the shotmaxxing command, which ships inside the app next to the app's own binary.
+      - run: node scripts/build-cli-sidecar.mjs --target ${{ matrix.target }}
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: Shotmaxxing ${{ github.ref_name }}
+          releaseBody: |
+            A preview build for macOS 14 and later. It isn't notarized yet, so macOS blocks it the first time:
+            open System Settings → Privacy & Security and choose Open Anyway.
+          releaseDraft: true
+          prerelease: true
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json

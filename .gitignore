@@ -17,6 +17,8 @@ target/
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/
+# The command line tool, copied in for release bundles by scripts/build-cli-sidecar.mjs
+apps/desktop/src-tauri/binaries/
 
 # Native build artifacts
 *.o

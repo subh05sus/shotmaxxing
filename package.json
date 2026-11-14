@@ -14,6 +14,7 @@
     "lint": "node scripts/design-guard.mjs && prettier --check .",
     "format": "prettier --write .",
     "tauri": "pnpm --filter @shotmaxxing/desktop tauri",
+    "bundle": "node scripts/build-cli-sidecar.mjs && pnpm --filter @shotmaxxing/desktop tauri build --config src-tauri/tauri.release.conf.json",
     "icons": "node scripts/build-icons.mjs"
   },
   "devDependencies": {
