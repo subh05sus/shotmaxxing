@@ -1,0 +1,126 @@
+/* Base styles: the page, text, focus and the utilities every screen uses. */
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--os-font);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    font-kerning: normal;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* Desktop apps don't select UI text on drag; fields and content opt back in. */
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+    overflow: hidden;
+  }
+
+  input,
+  textarea,
+  [contenteditable='true'],
+  .selectable {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: 0;
+    font-weight: 600;
+    text-wrap: balance;
+  }
+
+  p {
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+    cursor: default;
+  }
+
+  ::selection {
+    background: var(--accent-tint);
+  }
+
+  /* One focus ring for keyboard users: 2 px, 2 px off the control, never for mouse clicks. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  img,
+  svg {
+    display: block;
+  }
+}
+
+/* Numbers that update or line up never jiggle. */
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Scroll areas keep 6 px of inner room so rings, shadows and selection outlines are never cut off at the edge. */
+@utility scroll-room {
+  padding: 6px;
+  scroll-padding: 6px;
+}
+
+/* A focus ring drawn inside the element, for rows and tiles that sit flush in a scroll area. */
+@utility ring-inside {
+  &:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
+  }
+}
+
+/* Small caps section label. */
+@utility eyebrow {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+
+/* Long text reads best at about 65 characters a line. */
+@utility measure {
+  max-width: 65ch;
+}
+
+/* Parts of a frameless title bar that drag the window. */
+@utility drag-region {
+  -webkit-app-region: drag;
+}
+
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Thin, quiet scrollbars that match the platform. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--fill-strong) transparent;
+}
+
+/* Floating windows (the recording pill, the take card) let the desktop show through. */
+:root[data-transparent] body {
+  background: transparent;
+}

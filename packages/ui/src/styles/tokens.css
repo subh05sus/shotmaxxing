@@ -1,0 +1,262 @@
+/*
+ * Shotmaxxing design tokens.
+ *
+ * Every colour is OKLCH so hover, pressed and disabled steps change lightness evenly in both themes. Components use
+ * the semantic names below (bg-surface, text-fg-muted, ...), never raw colours. This file and the wallpaper data are
+ * the only places colour literals are allowed (enforced by scripts/design-guard.mjs).
+ *
+ * <html> carries:
+ *   data-os="mac" | "windows"        native-per-OS shapes and type
+ *   data-theme="light" | "dark"      resolved theme (follows the system unless overridden)
+ *   data-material="native"           the OS draws translucent material behind chrome (vibrancy / Mica)
+ *   data-motion="full" | "fades"     Reduce Motion or Low power drops motion to fades
+ */
+
+@theme inline {
+  --font-sans: var(--os-font);
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, Menlo, monospace;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-elevated: var(--elevated);
+  --color-chrome: var(--chrome);
+  --color-stage: var(--stage);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-fg-on-stage: var(--fg-on-stage);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fill: var(--fill);
+  --color-fill-hover: var(--fill-hover);
+  --color-fill-strong: var(--fill-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-text: var(--accent-text);
+  --color-accent-tint: var(--accent-tint);
+  --color-record: var(--record);
+  --color-record-fg: var(--record-fg);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-ring: var(--ring);
+  --color-scrim: var(--scrim);
+
+  --radius-control: var(--os-radius-control);
+  --radius-card: var(--os-radius-card);
+  --radius-sheet: var(--os-radius-sheet);
+  --radius-pill: 999px;
+
+  /* Type scale: comfortable desktop sizes, 13 to 14 px for controls. */
+  --text-title-1: 26px;
+  --text-title-1--line-height: 32px;
+  --text-title-1--letter-spacing: -0.02em;
+  --text-title-2: 20px;
+  --text-title-2--line-height: 26px;
+  --text-title-2--letter-spacing: -0.015em;
+  --text-title-3: 16px;
+  --text-title-3--line-height: 22px;
+  --text-title-3--letter-spacing: -0.01em;
+  --text-body: 14px;
+  --text-body--line-height: 20px;
+  --text-callout: 13px;
+  --text-callout--line-height: 18px;
+  --text-footnote: 12px;
+  --text-footnote--line-height: 16px;
+  --text-caption: 11px;
+  --text-caption--line-height: 14px;
+  --text-display: 34px;
+  --text-display--line-height: 40px;
+  --text-display--letter-spacing: -0.025em;
+
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  /* A calm spring: about 3% overshoot, settles in the last third. Runs on the compositor like any easing. */
+  --ease-spring: linear(
+    0,
+    0.157,
+    0.438 9.4%,
+    0.672 14.7%,
+    0.849 20.6%,
+    0.957 27.1%,
+    1.012 33.6%,
+    1.03 40.6%,
+    1.025 49.1%,
+    1.008 62.7%,
+    0.999 79.4%,
+    1
+  );
+}
+
+:root {
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur-base: 200ms;
+  --dur-slow: 280ms;
+  --dur-exit: 140ms;
+
+  /* Brand: acid lime. Fills carry near-black text; text uses a deeper lime in light mode so it stays readable. */
+  --lime: oklch(0.87 0.21 128);
+  --lime-hover: oklch(0.9 0.2 128);
+  --lime-ink: oklch(0.22 0.05 130);
+}
+
+/* ---------------------------------------------------------------- Platform shapes and type */
+
+:root,
+:root[data-os='mac'] {
+  --os-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif;
+  --os-radius-control: 7px;
+  --os-radius-card: 12px;
+  --os-radius-sheet: 16px;
+  --os-control-height: 28px;
+  --titlebar-height: 52px;
+  /* Room for the traffic lights. */
+  --titlebar-inset-start: 78px;
+  --titlebar-inset-end: 12px;
+}
+
+:root[data-os='windows'] {
+  --os-font: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --os-radius-control: 4px;
+  --os-radius-card: 8px;
+  --os-radius-sheet: 8px;
+  --os-control-height: 32px;
+  /* Windows keeps its native title bar (Snap Layouts, familiar caption buttons), so the page starts below it. */
+  --titlebar-height: 44px;
+  --titlebar-inset-start: 12px;
+  --titlebar-inset-end: 12px;
+}
+
+/* ---------------------------------------------------------------- Light */
+
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: oklch(0.975 0.003 264);
+  --surface: oklch(1 0 0);
+  --elevated: oklch(1 0 0);
+  --chrome: oklch(0.955 0.004 264);
+  --stage: oklch(0.2 0.004 264);
+  --fg: oklch(0.21 0.008 264);
+  --fg-muted: oklch(0.21 0.008 264 / 0.68);
+  --fg-subtle: oklch(0.21 0.008 264 / 0.46);
+  --fg-on-stage: oklch(0.97 0 0 / 0.86);
+  --border: oklch(0.21 0.008 264 / 0.1);
+  --border-strong: oklch(0.21 0.008 264 / 0.18);
+  --fill: oklch(0.21 0.008 264 / 0.05);
+  --fill-hover: oklch(0.21 0.008 264 / 0.08);
+  --fill-strong: oklch(0.21 0.008 264 / 0.12);
+  --accent: var(--lime);
+  --accent-hover: var(--lime-hover);
+  --accent-fg: var(--lime-ink);
+  --accent-text: oklch(0.5 0.15 136);
+  --accent-tint: oklch(0.87 0.21 128 / 0.22);
+  --record: oklch(0.62 0.235 27);
+  --record-fg: oklch(1 0 0);
+  --success: oklch(0.55 0.15 150);
+  --warning: oklch(0.62 0.16 60);
+  --danger: oklch(0.56 0.22 27);
+  --info: oklch(0.56 0.17 255);
+  --ring: oklch(0.5 0.15 136);
+  --scrim: oklch(0.2 0.01 264 / 0.32);
+  --shadow-color: 264 0.02 0.2;
+  --elev-1: 0 1px 2px oklch(0.2 0.02 264 / 0.08), 0 0 0 0.5px oklch(0.2 0.02 264 / 0.06);
+  --elev-2:
+    0 0 0 0.5px oklch(0.2 0.02 264 / 0.08), 0 4px 12px oklch(0.2 0.02 264 / 0.1),
+    0 12px 32px oklch(0.2 0.02 264 / 0.1);
+  --elev-3:
+    0 0 0 0.5px oklch(0.2 0.02 264 / 0.1), 0 10px 24px oklch(0.2 0.02 264 / 0.14),
+    0 28px 64px oklch(0.2 0.02 264 / 0.18);
+  --top-light: inset 0 1px 0 oklch(1 0 0 / 0.7);
+}
+
+/* ---------------------------------------------------------------- Dark (its own palette, not an inversion) */
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: oklch(0.215 0.004 264);
+  --surface: oklch(0.245 0.005 264);
+  --elevated: oklch(0.285 0.006 264);
+  --chrome: oklch(0.19 0.004 264);
+  --stage: oklch(0.155 0.004 264);
+  --fg: oklch(0.97 0 0 / 0.92);
+  --fg-muted: oklch(0.97 0 0 / 0.62);
+  --fg-subtle: oklch(0.97 0 0 / 0.4);
+  --fg-on-stage: oklch(0.97 0 0 / 0.86);
+  --border: oklch(1 0 0 / 0.08);
+  --border-strong: oklch(1 0 0 / 0.15);
+  --fill: oklch(1 0 0 / 0.06);
+  --fill-hover: oklch(1 0 0 / 0.09);
+  --fill-strong: oklch(1 0 0 / 0.13);
+  --accent: var(--lime);
+  --accent-hover: var(--lime-hover);
+  --accent-fg: var(--lime-ink);
+  --accent-text: oklch(0.89 0.19 128);
+  --accent-tint: oklch(0.87 0.21 128 / 0.16);
+  --record: oklch(0.67 0.22 25);
+  --record-fg: oklch(1 0 0);
+  --success: oklch(0.76 0.16 150);
+  --warning: oklch(0.8 0.15 75);
+  --danger: oklch(0.7 0.19 25);
+  --info: oklch(0.72 0.14 250);
+  --ring: oklch(0.89 0.19 128);
+  --scrim: oklch(0 0 0 / 0.5);
+  --elev-1: 0 0 0 0.5px oklch(1 0 0 / 0.06), 0 1px 2px oklch(0 0 0 / 0.3);
+  --elev-2: 0 0 0 0.5px oklch(1 0 0 / 0.08), 0 8px 24px oklch(0 0 0 / 0.4);
+  --elev-3: 0 0 0 0.5px oklch(1 0 0 / 0.1), 0 16px 48px oklch(0 0 0 / 0.55);
+  --top-light: inset 0 1px 0 oklch(1 0 0 / 0.06);
+}
+
+/* With native material the OS draws the chrome; the page lets it show through. */
+:root[data-material='native'] {
+  --chrome: transparent;
+}
+
+:root[data-os='windows'][data-theme='dark'] {
+  --bg: oklch(0.225 0 0);
+  --surface: oklch(0.255 0 0);
+  --elevated: oklch(0.29 0 0);
+  --chrome: oklch(0.2 0 0);
+}
+
+:root[data-os='windows'][data-theme='light'] {
+  --bg: oklch(0.97 0 0);
+  --chrome: oklch(0.945 0 0);
+}
+
+:root[data-os='windows'][data-material='native'] {
+  --chrome: transparent;
+}
+
+/* Fixed colours for small controls, the stage and the browser-preview window frame. */
+:root {
+  --knob: oklch(1 0 0);
+  --knob-shadow: 0 1px 2px oklch(0 0 0 / 0.25), 0 0 0 0.5px oklch(0 0 0 / 0.08);
+  --thumb-shadow: 0 0 0 0.5px oklch(0 0 0 / 0.18), 0 1px 3px oklch(0 0 0 / 0.3);
+  --shine: oklch(1 0 0 / 0.35);
+  --shadow-ink: oklch(0.12 0.01 264);
+  --cursor-dark: oklch(0.16 0 0);
+  --cursor-light: oklch(1 0 0);
+  --on-stage-hover: oklch(1 0 0 / 0.1);
+  --on-stage-fill: oklch(1 0 0 / 0.07);
+  --on-stage-border: oklch(1 0 0 / 0.1);
+  --traffic-close: oklch(0.68 0.2 27);
+  --traffic-min: oklch(0.82 0.16 85);
+  --traffic-max: oklch(0.75 0.18 145);
+  --preview-desktop:
+    radial-gradient(120% 90% at 20% 10%, oklch(0.55 0.12 250) 0%, transparent 60%),
+    linear-gradient(160deg, oklch(0.4 0.08 260), oklch(0.2 0.04 270));
+}
+
+@theme inline {
+  --color-knob: var(--knob);
+  --color-on-stage-hover: var(--on-stage-hover);
+  --color-on-stage-fill: var(--on-stage-fill);
+  --color-on-stage-border: var(--on-stage-border);
+  --color-traffic-close: var(--traffic-close);
+  --color-traffic-min: var(--traffic-min);
+  --color-traffic-max: var(--traffic-max);
+}

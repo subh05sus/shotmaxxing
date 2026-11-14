@@ -1,0 +1,188 @@
+/*
+ * Motion that CSS does best. Every rule animates transform or opacity only, so it runs on the compositor, and nothing
+ * here loops: an idle screen draws no frames.
+ *
+ * html[data-motion='fades'] (Reduce Motion or Low power) keeps only opacity changes.
+ */
+
+/* ---------------------------------------------------------------- Press feedback (squash, then spring back) */
+
+@utility press {
+  transition-property: scale, background-color, color, opacity, box-shadow;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-spring);
+  &:active:not(:disabled) {
+    scale: 0.97;
+    transition-duration: var(--dur-instant);
+    transition-timing-function: var(--ease-out);
+  }
+}
+
+@utility press-card {
+  transition-property: scale, background-color, color, opacity, box-shadow;
+  transition-duration: var(--dur-base);
+  transition-timing-function: var(--ease-spring);
+  &:active:not(:disabled) {
+    scale: 0.985;
+    transition-duration: var(--dur-instant);
+    transition-timing-function: var(--ease-out);
+  }
+}
+
+@utility press-icon {
+  transition-property: scale, background-color, color, opacity;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-spring);
+  &:active:not(:disabled) {
+    scale: 0.9;
+    transition-duration: var(--dur-instant);
+    transition-timing-function: var(--ease-out);
+  }
+}
+
+/* ---------------------------------------------------------------- Sections rising in, once per visit */
+
+@utility rise-in {
+  animation: rise-in var(--dur-slow) var(--ease-out) both;
+  animation-delay: calc(min(var(--i, 0), 8) * 35ms);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---------------------------------------------------------------- Icons act out what they do, once per hover */
+
+@media (hover: hover) {
+  :is(button, [role='button'], [role='menuitem'], a):not(:disabled):hover
+    svg:is(
+      .lucide-refresh-cw,
+      .lucide-rotate-cw,
+      .lucide-trash,
+      .lucide-plus,
+      .lucide-copy,
+      .lucide-download,
+      .lucide-search,
+      .lucide-sparkles,
+      .lucide-share
+    ) {
+    animation: var(--icon-act);
+  }
+}
+
+svg.lucide-refresh-cw,
+svg.lucide-rotate-cw {
+  --icon-act: icon-spin 520ms var(--ease-out);
+}
+svg.lucide-trash {
+  --icon-act: icon-tilt 300ms var(--ease-out);
+}
+svg.lucide-plus {
+  --icon-act: icon-turn 260ms var(--ease-out);
+}
+svg:is(.lucide-copy, .lucide-download, .lucide-share) {
+  --icon-act: icon-pop 260ms var(--ease-out);
+}
+svg.lucide-search {
+  --icon-act: icon-search 300ms var(--ease-out);
+}
+svg.lucide-sparkles {
+  --icon-act: icon-pop 280ms var(--ease-spring);
+}
+
+@keyframes icon-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+@keyframes icon-tilt {
+  35% {
+    rotate: -12deg;
+  }
+  70% {
+    rotate: 6deg;
+  }
+}
+@keyframes icon-turn {
+  to {
+    rotate: 90deg;
+  }
+}
+@keyframes icon-pop {
+  45% {
+    scale: 1.18;
+  }
+}
+@keyframes icon-search {
+  50% {
+    rotate: -12deg;
+  }
+}
+
+/* ---------------------------------------------------------------- Self-drawing check */
+
+@utility check-draw {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: check-draw var(--dur-slow) var(--ease-out) forwards;
+}
+
+@keyframes check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* ---------------------------------------------------------------- A quiet shine that sweeps once */
+
+@utility shine-once {
+  position: relative;
+  overflow: hidden;
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(105deg, transparent 35%, var(--shine) 50%, transparent 65%);
+    translate: -100% 0;
+    animation: shine-sweep 900ms var(--ease-out) 200ms both; /* design-guard-allow long: an earned moment */
+    pointer-events: none;
+  }
+}
+
+@keyframes shine-sweep {
+  to {
+    translate: 100% 0;
+  }
+}
+
+/* ---------------------------------------------------------------- Reduced motion and Low power: fades only */
+
+:root[data-motion='fades'] {
+  --ease-spring: var(--ease-out);
+}
+
+/* Only the motion utilities stand down; layout that uses translate for positioning is untouched. */
+:root[data-motion='fades'] :is(.press, .press-card, .press-icon):active {
+  scale: none !important;
+}
+
+:root[data-motion='fades'] .rise-in {
+  animation-name: fade-in;
+}
+
+:root[data-motion='fades'] svg {
+  animation: none !important;
+}
+
+:root[data-motion='fades'] .shine-once::after {
+  display: none;
+}
