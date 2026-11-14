@@ -39,9 +39,11 @@
 
   onMount(() => {
     const stopRouter = startRouter();
-    env.themeSetting = settings.theme;
-    const stopSystem = watchSystem();
+    // ?theme= and ?os= let previews and screenshot checks force a look without touching saved settings.
     const params = new URLSearchParams(location.search);
+    const forcedTheme = params.get('theme');
+    env.themeSetting = forcedTheme === 'light' || forcedTheme === 'dark' ? forcedTheme : settings.theme;
+    const stopSystem = watchSystem();
     const forcedOs = params.get('os');
     if (forcedOs === 'mac' || forcedOs === 'windows') {
       env.os = forcedOs;

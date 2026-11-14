@@ -154,7 +154,7 @@
 <div class="flex h-full flex-col">
   {#if items.length}
     <div class="flex items-center gap-3 px-5 pb-3 pt-1">
-      <div class="w-[340px]">
+      <div class="w-[420px] shrink-0">
         <Segmented
           label="Show"
           bind:value={filter}

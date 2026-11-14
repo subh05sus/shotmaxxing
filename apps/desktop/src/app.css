@@ -5,3 +5,7 @@
 
 /* Class-based dark variant, driven by <html data-theme>. */
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+#app {
+  height: 100%;
+}
