@@ -1,0 +1,62 @@
+# Private working notes (to-do, learnings, research). Never committed.
+notes/
+TODO.md
+LEARNINGS.md
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+out/
+target/
+*.tsbuildinfo
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Native build artifacts
+*.o
+*.obj
+*.pdb
+*.dylib
+*.dll
+*.exe
+DerivedData/
+.build/
+
+# Recordings and test media
+*.mp4
+*.mov
+*.webm
+*.gif
+!docs/**/*.gif
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and caches
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.cache/
+.turbo/
+coverage/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Local tooling
+.code-review-graph/
+.claude/
