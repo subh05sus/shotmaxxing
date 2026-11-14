@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" data-os="mac" data-theme="dark" data-motion="full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Shotmaxxing</title>
+    <script>
+      // Set theme and OS before first paint so nothing flashes.
+      (function () {
+        var d = document.documentElement;
+        var p = new URLSearchParams(location.search);
+        var ua = navigator.userAgent;
+        d.dataset.os = p.get('os') || (/Windows/.test(ua) ? 'windows' : 'mac');
+        var stored = null;
+        try {
+          stored = localStorage.getItem('smx.theme');
+        } catch (e) {}
+        var setting = p.get('theme') || stored || 'system';
+        d.dataset.theme =
+          setting === 'system'
+            ? matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+            : setting;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
