@@ -3873,6 +3873,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "shotmaxxing-agent"
+version = "0.1.0"
+dependencies = [
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "serde",
+ "shotmaxxing-capture",
+ "shotmaxxing-core",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "shotmaxxing-capture"
 version = "0.1.0"
 dependencies = [
@@ -3901,6 +3914,7 @@ dependencies = [
  "ctrlc",
  "serde",
  "serde_json",
+ "shotmaxxing-agent",
  "shotmaxxing-capture",
  "shotmaxxing-core",
  "shotmaxxing-render",

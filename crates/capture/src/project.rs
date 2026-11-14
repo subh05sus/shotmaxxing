@@ -131,6 +131,11 @@ impl ProjectRecording {
         self.recorder.elapsed()
     }
 
+    /// Frames written so far: the count rises whenever something on screen changes.
+    pub fn frames(&self) -> u64 {
+        self.recorder.frames()
+    }
+
     /// Stops, writes telemetry, plans auto zoom and saves `project.json`.
     pub fn stop(self) -> Result<FinishedProject, CaptureError> {
         let Self { bundle, mut project, recorder, kind } = self;

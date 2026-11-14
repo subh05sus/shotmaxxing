@@ -142,6 +142,31 @@ enum TakeCommand {
     Validate { file: PathBuf },
     /// Print the JSON Schema for take scripts.
     Schema,
+    /// Open an app and list the controls a take script can name by ref.
+    Prepare {
+        /// The app, e.g. "Safari", or its bundle id. Without it, the app in front.
+        #[arg(long)]
+        app: Option<String>,
+        /// Part of the window's title, when the app has several.
+        #[arg(long)]
+        window: Option<String>,
+    },
+    /// Film a take script: Shotmaxxing performs it while recording. Press Esc three times to stop.
+    Run {
+        file: PathBuf,
+        /// Show the timeline without moving anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// The folder to put the project in.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Record narration: a microphone id from `shotmaxxing devices`, or the system's choice.
+        #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "default")]
+        mic: Option<String>,
+        /// Record what the computer plays.
+        #[arg(long)]
+        system_audio: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -185,6 +210,12 @@ fn run(cli: Cli) -> Result<()> {
         Command::Info { project } => info(&project, cli.json),
         Command::Zoom { project, depth } => zoom(&project, depth.into(), cli.json),
         Command::Take(TakeCommand::Validate { file }) => validate(&file, cli.json),
+        Command::Take(TakeCommand::Prepare { app, window }) => {
+            prepare(app.as_deref(), window.as_deref(), cli.json)
+        }
+        Command::Take(TakeCommand::Run { file, dry_run, out, mic, system_audio }) => {
+            run_take(&file, dry_run, out, mic, system_audio, cli.json)
+        }
         Command::Mcp => mcp::serve(),
         Command::Take(TakeCommand::Schema) => {
             println!("{}", serde_json::to_string_pretty(&shotmaxxing_core::take::json_schema())?);
@@ -476,6 +507,97 @@ fn replan(path: &Path, depth: ZoomDepth) -> Result<(PathBuf, Project)> {
     project.zooms = plan_zooms(&input, &project.zoom.tuning, depth, project.zoom.motion.transition_ms());
     bundle.save(&mut project)?;
     Ok((bundle.root().to_path_buf(), project))
+}
+
+fn prepare(app: Option<&str>, window: Option<&str>, json: bool) -> Result<()> {
+    let prepared = shotmaxxing_agent::prepare(app, window)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&prepared)?);
+        return Ok(());
+    }
+    if let Some(window) = &prepared.window {
+        println!(
+            "{} · {} ({:.0}×{:.0} at {:.0}, {:.0})",
+            prepared.app, window.title, window.width, window.height, window.x, window.y
+        );
+    }
+    for c in &prepared.controls {
+        let state = if c.enabled { "" } else { "  (disabled)" };
+        println!("  {:<40} {}{state}", c.id, c.label.as_deref().unwrap_or(""));
+    }
+    if prepared.truncated {
+        println!("  … and more");
+    }
+    Ok(())
+}
+
+fn run_take(
+    file: &Path,
+    dry_run: bool,
+    out: Option<PathBuf>,
+    mic: Option<String>,
+    system_audio: bool,
+    json: bool,
+) -> Result<()> {
+    let text = std::fs::read_to_string(file).with_context(|| format!("couldn't read {}", file.display()))?;
+    let script = TakeScript::parse(&text).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    if dry_run {
+        let plan = shotmaxxing_agent::plan(&script, &[]);
+        if json {
+            println!("{}", serde_json::to_string_pretty(&plan)?);
+        } else {
+            for beat in &plan.beats {
+                println!("{:>7.2} s  {}", beat.at_seconds, beat.what);
+            }
+            println!("{:>7.2} s  end", plan.seconds);
+            for note in &plan.notes {
+                println!("note: {note}");
+            }
+        }
+        return Ok(());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&cancel);
+    ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst)).context("couldn't watch for Ctrl-C")?;
+    if !json {
+        eprintln!("Performing {}. Press Esc three times, or move the mouse, to stop.", file.display());
+    }
+    let options = shotmaxxing_agent::TakeOptions {
+        folder: out.unwrap_or_else(default_folder),
+        planned: Vec::new(),
+        microphone: device_choice(mic),
+        system_audio,
+        client: Some("Shotmaxxing CLI".into()),
+        cancel,
+    };
+    let take = shotmaxxing_agent::run_take(&script, options, &mut |p| {
+        if !json {
+            eprintln!("{}", p.message);
+        }
+    })?;
+    let root = take.finished.root.clone();
+    if json {
+        let report = serde_json::json!({ "project": root, "performance": take.performed, "warnings": take.finished.warnings });
+        println!("{report}");
+    } else {
+        if let Some(reason) = &take.performed.stopped {
+            println!("Stopped: {reason}");
+        }
+        print_summary(&root, &take.finished.project);
+    }
+    if take.performed.stopped.is_none() && script.output.mode == shotmaxxing_core::take::OutputMode::Video {
+        let gif = script.output.preset == Some(shotmaxxing_core::project::ExportPreset::Gif);
+        let args = ExportArgs {
+            project: root,
+            out: None,
+            format: if gif { OutFormat::Gif } else { OutFormat::Mp4 },
+            size: if gif { 480 } else { 1080 },
+            fps: if gif { 15 } else { 60 },
+            mbps: None,
+        };
+        export(args, json)?;
+    }
+    Ok(())
 }
 
 fn validate(file: &Path, json: bool) -> Result<()> {

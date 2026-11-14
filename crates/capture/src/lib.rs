@@ -245,6 +245,11 @@ impl Recorder {
         self.inner.elapsed()
     }
 
+    /// Frames written so far. The screen only delivers a frame when something on it changes, so this counts changes.
+    pub fn frames(&self) -> u64 {
+        self.inner.frames()
+    }
+
     pub fn stop(self) -> Result<Recording, CaptureError> {
         self.inner.stop()
     }

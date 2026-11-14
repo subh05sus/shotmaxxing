@@ -409,6 +409,10 @@ impl Recorder {
         clock::now() - self.started
     }
 
+    pub fn frames(&self) -> u64 {
+        self.shared.writer.lock().ok().and_then(|w| w.as_ref().map(|w| w.frames)).unwrap_or(0)
+    }
+
     pub fn stop(self) -> Result<Recording, CaptureError> {
         let stopped = clock::now();
         let (tx, rx) = sync_channel::<()>(1);

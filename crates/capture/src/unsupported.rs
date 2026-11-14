@@ -35,6 +35,10 @@ impl Recorder {
         0.0
     }
 
+    pub fn frames(&self) -> u64 {
+        0
+    }
+
     pub fn stop(self) -> Result<Recording, CaptureError> {
         Err(CaptureError::Unsupported)
     }

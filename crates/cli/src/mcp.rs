@@ -17,8 +17,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use shotmaxxing_capture::{DeviceChoice, FinishedProject, ProjectOptions, ProjectRecording, Target};
 use shotmaxxing_core::bundle::{ProjectBundle, sanitize_file_name};
+use shotmaxxing_core::project::ExportPreset;
 use shotmaxxing_core::project::{AspectRatio, Background, Project, TimeRange, ZoomDepth};
-use shotmaxxing_core::take::TakeScript;
+use shotmaxxing_core::take::{OutputMode, TakeScript};
 use shotmaxxing_render::{ExportOptions, Format, RenderProject, default_bitrate, output_size, unique_path};
 
 /// Protocol versions this server speaks, newest first.
@@ -26,10 +27,12 @@ const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS: &str = "Shotmaxxing records the screen into editable projects (.smx folders) and exports \
 polished videos: a wallpaper behind the window, smooth automatic zooms on clicks and typing, a clean cursor, and \
-the voice and camera when recorded. A typical take: list_sources, start_recording, do the demo, stop_recording, \
-then export_project. project_info shows what a project holds; cut_silences, clean_voice, plan_zooms and \
-style_project tidy it up before exporting. Recording needs the Screen Recording permission for the app that \
-started this server.";
+the voice and camera when recorded. The best demos are planned takes: prepare_take lists an app's controls and \
+shows its window, then perform_take films a script while Shotmaxxing moves the pointer and types at a human \
+pace (try dry_run first). To film something else doing the work: list_sources, start_recording, the demo, \
+stop_recording. Then export_project. project_info shows what a project holds; cut_silences, clean_voice, \
+plan_zooms and style_project tidy it up before exporting. Recording needs the Screen Recording permission, and \
+planned takes also Accessibility, for the app that started this server.";
 
 type Reply = Result<Value, String>;
 
@@ -77,6 +80,21 @@ struct State {
     recording: Arc<Mutex<Option<Session>>>,
     /// Cancel flags of the tool calls in progress, by request id.
     calls: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    /// What the last `prepare_take` found, to check a take's refs against.
+    prepared: Arc<Mutex<Option<shotmaxxing_agent::Prepared>>>,
+    /// A take is being performed.
+    taking: Arc<AtomicBool>,
+    /// The agent's name, from `initialize`, recorded in the projects it films.
+    client: Arc<Mutex<Option<String>>>,
+}
+
+/// Marks a take as running for as long as it lives.
+struct Taking(Arc<AtomicBool>);
+
+impl Drop for Taking {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Runs the server until the client closes stdin. A take still recording then is kept.
@@ -121,6 +139,12 @@ fn handle(out: &Outbox, state: &State, message: Value) {
     };
     match method {
         "initialize" => {
+            if let Some(name) = params.pointer("/clientInfo/title").or(params.pointer("/clientInfo/name"))
+                && let Some(name) = name.as_str()
+                && let Ok(mut client) = state.client.lock()
+            {
+                *client = Some(name.to_string());
+            }
             let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or_default();
             let version = PROTOCOLS.iter().find(|v| **v == asked).unwrap_or(&PROTOCOLS[0]);
             out.result(
@@ -162,13 +186,22 @@ fn handle(out: &Outbox, state: &State, message: Value) {
                 if cancel.load(Ordering::SeqCst) {
                     return;
                 }
-                out.result(&id, match reply {
-                    Ok(value) => json!({
-                        "content": [{ "type": "text", "text": serde_json::to_string_pretty(&value).unwrap_or_default() }],
-                        "structuredContent": value,
-                    }),
-                    Err(message) => json!({ "content": [{ "type": "text", "text": message }], "isError": true }),
-                });
+                out.result(
+                    &id,
+                    match reply {
+                        Ok(mut value) => {
+                            // A picture travels as its own content item, not inside the JSON.
+                            let image = value.as_object_mut().and_then(|o| o.remove("_image"));
+                            let text = serde_json::to_string_pretty(&value).unwrap_or_default();
+                            let mut content = vec![json!({ "type": "text", "text": text })];
+                            content.extend(image);
+                            json!({ "content": content, "structuredContent": value })
+                        }
+                        Err(message) => {
+                            json!({ "content": [{ "type": "text", "text": message }], "isError": true })
+                        }
+                    },
+                );
             });
         }
         _ => out.error(&id, -32601, &format!("there's no method called {method}")),
@@ -311,6 +344,21 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
         },
         {
+            "name": "prepare_take",
+            "title": "Prepare a take",
+            "description": "Opens an app (or brings it forward), finds its window and lists the controls in it, with ids to use as refs in a take script, plus a picture of the window. Plan the whole take from this, then call perform_take. Needs the Accessibility permission.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "app": { "type": "string", "description": "The app to film, e.g. \"Safari\", or its bundle id. Leave out to use the app in front." },
+                    "window": { "type": "string", "description": "Part of the window's title, when the app has several." },
+                    "picture": { "type": "boolean", "default": true, "description": "Include a picture of the window." },
+                },
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
+        },
+        perform_take_tool(),
+        {
             "name": "validate_take",
             "title": "Check a take script",
             "description": "Checks a take script (the beats an agent plans to perform) and lists any problems. The schema is in the Shotmaxxing docs and from `shotmaxxing take schema`.",
@@ -344,7 +392,13 @@ fn open(path: &Path) -> Result<(ProjectBundle, Project), String> {
     ProjectBundle::open(path).map_err(|e| format!("couldn't open {}: {e}", path.display()))
 }
 
-fn call(state: &State, name: &str, args: &Value, progress: &dyn Fn(f64, &str), cancel: &AtomicBool) -> Reply {
+fn call(
+    state: &State,
+    name: &str,
+    args: &Value,
+    progress: &dyn Fn(f64, &str),
+    cancel: &Arc<AtomicBool>,
+) -> Reply {
     match name {
         "list_sources" => shotmaxxing_capture::sources()
             .map_err(|e| e.to_string())
@@ -366,6 +420,8 @@ fn call(state: &State, name: &str, args: &Value, progress: &dyn Fn(f64, &str), c
         "plan_zooms" => plan_zooms(args),
         "style_project" => style(args),
         "validate_take" => validate(args),
+        "prepare_take" => prepare_take(state, args),
+        "perform_take" => perform_take(state, args, progress, cancel),
         _ => Err(format!("there's no tool called {name}")),
     }
 }
@@ -665,20 +721,233 @@ fn style(args: &Value) -> Reply {
     Ok(summary(bundle.root(), &project)["canvas"].clone())
 }
 
-fn validate(args: &Value) -> Reply {
+fn parse_script(args: &Value) -> Result<TakeScript, String> {
     let script = args.get("script").ok_or_else(|| "pass the script".to_string())?;
     let text = match script {
         Value::String(text) => text.clone(),
         other => other.to_string(),
     };
-    let script =
-        TakeScript::parse(&text).map_err(|e| format!("the script isn't valid JSON for a take: {e}"))?;
+    TakeScript::parse(&text).map_err(|e| format!("the script isn't a take script: {e}"))
+}
+
+fn validate(args: &Value) -> Reply {
+    let script = parse_script(args)?;
     Ok(json!({ "valid": script.is_valid(), "beats": script.beats.len(), "issues": script.validate() }))
+}
+
+/// `perform_take`, with the take script's schema so agents can write scripts without guessing.
+fn perform_take_tool() -> Value {
+    let mut schema = shotmaxxing_core::take::json_schema();
+    let defs = schema.as_object_mut().and_then(|s| s.remove("$defs")).unwrap_or_else(|| json!({}));
+    if let Some(s) = schema.as_object_mut() {
+        s.remove("$schema");
+    }
+    let mut defs = defs.as_object().cloned().unwrap_or_default();
+    defs.insert("TakeScript".into(), schema);
+    json!({
+        "name": "perform_take",
+        "title": "Perform and film a take",
+        "description": "Films a take script. Shotmaxxing records the app's window while it moves the pointer, clicks and types at a human pace, then saves an editable project, and exports a video when the script's output mode is video. Targets are refs from prepare_take (checked again just before each click), screen points, or { find: label } for controls that appear later. The person can stop the take at any time by pressing Esc three times or moving the mouse. user_step beats hand control to them until they press ⌥⌘Return, and that stretch is cut from the video. It never types into password fields. Use dry_run to see the timeline first. Needs the Screen Recording and Accessibility permissions.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "script": { "anyOf": [{ "$ref": "#/$defs/TakeScript" }, { "type": "string", "description": "The script as YAML." }] },
+                "dry_run": { "type": "boolean", "default": false, "description": "Work out the timeline without moving anything." },
+                "folder": { "type": "string", "description": "Where the project goes. Defaults to Movies/Shotmaxxing." },
+                "microphone": { "type": "string", "description": "A microphone id from list_devices, or \"default\", to record narration." },
+                "system_audio": { "type": "boolean", "default": false, "description": "Record what the computer plays." },
+            },
+            "required": ["script"],
+            "$defs": defs,
+        },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": true },
+    })
+}
+
+/// A JPEG's size in pixels, from its frame header.
+fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let mut i = 2;
+    while i + 9 < bytes.len() {
+        if bytes[i] != 0xff {
+            return None;
+        }
+        let marker = bytes[i + 1];
+        let length = usize::from(u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]));
+        if (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+            let height = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]);
+            let width = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]);
+            return Some((u32::from(width), u32::from(height)));
+        }
+        i += 2 + length;
+    }
+    None
+}
+
+fn prepare_take(state: &State, args: &Value) -> Reply {
+    let prepared =
+        shotmaxxing_agent::prepare(text(args, "app"), text(args, "window")).map_err(|e| e.to_string())?;
+    const LISTED: usize = 300;
+    let round = |v: f64| v.round();
+    let controls: Vec<Value> = prepared
+        .controls
+        .iter()
+        .take(LISTED)
+        .map(|c| {
+            json!({
+                "id": c.id, "role": c.role, "label": c.label, "enabled": c.enabled,
+                "x": round(c.bounds.x), "y": round(c.bounds.y), "width": round(c.bounds.width), "height": round(c.bounds.height),
+            })
+        })
+        .collect();
+    let mut value = json!({
+        "app": prepared.app,
+        "window": prepared.window.as_ref().map(|w| json!({
+            "id": w.id, "title": w.title, "x": w.x, "y": w.y, "width": w.width, "height": w.height,
+        })),
+        "controls": controls,
+        "more_controls": prepared.truncated || prepared.controls.len() > LISTED,
+        "how_to_use": "Name controls by id as refs, e.g. click: button.export. Points are global screen points. A control that only appears later is found by its label with { find: \"Export\" }.",
+    });
+    if args.get("picture").and_then(Value::as_bool) != Some(false)
+        && let Some(window) = &prepared.window
+        && let Ok(pictures) = shotmaxxing_capture::thumbnails(&[Target::Window(window.id)], 1280)
+        && let Some(Some(jpeg)) = pictures.into_iter().next()
+    {
+        if let Some((width, _)) = jpeg_size(&jpeg) {
+            let per_pixel = window.width / f64::from(width.max(1));
+            value["picture"] = json!({
+                "origin": { "x": window.x, "y": window.y },
+                "points_per_pixel": (per_pixel * 1000.0).round() / 1000.0,
+                "note": "A pixel (px, py) in the picture is the screen point (origin.x + px × points_per_pixel, origin.y + py × points_per_pixel).",
+            });
+        }
+        value["_image"] = json!({ "type": "image", "data": base64(&jpeg), "mimeType": "image/jpeg" });
+    }
+    if let Ok(mut slot) = state.prepared.lock() {
+        *slot = Some(prepared);
+    }
+    Ok(value)
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            if i <= chunk.len() {
+                out.push(TABLE[((n >> shift) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// The export a script's preset asks for: format, shorter side, frame rate and canvas shape.
+fn preset_export(preset: Option<ExportPreset>) -> (&'static str, u32, u32, Option<&'static str>) {
+    match preset.unwrap_or_default() {
+        ExportPreset::Youtube1080 | ExportPreset::Custom => ("mp4", 1080, 60, None),
+        ExportPreset::Social => ("mp4", 1080, 30, Some("1:1")),
+        ExportPreset::Vertical => ("mp4", 1080, 30, Some("9:16")),
+        ExportPreset::Gif => ("gif", 480, 15, None),
+        ExportPreset::Uhd4k => ("hevc", 2160, 60, None),
+    }
+}
+
+fn perform_take(
+    state: &State,
+    args: &Value,
+    progress: &dyn Fn(f64, &str),
+    cancel: &Arc<AtomicBool>,
+) -> Reply {
+    let script = parse_script(args)?;
+    let planned = state
+        .prepared
+        .lock()
+        .ok()
+        .and_then(|p| p.clone())
+        .filter(|p| {
+            script.app.as_deref().is_none_or(|app| {
+                let (app, seen) = (app.to_lowercase(), p.app.to_lowercase());
+                seen.contains(&app) || p.window.as_ref().is_some_and(|w| w.bundle_id.to_lowercase() == app)
+            })
+        })
+        .map(|p| p.controls)
+        .unwrap_or_default();
+    if args.get("dry_run").and_then(Value::as_bool).unwrap_or(false) {
+        return serde_json::to_value(shotmaxxing_agent::plan(&script, &planned)).map_err(|e| e.to_string());
+    }
+    if state.recording.lock().is_ok_and(|r| r.is_some()) {
+        return Err("a recording is running; stop it before filming a take".into());
+    }
+    if state.taking.swap(true, Ordering::SeqCst) {
+        return Err("a take is already being filmed".into());
+    }
+    let _taking = Taking(state.taking.clone());
+    let options = shotmaxxing_agent::TakeOptions {
+        folder: text(args, "folder").map(expand).unwrap_or_else(crate::default_folder),
+        planned,
+        microphone: device(text(args, "microphone")),
+        system_audio: args.get("system_audio").and_then(Value::as_bool).unwrap_or(false),
+        client: state.client.lock().ok().and_then(|c| c.clone()),
+        cancel: cancel.clone(),
+    };
+    let take = shotmaxxing_agent::run_take(&script, options, &mut |p| progress(p.done * 0.9, &p.message))
+        .map_err(|e| e.to_string())?;
+    let root = take.finished.root.clone();
+    let mut report = summary(&root, &take.finished.project);
+    let mut warnings = take.finished.warnings.clone();
+    warnings.extend(take.performed.warnings.iter().cloned());
+    report["performance"] = json!({
+        "beats": take.performed.beats,
+        "beats_done": take.performed.beats_done,
+        "stopped": take.performed.stopped,
+        "captions": take.performed.captions.len(),
+        "handed_over": take.performed.handoffs.len(),
+    });
+    report["warnings"] = json!(warnings);
+    if take.performed.stopped.is_none() && script.output.mode == OutputMode::Video {
+        let (format, size, fps, aspect) = preset_export(script.output.preset);
+        if let Some(aspect) = aspect {
+            style(&json!({ "project": root, "aspect": aspect }))?;
+        }
+        let output = script.output.label.as_deref().map(|label| {
+            let name = sanitize_file_name(&format!("{} {label}", take.finished.project.name));
+            unique_path(
+                root.parent().unwrap_or(Path::new(".")),
+                &name,
+                if format == "gif" { "gif" } else { "mp4" },
+            )
+        });
+        let export_args =
+            json!({ "project": root, "format": format, "size": size, "fps": fps, "output": output });
+        report["video"] = export(&export_args, &|done, message| progress(0.9 + done * 0.1, message), cancel)?;
+    }
+    Ok(report)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encodes_base64_and_reads_jpeg_sizes() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        // SOI, an APP0 segment, then a baseline frame header for 640×360.
+        let jpeg = [
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x68, 0x02,
+            0x80, 0x03,
+        ];
+        assert_eq!(jpeg_size(&jpeg), Some((640, 360)));
+        assert_eq!(jpeg_size(b"not a jpeg at all"), None);
+    }
 
     #[test]
     fn ranges_are_sorted_and_joined() {

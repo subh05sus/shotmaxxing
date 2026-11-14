@@ -120,9 +120,22 @@ fn speaks_mcp() {
     let (reply, _) = server.request("tools/list", json!({}));
     let names: Vec<&str> =
         reply["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
-    for expected in ["start_recording", "stop_recording", "export_project", "cut_silences", "validate_take"] {
+    for expected in [
+        "start_recording",
+        "stop_recording",
+        "export_project",
+        "cut_silences",
+        "validate_take",
+        "prepare_take",
+        "perform_take",
+    ] {
         assert!(names.contains(&expected), "{expected} is missing from {names:?}");
     }
+    // perform_take carries the take script's schema, with its definitions where the refs point.
+    let perform =
+        reply["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "perform_take").unwrap();
+    assert!(perform["inputSchema"]["$defs"]["TakeScript"]["properties"]["beats"].is_object(), "{perform}");
+    assert!(perform["inputSchema"]["$defs"]["Beat"].is_object());
 
     let (reply, _) = server.request("no/such/method", json!({}));
     assert_eq!(reply["error"]["code"], -32601);
@@ -132,6 +145,14 @@ fn speaks_mcp() {
     let result = server.tool("validate_take", json!({ "script": script }));
     assert_eq!(result["structuredContent"]["valid"], true, "{result}");
     assert_eq!(result["structuredContent"]["beats"], 2);
+
+    // A dry run works out the timeline and touches nothing.
+    let yaml =
+        "app: Notes\nbeats:\n  - click: { point: { x: 400, y: 300 } }\n  - type: hello\n  - key: cmd+s\n";
+    let result = server.tool("perform_take", json!({ "script": yaml, "dry_run": true }));
+    let plan = &result["structuredContent"];
+    assert_eq!(plan["beats"].as_array().map(Vec::len), Some(3), "{result}");
+    assert!(plan["seconds"].as_f64().is_some_and(|s| s > 1.0 && s < 10.0), "{result}");
 
     // Tool failures come back as results marked as errors, in words.
     let result = server.tool("project_info", json!({ "project": "/nowhere/at/all.smx" }));

@@ -14,7 +14,23 @@ Shotmaxxing records the screen into an editable project (a `.smx` folder) and ex
 
 The person can open any project in the Shotmaxxing editor afterwards and change anything.
 
-## The flow
+## Planned takes (the best results)
+
+When you can see the app's controls, plan the whole performance and let Shotmaxxing perform it:
+
+1. Call `prepare_take` with the app. Read the controls it lists and look at the picture of the window.
+2. Write a take script. Name controls by their ids (`click: button.export`). Use `{ find: "Label" }` for controls
+   that only appear later, and `wait: { for: idle }` after anything that loads.
+3. Add `say:` beats for short captions. Use a `user_step:` beat for anything only the person may do, such as
+   signing in.
+4. Call `perform_take` with `"dry_run": true`, check the timeline, then call it again for real. Use
+   `output: { mode: video }` to get a file straight away.
+5. If the reply says the take stopped:
+   - a control was gone or disabled, or Esc was pressed: tell the person, fix the script, and ask before trying
+     again;
+   - the person moved the mouse: they took over, so leave the rest to them.
+
+## Filming by hand
 
 1. **Plan the take before recording.** Write down the steps, the window to film and roughly how long it should
    run. Short is better: 30 to 90 seconds for a feature, under 15 seconds for a GIF.
@@ -57,7 +73,9 @@ The person can open any project in the Shotmaxxing editor afterwards and change 
   stop that take first if it's yours.
 - **Undo.** `plan_zooms` and `cut_silences` keep the previous edits in the project's history. Everything can also
   be changed by hand in the editor.
-- **Checking scripts.** `validate_take` checks a take script before you rely on it. Shotmaxxing doesn't perform
-  scripts itself yet, so perform the steps with your own tools.
+- **Checking scripts.** `validate_take` lists a script's problems. `perform_take` with `dry_run` also shows when
+  each beat would happen.
+- **Stopping.** The person can stop any take by pressing Esc three times or moving the mouse. Takes never type into
+  password fields.
 - **Where things go.** Projects go to `~/Movies/Shotmaxxing` unless you pass `folder`. Exports go next to the project
   unless you pass `output`.

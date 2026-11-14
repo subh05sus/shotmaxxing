@@ -23,17 +23,19 @@ use objc2_core_graphics::{
     CGEventTapPlacement, CGEventTapProxy, CGEventType,
 };
 use shotmaxxing_core::geometry::Rect;
-use shotmaxxing_core::telemetry::{CursorSample, CursorShape, InputEvent, InputSource, MouseButton};
+use shotmaxxing_core::telemetry::{
+    AGENT_EVENT_MARK, CursorSample, CursorShape, InputEvent, InputSource, MouseButton,
+};
 
 use super::{SendBox, clock};
 
 /// A raw observation, stamped with host seconds.
 #[derive(Clone, Debug)]
 enum Raw {
-    Down { at: f64, x: f64, y: f64, button: MouseButton, clicks: u8 },
-    Up { at: f64, x: f64, y: f64, button: MouseButton },
+    Down { at: f64, x: f64, y: f64, button: MouseButton, clicks: u8, source: InputSource },
+    Up { at: f64, x: f64, y: f64, button: MouseButton, source: InputSource },
     Scroll { at: f64, x: f64, y: f64, dx: f64, dy: f64 },
-    Key { at: f64, label: Option<String> },
+    Key { at: f64, label: Option<String>, source: InputSource },
     Focus { at: f64, bounds: Rect, role: String, label: Option<String> },
 }
 
@@ -119,30 +121,21 @@ impl Telemetry {
             .into_iter()
             .filter(|r| at_of(r) >= zero)
             .map(|r| match r {
-                Raw::Down { at, x, y, button, clicks } => InputEvent::MouseDown {
-                    t_us: t_us(at),
-                    x: x - ox,
-                    y: y - oy,
-                    button,
-                    clicks,
-                    source: InputSource::Person,
-                },
-                Raw::Up { at, x, y, button } => InputEvent::MouseUp {
-                    t_us: t_us(at),
-                    x: x - ox,
-                    y: y - oy,
-                    button,
-                    source: InputSource::Person,
-                },
+                Raw::Down { at, x, y, button, clicks, source } => {
+                    InputEvent::MouseDown { t_us: t_us(at), x: x - ox, y: y - oy, button, clicks, source }
+                }
+                Raw::Up { at, x, y, button, source } => {
+                    InputEvent::MouseUp { t_us: t_us(at), x: x - ox, y: y - oy, button, source }
+                }
                 Raw::Scroll { at, x, y, dx, dy } => {
                     InputEvent::Scroll { t_us: t_us(at), x: x - ox, y: y - oy, dx, dy }
                 }
-                Raw::Key { at, label } => InputEvent::KeyDown {
+                Raw::Key { at, label, source } => InputEvent::KeyDown {
                     t_us: t_us(at),
                     modifiers_only: false,
                     redacted: label.is_none(),
                     label,
-                    source: InputSource::Person,
+                    source,
                 },
                 Raw::Focus { at, bounds, role, label } => InputEvent::Focus {
                     t_us: t_us(at),
@@ -198,6 +191,13 @@ unsafe extern "C-unwind" fn tap_callback(
     let (state, event) = unsafe { (&*(user_info as *const TapState), event.as_ref()) };
     let at = clock::now();
     let p = CGEvent::location(Some(event));
+    // Events a take performs carry Shotmaxxing's mark; everything else is the person.
+    let source =
+        if CGEvent::integer_value_field(Some(event), CGEventField::EventSourceUserData) == AGENT_EVENT_MARK {
+            InputSource::Agent
+        } else {
+            InputSource::Person
+        };
     let raw = match kind {
         CGEventType::LeftMouseDown | CGEventType::RightMouseDown => {
             let clicks = CGEvent::integer_value_field(Some(event), CGEventField::MouseEventClickState)
@@ -207,12 +207,12 @@ unsafe extern "C-unwind" fn tap_callback(
             if let Ok(sender) = state.clicks.lock() {
                 let _ = sender.send((at, p.x, p.y));
             }
-            Some(Raw::Down { at, x: p.x, y: p.y, button, clicks })
+            Some(Raw::Down { at, x: p.x, y: p.y, button, clicks, source })
         }
         CGEventType::LeftMouseUp | CGEventType::RightMouseUp => {
             let button =
                 if kind == CGEventType::LeftMouseUp { MouseButton::Left } else { MouseButton::Right };
-            Some(Raw::Up { at, x: p.x, y: p.y, button })
+            Some(Raw::Up { at, x: p.x, y: p.y, button, source })
         }
         CGEventType::ScrollWheel => {
             let dy = CGEvent::integer_value_field(Some(event), CGEventField::ScrollWheelEventPointDeltaAxis1)
@@ -221,7 +221,7 @@ unsafe extern "C-unwind" fn tap_callback(
                 as f64;
             Some(Raw::Scroll { at, x: p.x, y: p.y, dx, dy })
         }
-        CGEventType::KeyDown => Some(Raw::Key { at, label: shortcut_label(event) }),
+        CGEventType::KeyDown => Some(Raw::Key { at, label: shortcut_label(event), source }),
         // macOS turns a tap off if it ever runs slowly; switch it straight back on.
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput => None,
         _ => None,

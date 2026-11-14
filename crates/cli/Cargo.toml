@@ -17,6 +17,7 @@ path = "src/main.rs"
 shotmaxxing-core.workspace = true
 shotmaxxing-capture.workspace = true
 shotmaxxing-render.workspace = true
+shotmaxxing-agent.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 ctrlc = "3"

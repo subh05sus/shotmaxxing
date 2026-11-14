@@ -75,6 +75,10 @@ pub enum MouseButton {
     Middle,
 }
 
+/// Stamped into the user-data field of every input event Shotmaxxing posts while performing a take, so the recorder
+/// can tell the agent's clicks and keys from the person's.
+pub const AGENT_EVENT_MARK: i64 = 0x5348_4f54;
+
 /// Where an input came from. Agent takes record their own provenance so edits can treat them differently.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

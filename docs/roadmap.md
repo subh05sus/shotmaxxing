@@ -38,9 +38,11 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [ ] Control API for the running app (Unix socket / named pipe)
 - [x] `shotmaxxing mcp` and the CLI
 - [x] Take script schema and checks
-- [ ] Beats compiler and performer
-- [ ] Accessibility refs with fingerprints (AX, UIA)
-- [ ] Consent, trust policy, take card and hand-off
+- [x] Beats compiler and performer (macOS)
+- [x] Accessibility refs with fingerprints (macOS)
+- [ ] Accessibility refs on Windows (UI Automation)
+- [x] Safety stops (Esc three times, the person moving the mouse, password fields) and hand-off (⌥⌘Return)
+- [ ] Take card in the app, and a per-session consent prompt
 - [ ] macOS virtual display
 - [x] One-click connect for Claude Code, Claude Desktop, Codex, Cursor, VS Code, Windsurf, OpenCode, Gemini CLI
 - [x] Agent skill ([skills/shotmaxxing](../skills/shotmaxxing/SKILL.md))

@@ -64,15 +64,53 @@ and reopen that app.
 | `plan_zooms` | Plans the automatic zooms again, subtle, standard or bold |
 | `style_project` | Wallpaper, canvas shape, padding, corners, shadow and cursor size |
 | `export_project` | Renders MP4 (H.264), HEVC or GIF, with progress, and can be cancelled |
+| `prepare_take` | Opens an app, finds its window and lists its controls with ids to use as refs, plus a picture of the window |
+| `perform_take` | Films a take script: Shotmaxxing moves the pointer, clicks and types at a human pace while it records, then saves the project (and exports when the script asks). `dry_run` shows the timeline first |
 | `validate_take` | Checks a take script and lists any problems |
 
-## A typical take
+## A planned take
+
+The best demos are planned. The agent writes the whole performance as a take script, and Shotmaxxing performs it
+while it records:
+
+- the pointer travels in gentle arcs, timed by distance and target size;
+- it settles before each click, and pauses after it so viewers see the result;
+- typing runs at a readable pace.
+
+1. `prepare_take` with `{ "app": "Safari" }`. The reply lists the window's controls, such as `text_field.search` or
+   `button.export`, with a picture of the window.
+2. Write the script:
+
+   ```yaml
+   app: Safari
+   beats:
+     - click: text_field.search
+     - type: "shotmaxxing.dev\n"
+     - wait: { for: idle }
+     - say: Open the docs
+     - click: { find: Docs }
+   output: { mode: video }
+   ```
+
+3. `perform_take` with `{ "script": …, "dry_run": true }` shows the timeline. Then run it without `dry_run`.
+4. The reply has the project, how far the take got and, for `mode: video`, the exported file.
+
+Targets can be any of these:
+
+- refs from `prepare_take`, checked again just before each click. A control that moved is re-aimed. One that's
+  gone, disabled, covered or relabelled stops the take, which says which control it was.
+- screen points;
+- `{ find: "label" }`, for controls that only appear later.
+
+## Recording while something else does the work
 
 1. `list_sources`, to find the window to film.
 2. `start_recording` with `{ "app": "Safari", "microphone": "default" }`.
 3. Perform the demo: you do it, or the agent uses its own computer-use tools.
-4. `stop_recording`. The reply has the project folder, its length, the planned zooms and any warnings, such as a
-   microphone that wasn't allowed.
+4. `stop_recording`. The reply has:
+   - the project folder and its length;
+   - the planned zooms;
+   - any warnings, such as a microphone that wasn't allowed.
 5. Optionally `cut_silences`, `clean_voice` or `style_project`.
 6. `export_project` with `{ "project": "<folder>", "format": "mp4" }`. The reply has the file's path.
 
@@ -80,12 +118,15 @@ Anything an agent does can be changed later in the editor: open the project from
 
 ## Safety
 
-- One take records at a time, and a take stops by itself after `max_seconds` (15 minutes unless the agent sets
-  less).
-- Recordings, projects and exports stay on your computer, in the folders you choose.
-- Before replanning zooms or cutting silences, a copy of the project's edits is kept in its history.
-- Shotmaxxing performing takes itself (moving the pointer and typing from a take script) is coming next. Until then,
-  `validate_take` only checks scripts.
+- **Stopping a take.** Press Esc three times, or move the mouse. The take stops at once and leaves the rest to you.
+- **Passwords.** A take never types into a password field. A `user_step` beat hands that part to you:
+  - the take waits until you press ⌥⌘Return;
+  - that stretch is cut from the video.
+- **Marked input.** Every click and key a take performs is marked as the agent's in the project.
+- **Limits.** One take records at a time. A recording started with `start_recording` stops by itself after
+  `max_seconds`: 15 minutes unless the agent sets less.
+- **Local only.** Recordings, projects and exports stay on your computer, in the folders you choose.
+- **Undo.** Before replanning zooms or cutting silences, a copy of the project's edits is kept in its history.
 
 ## Building on it
 
