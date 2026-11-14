@@ -16,7 +16,13 @@ You can drive it by hand, or let an AI agent such as Claude or Codex film the de
 
 ## Status
 
-Early design phase. Architecture and scope are being decided. No release is available yet.
+Early development. See the [roadmap](docs/roadmap.md) for what is being built now. No release is available yet.
+
+## Documentation
+
+- [Architecture](docs/architecture.md): how the recorder, editor and agent layer fit together
+- [Design principles](docs/design/principles.md): motion, interaction laws and craft rules
+- [Roadmap](docs/roadmap.md)
 
 ## Platforms
 
