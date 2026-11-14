@@ -98,10 +98,13 @@ impl Telemetry {
 
         let (ox, oy) = self.origin;
         let t_us = |at: f64| ((at - zero).max(0.0) * 1e6) as u64;
+        // The pointer's resting place when the first frame arrived counts as its position at 0.
+        let before = path.iter().rposition(|(at, _, _)| *at < zero);
         let cursor = path
             .into_iter()
-            .filter(|(at, _, _)| *at >= zero)
-            .map(|(at, x, y)| CursorSample {
+            .enumerate()
+            .filter(|(i, (at, _, _))| *at >= zero || Some(*i) == before)
+            .map(|(_, (at, x, y))| CursorSample {
                 t_us: t_us(at),
                 x: x - ox,
                 y: y - oy,
@@ -166,13 +169,13 @@ fn at_of(raw: &Raw) -> f64 {
 /// Reads the pointer position at up to 120 Hz, keeping only positions that changed.
 fn sample_cursor(stop: &AtomicBool) -> Vec<(f64, f64, f64)> {
     let mut out = Vec::with_capacity(4096);
-    let mut last = (f64::NAN, f64::NAN);
+    let mut last: Option<(f64, f64)> = None;
     while !stop.load(Ordering::Relaxed) {
         if let Some(event) = CGEvent::new(None) {
             let p = CGEvent::location(Some(&event));
-            if (p.x - last.0).abs() > 0.05 || (p.y - last.1).abs() > 0.05 {
+            if last.is_none_or(|(x, y)| (p.x - x).abs() > 0.05 || (p.y - y).abs() > 0.05) {
                 out.push((clock::now(), p.x, p.y));
-                last = (p.x, p.y);
+                last = Some((p.x, p.y));
             }
         }
         std::thread::sleep(Duration::from_millis(8));
