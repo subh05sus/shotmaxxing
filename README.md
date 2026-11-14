@@ -27,4 +27,4 @@ Early design phase. Architecture and scope are being decided. No release is avai
 
 ## License
 
-To be decided before the first code release.
+Shotmaxxing is licensed under the [GNU Affero General Public License v3.0](LICENSE).
