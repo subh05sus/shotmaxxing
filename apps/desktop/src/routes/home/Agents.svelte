@@ -2,7 +2,7 @@
   import { Bot, Clapperboard, Copy, Hand, Lock, Play, ShieldCheck, Sparkles, Wand } from '@lucide/svelte';
   import { Button, CheckDraw, Group, Row, Segmented, StatusDot, Switch, env, toast } from '@shotmaxxing/ui';
   import { AGENTS, STARTER_PROMPTS, type Agent } from '../../lib/sample';
-  import { connectAgent } from '../../lib/native';
+  import { connectAgent, openWindow } from '../../lib/native';
   import { go } from '../../lib/router.svelte';
 
   let agents = $state<(Agent & { busy?: boolean })[]>(AGENTS.map((a) => ({ ...a })));
@@ -178,7 +178,7 @@
           {/each}
         </ol>
         <div class="mt-4 flex gap-2">
-          <Button size="sm" icon={Play} onclick={() => go('take')}>Preview the take card</Button>
+          <Button size="sm" icon={Play} onclick={() => openWindow('take')}>Preview the take card</Button>
           <Button size="sm" variant="ghost" onclick={() => go('home/learn')}>Guides</Button>
         </div>
       </section>

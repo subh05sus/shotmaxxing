@@ -3,9 +3,8 @@
   import { AppWindow, Bot, ChevronDown, Circle, Crop, Mic, Monitor, Video, Volume2 } from '@lucide/svelte';
   import { Button, Keycap, Menu, Segmented, Switch, env, fade, pop, type MenuItem } from '@shotmaxxing/ui';
   import Scene from '../../components/Scene.svelte';
-  import { listSources, type CaptureSource } from '../../lib/native';
+  import { handOff, listSources, type CaptureSource } from '../../lib/native';
   import { settings } from '../../lib/settings.svelte';
-  import { go } from '../../lib/router.svelte';
   import { wallpaper } from '../../lib/wallpapers';
 
   type Mode = 'display' | 'window' | 'area';
@@ -35,13 +34,13 @@
   const sceneFor: Record<string, number> = { Safari: 4, Figma: 1, Notes: 5, Terminal: 2, Xcode: 1 };
 
   function record() {
-    if (!settings.countdown) return go('pill');
+    if (!settings.countdown) return void handOff('pill');
     countdown = 3;
     const tick = setInterval(() => {
       countdown = (countdown ?? 1) - 1;
       if (countdown <= 0) {
         clearInterval(tick);
-        go('pill');
+        handOff('pill');
       }
     }, 1000);
   }
@@ -72,6 +71,7 @@
 
 <div class="flex h-full flex-col bg-bg">
   <header
+    data-tauri-drag-region
     class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center gap-3 pl-[var(--titlebar-inset-start)] pr-4"
   >
     <h1 class="text-title-3">New recording</h1>
@@ -186,7 +186,7 @@
     <button
       type="button"
       class="press flex items-center gap-1.5 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill hover:text-fg"
-      onclick={() => go('home/agents')}
+      onclick={() => handOff('home', 'home/agents')}
     >
       <Bot size={14} aria-hidden="true" /> Let an agent film it instead
     </button>

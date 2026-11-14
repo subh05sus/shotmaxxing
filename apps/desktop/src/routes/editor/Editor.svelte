@@ -297,6 +297,7 @@
 
 <div class="flex h-full flex-col bg-bg">
   <header
+    data-tauri-drag-region
     class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center gap-2 border-b border-border bg-chrome pl-[var(--titlebar-inset-start)] pr-3"
   >
     <span class="no-drag"

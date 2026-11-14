@@ -32,7 +32,7 @@
 
 <div class="flex h-full">
   <aside class="flex w-[212px] shrink-0 flex-col border-r border-border bg-chrome">
-    <div class="drag-region h-[var(--titlebar-height)] shrink-0"></div>
+    <div data-tauri-drag-region class="drag-region h-[var(--titlebar-height)] shrink-0"></div>
     <nav class="flex flex-col gap-0.5 px-2.5" aria-label="Sections">
       {#each NAV as item (item.id)}
         {@const Icon = item.icon}
@@ -74,7 +74,10 @@
   </aside>
 
   <main class="flex min-w-0 flex-1 flex-col bg-bg">
-    <header class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center gap-3 px-5">
+    <header
+      data-tauri-drag-region
+      class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center gap-3 px-5"
+    >
       <h1 class="text-title-3">{titles[page] ?? 'Library'}</h1>
       <span class="flex-1"></span>
       <Tooltip label="Search everything" chord="mod+k">

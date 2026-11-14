@@ -88,19 +88,34 @@ export function listSources(): Promise<CaptureSource[]> {
   ]);
 }
 
-export function openWindow(
-  kind: 'home' | 'editor' | 'record' | 'onboarding',
-  target?: string,
-): Promise<void> {
+export type WindowKind = 'home' | 'editor' | 'record' | 'onboarding' | 'pill' | 'take';
+
+/** Opens (or focuses) a window. In a browser preview, the current page moves to that screen instead. */
+export function openWindow(kind: WindowKind, target?: string): Promise<void> {
   return call('open_window', { kind, target }, () => {
-    const map = {
-      home: 'home/library',
+    const map: Record<WindowKind, string> = {
+      home: target ?? 'home/library',
       editor: `editor/${target ?? 'sample'}`,
       record: 'record',
       onboarding: 'onboarding',
+      pill: 'pill',
+      take: 'take',
     };
     location.hash = `#/${map[kind]}`;
   });
+}
+
+/** Closes the window this screen is in (no-op in a browser preview). */
+export async function closeThisWindow(): Promise<void> {
+  if (!isTauri) return;
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  await getCurrentWindow().close();
+}
+
+/** Moves from one window to another: opens the next, then closes this one. */
+export async function handOff(kind: WindowKind, target?: string): Promise<void> {
+  await openWindow(kind, target);
+  await closeThisWindow();
 }
 
 export function connectAgent(agent: string): Promise<{ ok: boolean; message: string }> {

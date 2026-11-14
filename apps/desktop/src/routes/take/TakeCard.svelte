@@ -2,7 +2,8 @@
   import { onDestroy } from 'svelte';
   import { Bot, Check, Hand, Pause, Play, RotateCcw, Square } from '@lucide/svelte';
   import { Button, CheckDraw, Keycap, Spinner, confetti, fade, rise } from '@shotmaxxing/ui';
-  import { route, go } from '../../lib/router.svelte';
+  import { route } from '../../lib/router.svelte';
+  import { handOff } from '../../lib/native';
 
   /**
    * The live take card: what the agent is doing, step by step, with Pause, Take over and Stop always in reach.
@@ -138,7 +139,7 @@
           onclick={(e) => {
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
             confetti({ x: r.left + r.width / 2, y: r.top });
-            setTimeout(() => go('editor/sample'), 500);
+            setTimeout(() => handOff('editor', 'sample'), 500);
           }}>Open in editor</Button
         >
       {:else if phase === 'handoff'}

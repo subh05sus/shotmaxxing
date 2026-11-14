@@ -91,6 +91,8 @@
   ];
   const key = $derived(p.keystrokes ? KEYS.find((x) => ed.time >= x.t && ed.time < x.t + 0.9) : undefined);
 
+  const SPOTLIGHT =
+    'radial-gradient(circle, color-mix(in oklch, var(--cursor-light) 28%, transparent), transparent 70%)';
   const zoomed = $derived(cam.scale > 1.05);
   const bubble = $derived(frame.height * p.webcam.size * (p.webcam.shrink && zoomed ? 0.7 : 1));
   const corner = $derived({
@@ -193,8 +195,7 @@
                 style:top="{-cursorPx * 3}px"
                 style:width="{cursorPx * 6}px"
                 style:height="{cursorPx * 6}px"
-                style:background="radial-gradient(circle, color-mix(in oklch, var(--cursor-light) 28%,
-                transparent), transparent 70%)"
+                style:background={SPOTLIGHT}
               ></span>
             {/if}
             {#if p.cursor.style === 'dot'}

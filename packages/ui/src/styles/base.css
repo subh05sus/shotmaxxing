@@ -124,3 +124,8 @@
 :root[data-transparent] body {
   background: transparent;
 }
+
+/* With a native material behind the window, the page itself is clear; content areas paint their own background. */
+:root[data-material='native'] body {
+  background: transparent;
+}

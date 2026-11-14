@@ -167,6 +167,7 @@
 
 <div class="flex h-full flex-col bg-bg">
   <header
+    data-tauri-drag-region
     class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center justify-center pl-[var(--titlebar-inset-start)] pr-3"
   >
     <div class="no-drag"><Stepper steps={STEPS} current={step} onselect={goTo} /></div>

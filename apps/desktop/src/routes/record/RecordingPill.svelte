@@ -2,7 +2,7 @@
   import { onDestroy } from 'svelte';
   import { Ellipsis, Pause, Play, RotateCcw, Square, Trash } from '@lucide/svelte';
   import { Menu, Tooltip, toast, type MenuItem } from '@shotmaxxing/ui';
-  import { go } from '../../lib/router.svelte';
+  import { handOff } from '../../lib/native';
   import { timecode } from '../../lib/format';
 
   /**
@@ -22,7 +22,7 @@
 
   function stop() {
     clearInterval(timer);
-    go('editor/sample');
+    handOff('editor', 'sample');
   }
 
   const more: MenuItem[] = [
@@ -34,7 +34,7 @@
         toast('Started over. The earlier part was discarded.');
       },
     },
-    { label: 'Discard recording', icon: Trash, danger: true, run: () => go('home/library') },
+    { label: 'Discard recording', icon: Trash, danger: true, run: () => handOff('home', 'home/library') },
   ];
 </script>
 
