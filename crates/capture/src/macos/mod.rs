@@ -20,7 +20,7 @@ use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
 use objc2_screen_capture_kit::{
     SCContentFilter, SCRunningApplication, SCShareableContent, SCStream, SCStreamConfiguration,
-    SCStreamOutput, SCStreamOutputType,
+    SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
 use crate::{CaptureError, DisplayInfo, RecordOptions, Recording, Sources, Target, WindowInfo};
@@ -242,9 +242,26 @@ impl Recorder {
                     .ok_or_else(|| CaptureError::SourceNotFound("that display".into()))?;
                     // Leave this app out of the video, including windows it opens later (the recording pill and
                     // the take card).
-                    let own_app: Vec<Retained<SCRunningApplication>> =
+                    let mut left_out: Vec<Retained<SCRunningApplication>> =
                         content.applications().iter().filter(|a| a.processID() == own_pid).collect();
-                    let filter = if own_app.is_empty() {
+                    let mut kept: Vec<Retained<SCWindow>> = Vec::new();
+                    if options.hide_desktop_icons {
+                        // Desktop icons are Finder windows below the normal window layer. Finder is left out and
+                        // its ordinary windows are kept, so only the icons disappear.
+                        let finder = content
+                            .applications()
+                            .iter()
+                            .find(|a| a.bundleIdentifier().to_string() == "com.apple.finder");
+                        if let Some(finder) = finder {
+                            let finder_pid = finder.processID();
+                            kept.extend(content.windows().iter().filter(|w| {
+                                w.windowLayer() >= 0
+                                    && w.owningApplication().is_some_and(|a| a.processID() == finder_pid)
+                            }));
+                            left_out.push(finder);
+                        }
+                    }
+                    let filter = if left_out.is_empty() {
                         SCContentFilter::initWithDisplay_excludingWindows(
                             SCContentFilter::alloc(),
                             &display,
@@ -254,8 +271,8 @@ impl Recorder {
                         SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
                             SCContentFilter::alloc(),
                             &display,
-                            &NSArray::from_retained_slice(&own_app),
-                            &NSArray::new(),
+                            &NSArray::from_retained_slice(&left_out),
+                            &NSArray::from_retained_slice(&kept),
                         )
                     };
                     (filter, display.frame().origin, None, None)

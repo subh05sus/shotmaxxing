@@ -26,6 +26,24 @@ pub struct ProjectRecording {
     kind: SourceKind,
 }
 
+/// How to record a project.
+#[derive(Clone, Debug)]
+pub struct ProjectOptions {
+    pub target: Target,
+    /// The most frames per second to capture. The real rate follows what changes on screen.
+    pub max_fps: u32,
+    /// Leave the desktop icons out of screen recordings.
+    pub hide_desktop_icons: bool,
+    /// The agent filming the take, if an agent is.
+    pub agent: Option<AgentInfo>,
+}
+
+impl ProjectOptions {
+    pub fn new(target: Target) -> Self {
+        Self { target, max_fps: 60, hide_desktop_icons: false, agent: None }
+    }
+}
+
 /// What a finished recording left on disk.
 #[derive(Clone, Debug)]
 pub struct FinishedProject {
@@ -41,19 +59,15 @@ fn project_error(error: impl std::fmt::Display) -> CaptureError {
 
 impl ProjectRecording {
     /// Creates `<parent>/<name>.smx` (numbered if the name is taken) and starts recording into it.
-    pub fn start(
-        parent: &Path,
-        name: &str,
-        target: Target,
-        max_fps: u32,
-        agent: Option<AgentInfo>,
-    ) -> Result<Self, CaptureError> {
+    pub fn start(parent: &Path, name: &str, options: ProjectOptions) -> Result<Self, CaptureError> {
         std::fs::create_dir_all(parent)?;
-        let mut project = Project { name: name.to_string(), agent, ..Project::default() };
+        let target = options.target;
+        let mut project = Project { name: name.to_string(), agent: options.agent, ..Project::default() };
         let bundle = ProjectBundle::create(parent, &mut project).map_err(project_error)?;
-        let mut options = RecordOptions::new(target, bundle.root().join(SCREEN_TRACK));
-        options.max_fps = max_fps;
-        let recorder = match Recorder::start(options) {
+        let mut record = RecordOptions::new(target, bundle.root().join(SCREEN_TRACK));
+        record.max_fps = options.max_fps;
+        record.hide_desktop_icons = options.hide_desktop_icons;
+        let recorder = match Recorder::start(record) {
             Ok(recorder) => recorder,
             Err(error) => {
                 // Don't leave an empty project behind.
@@ -84,7 +98,9 @@ impl ProjectRecording {
             Ok(_) => {
                 let _ = std::fs::remove_dir_all(bundle.root());
                 return Err(CaptureError::System(
-                    "nothing was captured. The screen may be asleep or the window minimised; nothing was saved.".into(),
+                    "nothing was recorded. The screen may be asleep, or the window minimised or on another desktop. \
+                     Nothing was saved."
+                        .into(),
                 ));
             }
             Err(error) => return Err(error),

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use shotmaxxing_capture::{CURSOR_FILE, EVENTS_FILE, ProjectRecording, Target};
+use shotmaxxing_capture::{CURSOR_FILE, EVENTS_FILE, ProjectOptions, ProjectRecording, Target};
 use shotmaxxing_core::bundle::ProjectBundle;
 use shotmaxxing_core::project::{Project, ZoomDepth};
 use shotmaxxing_core::take::TakeScript;
@@ -75,6 +75,9 @@ struct RecordArgs {
     /// The most frames per second. The real rate follows what changes on screen.
     #[arg(long, default_value_t = 60)]
     fps: u32,
+    /// Leave the desktop icons out of a screen recording.
+    #[arg(long)]
+    hide_desktop_icons: bool,
 }
 
 #[derive(Subcommand)]
@@ -191,7 +194,10 @@ fn record(args: RecordArgs, json: bool) -> Result<()> {
         .context("couldn't listen for Ctrl-C")?;
 
     let folder = args.out.unwrap_or_else(default_folder);
-    let recording = ProjectRecording::start(&folder, &args.name, target, args.fps.clamp(1, 120), None)?;
+    let mut options = ProjectOptions::new(target);
+    options.max_fps = args.fps.clamp(1, 120);
+    options.hide_desktop_icons = args.hide_desktop_icons;
+    let recording = ProjectRecording::start(&folder, &args.name, options)?;
     if !json {
         eprintln!("Recording to {}", recording.root().display());
         eprintln!(

@@ -21,7 +21,9 @@ use shotmaxxing_core::telemetry::{CursorSample, InputEvent};
 
 mod project;
 
-pub use project::{CURSOR_FILE, EVENTS_FILE, FinishedProject, ProjectRecording, SCREEN_TRACK};
+pub use project::{
+    CURSOR_FILE, EVENTS_FILE, FinishedProject, ProjectOptions, ProjectRecording, SCREEN_TRACK,
+};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -105,11 +107,14 @@ pub struct RecordOptions {
     pub max_fps: u32,
     /// Record clicks, shortcuts and the cursor path for auto zoom and the editor.
     pub telemetry: bool,
+    /// Leave the desktop icons out of screen recordings. Windows are recorded on their own, so this only applies to
+    /// screens.
+    pub hide_desktop_icons: bool,
 }
 
 impl RecordOptions {
     pub fn new(target: Target, output: impl Into<PathBuf>) -> Self {
-        Self { target, output: output.into(), max_fps: 60, telemetry: true }
+        Self { target, output: output.into(), max_fps: 60, telemetry: true, hide_desktop_icons: false }
     }
 }
 

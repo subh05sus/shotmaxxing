@@ -7,14 +7,9 @@ fn main() {
     let out = std::path::PathBuf::from(args.next().expect("out dir"));
     shotmaxxing_capture::prepare();
     let handle = std::thread::spawn(move || {
-        let rec = shotmaxxing_capture::ProjectRecording::start(
-            &out,
-            "probe",
-            shotmaxxing_capture::Target::Window(id),
-            60,
-            None,
-        )
-        .unwrap_or_else(|error| panic!("start failed: {error}"));
+        let options = shotmaxxing_capture::ProjectOptions::new(shotmaxxing_capture::Target::Window(id));
+        let rec = shotmaxxing_capture::ProjectRecording::start(&out, "probe", options)
+            .unwrap_or_else(|error| panic!("start failed: {error}"));
         std::thread::sleep(std::time::Duration::from_secs(3));
         rec.stop()
     });
