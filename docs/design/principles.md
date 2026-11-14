@@ -44,6 +44,52 @@ apply to every screen, component and animation. A change that breaks one needs a
 | **Jakob's law** | Work like the tools people know: Space plays, J/K/L shuttle, ⌘Z undoes, the timeline behaves like Final Cut, Premiere and Screen Studio, and shortcuts follow each OS's conventions. |
 | **Frequency of use** | The more often something is used, the less it animates. Scrubbing, play/pause, timeline drags and typing get instant feedback with no decorative motion. Rare moments, like onboarding or the first export, get the most motion. |
 
+## Craft details
+
+**Type**
+- **X-height and family.** Use the system UI font on each OS (SF Pro on macOS, Segoe UI Variable on Windows). Both
+  have a large x-height that stays readable at 13 px.
+- **Tracking.** Large titles get slightly tighter tracking (−0.01 to −0.02 em), small caps labels a little looser
+  (+0.04 em), and body text is left as is.
+- **Kerning.** Keep the font's kerning on (`font-kerning: normal`). Hand-kern only the wordmark and large display
+  numbers.
+- **Leading.** Body text at 1.45, UI labels at 1.2, large titles at 1.1.
+- **Line length.** Guides and long help text are capped at about 65 characters (`max-width: 65ch`).
+- **Widows.** Headings and short paragraphs use `text-wrap: balance` or `pretty`, so no single word sits alone on
+  the last line.
+- **Tabular numbers.** Timecodes, durations, file sizes, percentages and anything that updates live use
+  `font-variant-numeric: tabular-nums`, so digits never jiggle.
+
+**Layout**
+- **Optical centring.** Centre things by eye: play triangles shift right by about 8% of their width, and icons with
+  heavy sides are nudged so they look centred.
+- **No layout shift.** Thumbnails, panels and lists reserve their final size before content loads (fixed aspect
+  ratios and skeletons of the same size). Status text like "Saved" swaps in place without moving anything.
+- **Safe area.** Keep content out of window corners and away from the macOS traffic lights and Windows caption
+  buttons. Floating cards keep at least 12 px from window edges.
+
+**Colour**
+- **OKLCH.** All colour tokens are defined in OKLCH, so hover, pressed and disabled steps change lightness evenly in
+  both themes, and accent tints stay the same perceived brightness.
+
+**Interaction**
+- **Touch target.** The whole row, card or chip is clickable, not just its icon or text.
+- **Affordance.** Things that can be dragged show a grip on hover and a grab cursor. Clip edges show resize
+  handles. Editable values look like fields, not labels.
+- **Optimistic updates.** Toggles, renames, deletes and reorders show the result at once and reconcile with the
+  core afterwards, rolling back with a clear message if something fails.
+- **Combobox.** Fonts, colours, presets and folder pickers accept typing and also offer a filtered list.
+- **Progressive disclosure.** Each panel shows presets first. Advanced controls sit behind "Advanced" and stay
+  open once opened.
+
+**Motion**
+- **Origin-aware animation.** Menus, popovers and sheets grow from the control that opened them.
+- **Stagger.** Groups enter one after another, 30–40 ms apart, capped at 8 items so a list never drags.
+- **Interruptible animation.** Every animation can be reversed mid-way. Springs retarget from their current
+  position, and nothing blocks input while it moves.
+- **Shared element transitions.** A Library thumbnail grows into the editor canvas when a project opens. The
+  Export button becomes the progress indicator.
+
 ## House rules
 
 - Never put a coloured or thick edge down one side of a card, row, chip or callout. Show status with a small dot, an
