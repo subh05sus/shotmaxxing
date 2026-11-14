@@ -9,8 +9,78 @@ use crate::telemetry::{CursorSample, InputEvent};
 
 /// How far around a click the path is pulled onto the click point.
 const SNAP_WINDOW_US: f64 = 180_000.0;
+/// How long a looping cursor takes to ease back to where it started.
+const LOOP_MS: u64 = 1_000;
+/// Drawn paths keep one sample per frame at 60 fps.
+const THIN_US: u64 = 16_000;
 /// Time constant of the smoothing filter at strength 1.
 const MAX_TAU_US: f64 = 90_000.0;
+
+/// The cursor settings that shape the drawn path.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PathSettings {
+    /// 0 to 1.
+    pub smoothing: f64,
+    pub snap_to_clicks: bool,
+    pub loop_to_start: bool,
+}
+
+/// The cursor path as drawn: smoothed, snapped onto clicks, eased back to its start when looping, and thinned to 60
+/// samples a second. The editor's preview and the exporter both draw from this path, so they always agree.
+pub fn render_path(samples: &[CursorSample], events: &[InputEvent], settings: PathSettings) -> Vec<CursorSample> {
+    let mut path = smooth(samples, settings.smoothing);
+    if settings.snap_to_clicks {
+        snap_to_clicks(&mut path, events);
+    }
+    if settings.loop_to_start {
+        loop_to_start(&mut path, LOOP_MS);
+    }
+    thin(path)
+}
+
+/// Keeps about one sample per 60 fps frame, plus the last one.
+pub fn thin(samples: Vec<CursorSample>) -> Vec<CursorSample> {
+    let mut out: Vec<CursorSample> = Vec::with_capacity(samples.len());
+    let last = samples.last().copied();
+    for sample in samples {
+        if out.last().is_none_or(|prev| sample.t_us >= prev.t_us + THIN_US) {
+            out.push(sample);
+        }
+    }
+    if let Some(last) = last
+        && out.last().is_some_and(|prev| prev.t_us != last.t_us)
+    {
+        out.push(last);
+    }
+    out
+}
+
+/// Where the drawn cursor is at `t_us`: a Catmull–Rom curve through the path with minimum-jerk timing between
+/// samples, so it glides rather than stepping from sample to sample. Matches the editor preview.
+pub fn position_at(path: &[CursorSample], t_us: f64) -> Option<Point> {
+    let first = path.first()?;
+    let last = path.last()?;
+    if t_us <= first.t_us as f64 {
+        return Some(first.point());
+    }
+    if t_us >= last.t_us as f64 {
+        return Some(last.point());
+    }
+    let i = path.partition_point(|s| (s.t_us as f64) <= t_us).saturating_sub(1).min(path.len() - 2);
+    let p1 = path[i];
+    let p2 = path[i + 1];
+    let p0 = if i > 0 { path[i - 1] } else { p1 };
+    let p3 = path.get(i + 2).copied().unwrap_or(p2);
+    let span = (p2.t_us - p1.t_us).max(1) as f64;
+    let u = crate::beats::min_jerk((t_us - p1.t_us as f64) / span);
+    let cr = |a: f64, b: f64, c: f64, d: f64| {
+        0.5 * (2.0 * b
+            + (-a + c) * u
+            + (2.0 * a - 5.0 * b + 4.0 * c - d) * u * u
+            + (-a + 3.0 * b - 3.0 * c + d) * u * u * u)
+    };
+    Some(Point::new(cr(p0.x, p1.x, p2.x, p3.x), cr(p0.y, p1.y, p2.y, p3.y)))
+}
 
 /// Smooths cursor samples. `strength` 0 returns the input unchanged; 1 is the smoothest.
 pub fn smooth(samples: &[CursorSample], strength: f64) -> Vec<CursorSample> {
@@ -161,6 +231,28 @@ mod tests {
         let first = path.first().unwrap().point();
         let last = path.last().unwrap().point();
         assert!(first.distance(last) < 1e-6);
+    }
+
+    #[test]
+    fn thins_to_about_sixty_samples_a_second() {
+        let thinned = thin(jittery_line());
+        assert!(thinned.len() > 100 && thinned.len() < 130, "{}", thinned.len());
+        assert_eq!(thinned.last().map(|s| s.t_us), Some(239 * 8_333));
+    }
+
+    #[test]
+    fn position_passes_through_the_samples_and_holds_at_the_ends() {
+        let path = vec![
+            CursorSample { t_us: 0, x: 0.0, y: 0.0, ..Default::default() },
+            CursorSample { t_us: 1_000_000, x: 100.0, y: 50.0, ..Default::default() },
+            CursorSample { t_us: 2_000_000, x: 200.0, y: 0.0, ..Default::default() },
+        ];
+        assert_eq!(position_at(&path, -5.0), Some(Point::new(0.0, 0.0)));
+        assert_eq!(position_at(&path, 1_000_000.0), Some(Point::new(100.0, 50.0)));
+        assert_eq!(position_at(&path, 9e9), Some(Point::new(200.0, 0.0)));
+        let between = position_at(&path, 500_000.0).unwrap();
+        assert!(between.x > 0.0 && between.x < 100.0);
+        assert_eq!(position_at(&[], 0.0), None);
     }
 
     #[test]

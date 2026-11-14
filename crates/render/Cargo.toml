@@ -1,0 +1,37 @@
+[package]
+name = "shotmaxxing-render"
+description = "Draws Shotmaxxing projects into finished videos: the editor's canvas, camera, cursor and overlays, rendered on the GPU."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+shotmaxxing-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tiny-skia = "0.11"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-core-image = "0.3"
+objc2-core-media = "0.3"
+objc2-core-video = "0.3"
+objc2-core-text = "0.3"
+objc2-av-foundation = { version = "0.3", features = ["objc2-core-media", "objc2-core-video"] }
+objc2-image-io = "0.3"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

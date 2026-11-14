@@ -63,6 +63,7 @@ pub fn run() {
             recording::discard_recording,
             recording::restart_recording,
             projects::load_project,
+            projects::cursor_path,
             projects::save_project,
             projects::list_projects,
             projects::plan_auto_zooms,

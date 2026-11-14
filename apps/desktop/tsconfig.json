@@ -12,7 +12,8 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "allowJs": false
+    "allowJs": false,
+    "resolveJsonModule": true
   },
   "include": [
     "src/**/*.ts",

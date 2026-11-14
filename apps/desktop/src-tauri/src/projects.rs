@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use shotmaxxing_capture::{CURSOR_FILE, EVENTS_FILE};
 use shotmaxxing_core::bundle::ProjectBundle;
+use shotmaxxing_core::cursor::{PathSettings, render_path};
 use shotmaxxing_core::project::{Project, TrackKind, ZoomDepth, ZoomRegion};
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent, decode_cursor, read_events};
 use shotmaxxing_core::zoom::{ZoomInput, plan_zooms};
@@ -64,21 +65,34 @@ fn read_telemetry(root: &Path) -> (Vec<CursorSample>, Vec<InputEvent>) {
     (cursor, events)
 }
 
-/// The editor draws the cursor at display rate; 60 samples a second is plenty and keeps the payload small.
-fn thin_cursor(samples: Vec<CursorSample>) -> Vec<CursorSample> {
-    let mut out: Vec<CursorSample> = Vec::with_capacity(samples.len());
-    let last = samples.last().cloned();
-    for sample in samples {
-        if out.last().is_none_or(|prev| sample.t_us >= prev.t_us + 16_000) {
-            out.push(sample);
-        }
-    }
-    if let Some(last) = last
-        && out.last().is_some_and(|prev| prev.t_us != last.t_us)
-    {
-        out.push(last);
-    }
-    out
+/// The drawn cursor path for a project's own cursor settings.
+fn drawn_cursor(project: &Project, cursor: &[CursorSample], events: &[InputEvent]) -> Vec<CursorSample> {
+    render_path(
+        cursor,
+        events,
+        PathSettings {
+            smoothing: project.cursor.smoothing,
+            snap_to_clicks: project.cursor.snap_to_clicks,
+            loop_to_start: project.cursor.loop_to_start,
+        },
+    )
+}
+
+/// The drawn cursor path for other settings, while the editor tries them out. The exporter draws the same path.
+#[tauri::command]
+pub async fn cursor_path(
+    path: String,
+    smoothing: f64,
+    snap_to_clicks: bool,
+    loop_to_start: bool,
+) -> Result<Vec<CursorSample>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (bundle, _) = ProjectBundle::open(&path).map_err(text)?;
+        let (cursor, events) = read_telemetry(bundle.root());
+        Ok(render_path(&cursor, &events, PathSettings { smoothing, snap_to_clicks, loop_to_start }))
+    })
+    .await
+    .map_err(text)?
 }
 
 #[tauri::command]
@@ -91,8 +105,8 @@ pub async fn load_project<R: Runtime>(app: AppHandle<R>, path: String) -> Result
         Ok(LoadedProject {
             root: root.to_string_lossy().into_owned(),
             media: screen_media(&root, &project),
+            cursor: drawn_cursor(&project, &cursor, &events),
             project,
-            cursor: thin_cursor(cursor),
             events,
         })
     })
@@ -288,24 +302,4 @@ pub async fn plan_auto_zooms(path: String, depth: ZoomDepth) -> Result<Vec<ZoomR
     })
     .await
     .map_err(text)?
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CursorSample, thin_cursor};
-
-    #[test]
-    fn thins_the_cursor_to_about_sixty_samples_a_second() {
-        let samples: Vec<CursorSample> = (0..240)
-            .map(|i| CursorSample {
-                t_us: i * 8_333,
-                x: f64::from(i as u32),
-                y: 0.0,
-                shape: Default::default(),
-            })
-            .collect();
-        let thinned = thin_cursor(samples);
-        assert!(thinned.len() > 100 && thinned.len() < 130, "{}", thinned.len());
-        assert_eq!(thinned.last().map(|s| s.t_us), Some(239 * 8_333));
-    }
 }

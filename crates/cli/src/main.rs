@@ -1,9 +1,10 @@
-//! `shotmaxxing`: record from the terminal, re-plan auto zoom, check take scripts, and (soon) serve AI agents.
+//! `shotmaxxing`: record from the terminal, export finished videos, re-plan auto zoom, check take scripts, and
+//! (soon) serve AI agents.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -14,6 +15,7 @@ use shotmaxxing_core::take::TakeScript;
 use shotmaxxing_core::telemetry::{decode_cursor, read_events};
 use shotmaxxing_core::timeparse::{format_timecode, parse_duration_us};
 use shotmaxxing_core::zoom::{ZoomInput, plan_zooms};
+use shotmaxxing_render::{ExportOptions, Format, RenderProject, default_bitrate, output_size, unique_path};
 
 #[derive(Parser)]
 #[command(
@@ -36,6 +38,8 @@ enum Command {
     Sources,
     /// Record a screen or a window into a new project.
     Record(RecordArgs),
+    /// Export a project to a video, with every edit applied.
+    Export(ExportArgs),
     /// Show what's in a project.
     Info {
         /// A .smx project folder.
@@ -78,6 +82,34 @@ struct RecordArgs {
     /// Leave the desktop icons out of a screen recording.
     #[arg(long)]
     hide_desktop_icons: bool,
+}
+
+#[derive(Args)]
+struct ExportArgs {
+    /// A .smx project folder.
+    project: PathBuf,
+    /// The file to write. Without it, the video goes next to the project, named after it.
+    #[arg(long, short = 'o')]
+    out: Option<PathBuf>,
+    /// MP4 plays everywhere; HEVC is smaller; GIF loops in chats and docs.
+    #[arg(long, value_enum, default_value_t = OutFormat::Mp4)]
+    format: OutFormat,
+    /// The shorter side in pixels, e.g. 720, 1080, 1440 or 2160. The other side follows the canvas shape.
+    #[arg(long, default_value_t = 1080)]
+    size: u32,
+    /// Frames per second.
+    #[arg(long, default_value_t = 60)]
+    fps: u32,
+    /// Bitrate in Mbit/s. The default suits the size.
+    #[arg(long)]
+    mbps: Option<f64>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OutFormat {
+    Mp4,
+    Hevc,
+    Gif,
 }
 
 #[derive(Subcommand)]
@@ -124,6 +156,7 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Sources => sources(cli.json),
         Command::Record(args) => record(args, cli.json),
+        Command::Export(args) => export(args, cli.json),
         Command::Info { project } => info(&project, cli.json),
         Command::Zoom { project, depth } => zoom(&project, depth.into(), cli.json),
         Command::Take(TakeCommand::Validate { file }) => validate(&file, cli.json),
@@ -132,6 +165,56 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn export(args: ExportArgs, json: bool) -> Result<()> {
+    let project = RenderProject::load(&args.project).context("couldn't open the project")?;
+    let format = match args.format {
+        OutFormat::Mp4 => Format::H264,
+        OutFormat::Hevc => Format::Hevc,
+        OutFormat::Gif => Format::Gif,
+    };
+    let (width, height) = output_size(project.canvas_aspect(), args.size.clamp(240, 4320));
+    let fps = args.fps.clamp(1, 120);
+    let output = match args.out {
+        Some(out) => out,
+        None => {
+            let dir = args.project.parent().unwrap_or(Path::new("."));
+            let ext = if format == Format::Gif { "gif" } else { "mp4" };
+            unique_path(dir, &shotmaxxing_core::bundle::sanitize_file_name(&project.name), ext)
+        }
+    };
+    let bitrate = args.mbps.map_or_else(|| default_bitrate(width, height, fps, format), |mbps| mbps * 1e6);
+    let options = ExportOptions { width, height, fps, format, bitrate, output: output.clone() };
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst)).context("couldn't watch for Ctrl-C")?;
+    let started = Instant::now();
+    let mut shown = -1;
+    let result = shotmaxxing_render::export(&args.project, &options, &mut |done| {
+        let percent = (done * 100.0) as i32;
+        if !json && percent != shown {
+            eprint!("\rExporting {width}×{height} at {fps} fps… {percent}%");
+            shown = percent;
+        }
+        !stop.load(Ordering::SeqCst)
+    });
+    if !json {
+        eprintln!();
+    }
+    result.context("the export didn't finish")?;
+    let seconds = started.elapsed().as_secs_f64();
+    if json {
+        let report = serde_json::json!({
+            "output": output, "width": width, "height": height, "fps": fps,
+            "duration_s": project.output_duration(), "took_s": seconds,
+        });
+        println!("{report}");
+    } else {
+        println!("Saved {} ({:.1} s of video in {seconds:.1} s)", output.display(), project.output_duration());
+    }
+    Ok(())
 }
 
 fn default_folder() -> PathBuf {

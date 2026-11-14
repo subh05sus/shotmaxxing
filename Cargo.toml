@@ -13,6 +13,7 @@ authors = ["Shotmaxxing contributors"]
 [workspace.dependencies]
 shotmaxxing-core = { path = "crates/core" }
 shotmaxxing-capture = { path = "crates/capture" }
+shotmaxxing-render = { path = "crates/render" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
@@ -41,4 +42,8 @@ strip = "symbols"
 
 # Dependencies stay optimised in debug builds so video and GPU work is usable while developing.
 [profile.dev.package."*"]
+opt-level = 2
+
+# The renderer draws every pixel of a wallpaper and blurs shadows on the CPU; keep it fast in debug builds too.
+[profile.dev.package.shotmaxxing-render]
 opt-level = 2
