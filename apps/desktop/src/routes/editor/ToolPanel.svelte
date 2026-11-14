@@ -473,6 +473,16 @@
           onchange={(v) => ed.change('Shrink', () => (p.webcam.shrink = v))}
         />
       </label>
+      <label class="flex h-9 items-center justify-between text-callout">
+        <span class="flex items-center gap-1"
+          >Mirror <InfoTip text="Flips the camera the way you see yourself in calls." /></span
+        >
+        <Switch
+          checked={p.webcam.mirror}
+          label="Mirror"
+          onchange={(v) => ed.change('Mirror', () => (p.webcam.mirror = v))}
+        />
+      </label>
     {:else if ed.tool === 'audio' && !p.has.mic && !p.has.system}
       <p class="text-footnote text-fg-muted">
         This take was recorded without sound. Turn on Microphone or System audio in the record dialog to

@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use shotmaxxing_capture::{CURSOR_FILE, EVENTS_FILE, ProjectOptions, ProjectRecording, Target};
+use shotmaxxing_capture::{CURSOR_FILE, DeviceChoice, EVENTS_FILE, ProjectOptions, ProjectRecording, Target};
 use shotmaxxing_core::bundle::ProjectBundle;
-use shotmaxxing_core::project::{Project, ZoomDepth};
+use shotmaxxing_core::project::{Project, TrackKind, ZoomDepth};
 use shotmaxxing_core::take::TakeScript;
 use shotmaxxing_core::telemetry::{decode_cursor, read_events};
 use shotmaxxing_core::timeparse::{format_timecode, parse_duration_us};
@@ -36,6 +36,8 @@ struct Cli {
 enum Command {
     /// List the screens and windows you can record.
     Sources,
+    /// List the microphones and cameras you can record.
+    Devices,
     /// Record a screen or a window into a new project.
     Record(RecordArgs),
     /// Export a project to a video, with every edit applied.
@@ -82,6 +84,24 @@ struct RecordArgs {
     /// Leave the desktop icons out of a screen recording.
     #[arg(long)]
     hide_desktop_icons: bool,
+    /// Record what the computer plays.
+    #[arg(long)]
+    system_audio: bool,
+    /// Record a microphone: an id from `shotmaxxing devices`, or the system's own choice when no id is given.
+    #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "default")]
+    mic: Option<String>,
+    /// Film yourself with a camera: an id from `shotmaxxing devices`, or the system's own choice when no id is
+    /// given.
+    #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "default")]
+    camera: Option<String>,
+}
+
+fn device_choice(choice: Option<String>) -> DeviceChoice {
+    match choice.as_deref() {
+        None => DeviceChoice::Off,
+        Some("default") => DeviceChoice::Default,
+        Some(id) => DeviceChoice::Id(id.to_string()),
+    }
 }
 
 #[derive(Args)]
@@ -155,6 +175,7 @@ fn main() {
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Sources => sources(cli.json),
+        Command::Devices => devices(cli.json),
         Command::Record(args) => record(args, cli.json),
         Command::Export(args) => export(args, cli.json),
         Command::Info { project } => info(&project, cli.json),
@@ -212,7 +233,11 @@ fn export(args: ExportArgs, json: bool) -> Result<()> {
         });
         println!("{report}");
     } else {
-        println!("Saved {} ({:.1} s of video in {seconds:.1} s)", output.display(), project.output_duration());
+        println!(
+            "Saved {} ({:.1} s of video in {seconds:.1} s)",
+            output.display(),
+            project.output_duration()
+        );
     }
     Ok(())
 }
@@ -225,6 +250,32 @@ fn default_folder() -> PathBuf {
     } else {
         base.join("Videos").join("Shotmaxxing")
     }
+}
+
+fn devices(json: bool) -> Result<()> {
+    let microphones = shotmaxxing_capture::microphones();
+    let cameras = shotmaxxing_capture::cameras();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &serde_json::json!({ "microphones": microphones, "cameras": cameras })
+            )?
+        );
+        return Ok(());
+    }
+    for (heading, list) in [("Microphones", &microphones), ("Cameras", &cameras)] {
+        println!("{heading}");
+        if list.is_empty() {
+            println!("  None found");
+        }
+        for d in list {
+            println!("  {}{}  {}", d.name, if d.is_default { " (default)" } else { "" }, d.id);
+        }
+        println!();
+    }
+    println!("Record with them: shotmaxxing record --mic [<id>] --camera [<id>] --system-audio");
+    Ok(())
 }
 
 fn sources(json: bool) -> Result<()> {
@@ -280,6 +331,9 @@ fn record(args: RecordArgs, json: bool) -> Result<()> {
     let mut options = ProjectOptions::new(target);
     options.max_fps = args.fps.clamp(1, 120);
     options.hide_desktop_icons = args.hide_desktop_icons;
+    options.system_audio = args.system_audio;
+    options.microphone = device_choice(args.mic);
+    options.camera = device_choice(args.camera);
     let recording = ProjectRecording::start(&folder, &args.name, options)?;
     if !json {
         eprintln!("Recording to {}", recording.root().display());
@@ -314,12 +368,17 @@ fn record(args: RecordArgs, json: bool) -> Result<()> {
                 "frames": finished.frames,
                 "dropped_frames": finished.dropped,
                 "zooms": finished.project.zooms,
+                "tracks": finished.project.tracks,
+                "warnings": finished.warnings,
             }))?
         );
     } else {
         print_summary(&finished.root, &finished.project);
         if finished.dropped > 0 {
             println!("  {} frames were dropped; the machine was busy.", finished.dropped);
+        }
+        for warning in &finished.warnings {
+            println!("  {warning}");
         }
     }
     Ok(())
@@ -335,6 +394,19 @@ fn print_summary(root: &Path, project: &Project) {
         project.source.size.height,
         project.source.scale
     );
+    let extras: Vec<&str> = project
+        .tracks
+        .iter()
+        .filter_map(|t| match t.kind {
+            TrackKind::SystemAudio => Some("the computer's sound"),
+            TrackKind::Microphone => Some("the microphone"),
+            TrackKind::Camera => Some("the camera"),
+            _ => None,
+        })
+        .collect();
+    if !extras.is_empty() {
+        println!("  With {}", extras.join(", "));
+    }
     if project.zooms.is_empty() {
         println!("  No zooms: nothing was clicked or typed.");
     } else {

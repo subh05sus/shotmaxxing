@@ -68,6 +68,9 @@ export interface Project {
     size: number;
     corner: 'tl' | 'tr' | 'bl' | 'br';
     shrink: boolean;
+    /** Flip the camera like a mirror, the way people see themselves in calls. */
+    mirror: boolean;
+    shadow: boolean;
   };
   audio: { mic: number; system: number; cleanup: boolean; silence: boolean };
   captions: { state: 'none' | 'busy' | 'ready'; style: 'bar' | 'bold'; show: boolean };
@@ -126,7 +129,7 @@ function sampleProject(): Project {
     clips: [{ id: 'c1', start: 0, end: SAMPLE_PROJECT.duration, speed: 1 }],
     zooms: SAMPLE_PROJECT.zooms.map((z) => ({ ...z, focus: { ...z.focus } })),
     effects: SAMPLE_PROJECT.effects.map((e) => ({ ...e })),
-    webcam: { on: false, shape: 'circle', size: 0.2, corner: 'br', shrink: true },
+    webcam: { on: false, shape: 'circle', size: 0.2, corner: 'br', shrink: true, mirror: true, shadow: true },
     audio: { mic: 0.9, system: 0.6, cleanup: true, silence: false },
     captions: { state: 'none', style: 'bar', show: true },
     keystrokes: true,
@@ -145,6 +148,8 @@ export class EditorState {
   saveError = $state('');
   /** The screen recording, for real projects. */
   media = $state<string | null>(null);
+  /** The camera recording, for takes filmed with one. The offset places it on the screen's timeline. */
+  camera = $state<{ url: string; offset: number } | null>(null);
   /** What was recorded besides the video, in seconds and capture points. */
   cursorPath = $state.raw<TimedPoint[]>(SAMPLE_CURSOR);
   clicks = $state.raw<TimedPoint[]>(SAMPLE_PROJECT.clicks);
@@ -171,6 +176,9 @@ export class EditorState {
   #last = 0;
   #core: CoreProject | null = null;
   #video: HTMLVideoElement | null = null;
+  #cameraVideo: HTMLVideoElement | null = null;
+  /** The recorded sound, each on the screen's timeline. */
+  #sounds: { kind: string; el: HTMLAudioElement; offset: number }[] = [];
 
   constructor() {
     const json = JSON.stringify(this.project);
@@ -190,6 +198,20 @@ export class EditorState {
       this.path = loaded.root;
       this.project = fromCore(loaded.project, env.os === 'windows' ? 'windows' : 'mac');
       this.media = loaded.media ? await mediaUrl(loaded.media) : null;
+      this.#releaseSounds();
+      this.camera = null;
+      for (const track of loaded.tracks) {
+        const url = await mediaUrl(track.path);
+        const offset = track.offset_us / 1e6;
+        if (track.kind === 'camera') {
+          this.camera = { url, offset };
+        } else {
+          const el = new Audio();
+          el.preload = 'auto';
+          el.src = url;
+          this.#sounds.push({ kind: track.kind, el, offset });
+        }
+      }
       this.cursorPath = loaded.cursor.map((c) => ({ t: c.t_us / 1e6, x: c.x, y: c.y }));
       this.#cursorKey = '';
       const clicks: TimedPoint[] = [];
@@ -221,6 +243,55 @@ export class EditorState {
   attachVideo(video: HTMLVideoElement | null): void {
     this.#video = video;
     if (video) video.currentTime = this.time;
+  }
+
+  /** The camera bubble's <video>. It follows the screen like the sound does. */
+  attachCamera(video: HTMLVideoElement | null): void {
+    this.#cameraVideo = video;
+    this.#syncMedia(this.time);
+  }
+
+  /** Keeps a sound or the camera at `t` on the screen's timeline, playing or paused along with it. */
+  #follow(el: HTMLMediaElement, offset: number, t: number, speed: number): void {
+    const at = t - offset;
+    const length = Number.isFinite(el.duration) ? el.duration : Infinity;
+    if (at < 0 || at >= length) {
+      // Before it starts or after it ends: hold the nearest frame, silently.
+      if (!el.paused) el.pause();
+      const edge = Math.max(0, Math.min(at, Number.isFinite(length) ? length : 0));
+      if (Math.abs(el.currentTime - edge) > 0.05) el.currentTime = edge;
+      return;
+    }
+    if (el.playbackRate !== speed) el.playbackRate = speed;
+    // Small drift is left alone while playing: seeking a playing sound is audible.
+    if (Math.abs(el.currentTime - at) > (this.playing ? 0.15 : 0.02)) el.currentTime = at;
+    if (this.playing && el.paused) el.play().catch(() => {});
+    else if (!this.playing && !el.paused) el.pause();
+  }
+
+  #syncMedia(t: number): void {
+    const speed = this.rate * (this.clipAt(t)?.speed ?? 1);
+    for (const sound of this.#sounds) {
+      const level =
+        sound.kind === 'microphone'
+          ? this.project.audio.mic
+          : sound.kind === 'system_audio'
+            ? this.project.audio.system
+            : 1;
+      // Browsers stop at 100%; the export applies louder settings in full.
+      sound.el.volume = Math.min(1, Math.max(0, level));
+      this.#follow(sound.el, sound.offset, t, speed);
+    }
+    if (this.#cameraVideo && this.camera) this.#follow(this.#cameraVideo, this.camera.offset, t, speed);
+  }
+
+  #releaseSounds(): void {
+    for (const sound of this.#sounds) {
+      sound.el.pause();
+      sound.el.removeAttribute('src');
+      sound.el.load();
+    }
+    this.#sounds = [];
   }
 
   /** Applies an edit with undo history. Repeats of the same edit within 800 ms count as one step. */
@@ -315,6 +386,7 @@ export class EditorState {
       video.playbackRate = this.rate * (this.clipAt(this.time)?.speed ?? 1);
       video.play().catch(() => this.pause());
     }
+    this.#syncMedia(this.time);
     const frame = (now: number) => {
       if (!this.playing) return;
       const dt = (now - this.#last) / 1000;
@@ -346,6 +418,7 @@ export class EditorState {
         return;
       }
       this.time = t;
+      this.#syncMedia(t);
       this.#raf = requestAnimationFrame(frame);
     };
     this.#raf = requestAnimationFrame(frame);
@@ -355,6 +428,7 @@ export class EditorState {
     this.playing = false;
     cancelAnimationFrame(this.#raf);
     this.#video?.pause();
+    this.#syncMedia(this.time);
   }
 
   toggle(): void {
@@ -366,6 +440,7 @@ export class EditorState {
     this.time = Math.min(this.project.duration, Math.max(0, t));
     const video = this.#video;
     if (video && Math.abs(video.currentTime - this.time) > 0.02) video.currentTime = this.time;
+    this.#syncMedia(this.time);
   }
 
   clipAt(t: number): Clip | undefined {
@@ -518,6 +593,7 @@ export class EditorState {
 
   destroy(): void {
     this.pause();
+    this.#releaseSounds();
     clearTimeout(this.#saveTimer);
     clearTimeout(this.#versionTimer);
   }

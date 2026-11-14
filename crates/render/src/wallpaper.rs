@@ -190,7 +190,9 @@ fn layer(text: &str) -> Result<Layer, String> {
         }
         "linear-gradient" => {
             let (angle, rest) = match parts.first().and_then(|p| p.strip_suffix("deg")) {
-                Some(deg) => (deg.trim().parse::<f64>().map_err(|_| format!("bad angle in “{text}”"))?, &parts[1..]),
+                Some(deg) => {
+                    (deg.trim().parse::<f64>().map_err(|_| format!("bad angle in “{text}”"))?, &parts[1..])
+                }
                 None => (180.0, &parts[..]),
             };
             Ok(Layer { shape: Shape::Linear { angle }, stops: stops(rest)? })
@@ -237,7 +239,12 @@ fn sample(stops: &[Stop], t: f64) -> [f64; 4] {
             TRANSPARENT
         } else {
             let mix = |x: f64, y: f64| (x * pa + (y * pb - x * pa) * u) / alpha;
-            Lab { l: mix(a.color.l, b.color.l), a: mix(a.color.a, b.color.a), b: mix(a.color.b, b.color.b), alpha }
+            Lab {
+                l: mix(a.color.l, b.color.l),
+                a: mix(a.color.a, b.color.a),
+                b: mix(a.color.b, b.color.b),
+                alpha,
+            }
         }
     };
     let [r, g, b] = lab_to_srgb(lab);
@@ -254,15 +261,19 @@ pub fn rasterize(css: &str, width: u32, height: u32) -> Result<Vec<u8>, String> 
     // Bottom layer first; each layer above composites over what is below.
     for layer in layers.iter().rev() {
         // Colours depend only on the position along the gradient, so a lookup table does the colour maths once.
-        let table: Vec<[f32; 4]> = (0..=LUT)
-            .map(|i| sample(&layer.stops, i as f64 / LUT as f64 * 1.5).map(|v| v as f32))
-            .collect();
+        let table: Vec<[f32; 4]> =
+            (0..=LUT).map(|i| sample(&layer.stops, i as f64 / LUT as f64 * 1.5).map(|v| v as f32)).collect();
         let lookup = |t: f64| -> [f32; 4] {
             let x = (t.clamp(0.0, 1.5) / 1.5 * LUT as f64) as f32;
             let i = (x as usize).min(LUT - 1);
             let f = x - i as f32;
             let (a, b) = (table[i], table[i + 1]);
-            [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f]
+            [
+                a[0] + (b[0] - a[0]) * f,
+                a[1] + (b[1] - a[1]) * f,
+                a[2] + (b[2] - a[2]) * f,
+                a[3] + (b[3] - a[3]) * f,
+            ]
         };
         for y in 0..h {
             let py = y as f64 + 0.5;
@@ -328,10 +339,13 @@ mod tests {
 
     #[test]
     fn stop_positions_fill_in_like_css() {
-        let layers = parse("linear-gradient(135deg, oklch(0.3 0.05 150), oklch(0.5 0 0), oklch(0.18 0.03 200))").unwrap();
+        let layers =
+            parse("linear-gradient(135deg, oklch(0.3 0.05 150), oklch(0.5 0 0), oklch(0.18 0.03 200))")
+                .unwrap();
         let at: Vec<f64> = layers[0].stops.iter().map(|s| s.at).collect();
         assert_eq!(at, vec![0.0, 0.5, 1.0]);
-        let layers = parse("radial-gradient(120% 90% at 15% 10%, oklch(0.88 0.2 128) 0%, transparent 55%)").unwrap();
+        let layers =
+            parse("radial-gradient(120% 90% at 15% 10%, oklch(0.88 0.2 128) 0%, transparent 55%)").unwrap();
         assert_eq!(layers[0].shape, Shape::Radial { rx: 1.2, ry: 0.9, cx: 0.15, cy: 0.1 });
         assert_eq!(layers[0].stops[1].at, 0.55);
         assert_eq!(layers[0].stops[1].color.alpha, 0.0);

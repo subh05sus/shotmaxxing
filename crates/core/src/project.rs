@@ -60,7 +60,7 @@ impl Project {
         self.tracks
             .iter()
             .filter(|t| t.kind == TrackKind::Screen)
-            .map(|t| t.offset_us + t.duration_us)
+            .map(|t| t.offset_us.max(0).unsigned_abs() + t.duration_us)
             .max()
             .unwrap_or(0)
     }
@@ -95,8 +95,10 @@ pub struct MediaTrack {
     /// Path relative to the project folder, e.g. `media/screen.mp4`.
     pub path: String,
     pub duration_us: u64,
+    /// Where the track starts on the screen recording's timeline. Negative when it started first: the microphone
+    /// and camera start a moment before the screen so no words are lost.
     #[serde(default)]
-    pub offset_us: u64,
+    pub offset_us: i64,
     #[serde(default = "one")]
     pub volume: f64,
     #[serde(default)]

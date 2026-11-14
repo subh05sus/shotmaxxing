@@ -12,7 +12,9 @@ use shotmaxxing_core::geometry::{Point, Rect, Size};
 use shotmaxxing_core::project::{
     ArrowOverlay, BlurRegion, ClickEffect, MediaTrack, Project, TextOverlay, TimeRange, TrackKind, ZoomRegion,
 };
-use shotmaxxing_core::telemetry::{CursorSample, InputEvent, InputSource, MouseButton, encode_cursor, write_events};
+use shotmaxxing_core::telemetry::{
+    CursorSample, InputEvent, InputSource, MouseButton, encode_cursor, write_events,
+};
 use shotmaxxing_render::{ExportOptions, Format, RenderError, export};
 
 fn has_ffmpeg() -> bool {
@@ -23,20 +25,27 @@ fn range(start_ms: u64, end_ms: u64) -> TimeRange {
     TimeRange { start_us: start_ms * 1000, end_us: end_ms * 1000 }
 }
 
-/// A four-second "Retina" project with a zoom, a click, a keystroke, a cut, a blur, an arrow and a title.
+fn track(kind: TrackKind, path: &str, duration_us: u64, offset_us: i64, volume: f64) -> MediaTrack {
+    MediaTrack { id: path.into(), kind, path: path.into(), duration_us, offset_us, volume, muted: false }
+}
+
+fn ffmpeg(args: &[&str], out: &Path) {
+    let status = Command::new("ffmpeg").args(["-v", "error", "-y"]).args(args).arg(out).status().unwrap();
+    assert!(status.success(), "ffmpeg couldn't make {}", out.display());
+}
+
+/// A four-second "Retina" project with a zoom, a click, a keystroke, a cut, a blur, an arrow and a title, plus a
+/// microphone that started 0.2 s before the screen (turned up to 140%), a shorter system sound and a camera.
 fn make_project(dir: &Path) -> PathBuf {
     let mut project = Project { name: "Export test".into(), ..Project::default() };
     project.source.size = Size::new(1440.0, 900.0);
     project.source.scale = 2.0;
-    project.tracks = vec![MediaTrack {
-        id: "screen".into(),
-        kind: TrackKind::Screen,
-        path: "media/screen.mp4".into(),
-        duration_us: 4_000_000,
-        offset_us: 0,
-        volume: 1.0,
-        muted: false,
-    }];
+    project.tracks = vec![
+        track(TrackKind::Screen, "media/screen.mp4", 4_000_000, 0, 1.0),
+        track(TrackKind::Microphone, "media/microphone.m4a", 4_300_000, -200_000, 1.4),
+        track(TrackKind::SystemAudio, "media/system-audio.m4a", 2_000_000, 500_000, 0.8),
+        track(TrackKind::Camera, "media/camera.mp4", 4_000_000, 100_000, 1.0),
+    ];
     project.zooms = vec![ZoomRegion {
         id: "z1".into(),
         start_us: 1_000_000,
@@ -74,19 +83,59 @@ fn make_project(dir: &Path) -> PathBuf {
     }];
 
     let bundle = ProjectBundle::create(dir, &mut project).unwrap();
-    let video = bundle.media_dir().join("screen.mp4");
-    let encoded = Command::new("ffmpeg")
-        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=2880x1800:rate=30", "-t", "4"])
-        .args(["-c:v", "hevc_videotoolbox", "-tag:v", "hvc1", "-b:v", "12M"])
-        .arg(&video)
-        .status()
-        .unwrap();
-    assert!(encoded.success(), "ffmpeg couldn't make the test video");
+    let media = bundle.media_dir();
+    ffmpeg(
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=2880x1800:rate=30",
+            "-t",
+            "4",
+            "-c:v",
+            "hevc_videotoolbox",
+            "-tag:v",
+            "hvc1",
+            "-b:v",
+            "8M",
+        ],
+        &media.join("screen.mp4"),
+    );
+    ffmpeg(
+        &["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=4.3", "-c:a", "aac"],
+        &media.join("microphone.m4a"),
+    );
+    ffmpeg(
+        &["-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=2", "-ac", "2", "-c:a", "aac"],
+        &media.join("system-audio.m4a"),
+    );
+    ffmpeg(
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=640x360:rate=30",
+            "-t",
+            "4",
+            "-c:v",
+            "hevc_videotoolbox",
+            "-tag:v",
+            "hvc1",
+            "-b:v",
+            "8M",
+        ],
+        &media.join("camera.mp4"),
+    );
 
     let cursor: Vec<CursorSample> = (0..=80u32)
         .map(|i| {
             let u = f64::from(i) / 80.0;
-            CursorSample { t_us: u64::from(i) * 50_000, x: 200.0 + 800.0 * u, y: 200.0 + 400.0 * u, ..CursorSample::default() }
+            CursorSample {
+                t_us: u64::from(i) * 50_000,
+                x: 200.0 + 800.0 * u,
+                y: 200.0 + 400.0 * u,
+                ..CursorSample::default()
+            }
         })
         .collect();
     std::fs::write(bundle.telemetry_dir().join("cursor.smxc"), encode_cursor(&cursor)).unwrap();
@@ -113,6 +162,42 @@ fn make_project(dir: &Path) -> PathBuf {
     bundle.root().to_path_buf()
 }
 
+/// The exported sound's codec, channels and length in seconds.
+fn probe_sound(path: &Path) -> Option<(String, u32, f64)> {
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "a:0"])
+        .args(["-show_entries", "stream=codec_name,channels,duration", "-of", "csv=p=0"])
+        .arg(path)
+        .output()
+        .ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    let parts: Vec<&str> = text.trim().split(',').collect();
+    match parts[..] {
+        [codec, channels, duration] => {
+            Some((codec.to_string(), channels.parse().ok()?, duration.parse().ok()?))
+        }
+        _ => None,
+    }
+}
+
+/// The loudest moment and the average level of the exported sound, in dB.
+fn loudness(path: &Path) -> (f64, f64) {
+    let out = Command::new("ffmpeg")
+        .arg("-i")
+        .arg(path)
+        .args(["-af", "volumedetect", "-f", "null", "-"])
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&out.stderr);
+    let find = |key: &str| -> f64 {
+        log.lines()
+            .find_map(|l| l.split(key).nth(1))
+            .and_then(|rest| rest.trim().trim_end_matches("dB").trim().parse().ok())
+            .unwrap_or(f64::NAN)
+    };
+    (find("max_volume:"), find("mean_volume:"))
+}
+
 fn probe(path: &Path) -> Option<(u32, u32, u32)> {
     let out = Command::new("ffprobe")
         .args(["-v", "error", "-count_frames", "-select_streams", "v:0"])
@@ -137,8 +222,14 @@ fn exports_every_frame_at_the_right_size() {
     let dir = tempfile::tempdir().unwrap();
     let root = make_project(dir.path());
     let output = dir.path().join("Export test.mp4");
-    let options =
-        ExportOptions { width: 1280, height: 720, fps: 30, format: Format::H264, bitrate: 8e6, output: output.clone() };
+    let options = ExportOptions {
+        width: 1280,
+        height: 720,
+        fps: 30,
+        format: Format::H264,
+        bitrate: 8e6,
+        output: output.clone(),
+    };
     let mut last = 0.0;
     export(&root, &options, &mut |done| {
         assert!(done >= last, "progress went backwards");
@@ -149,6 +240,14 @@ fn exports_every_frame_at_the_right_size() {
     assert_eq!(last, 1.0);
     // Four seconds minus the 0.4 s cut, at 30 fps.
     assert_eq!(probe(&output), Some((1280, 720, 108)));
+    // The microphone covers the whole video, so the sound is as long as the picture.
+    let (codec, channels, seconds) = probe_sound(&output).expect("the export has no sound");
+    assert_eq!((codec.as_str(), channels), ("aac", 2));
+    assert!((seconds - 3.6).abs() < 0.08, "the sound lasts {seconds} s");
+    // A -18 dB tone at 140%, with a quieter one on top for a while: clearly there, and never clipping.
+    let (peak, mean) = loudness(&output);
+    assert!(peak < 0.0 && peak > -15.0, "peak {peak} dB");
+    assert!(mean > -25.0, "mean {mean} dB");
     if let Ok(keep) = std::env::var("SHOTMAXXING_KEEP_EXPORT") {
         std::fs::copy(&output, Path::new(&keep).join("export-test.mp4")).unwrap();
         // The project too, for trying other sizes with `shotmaxxing export`.
@@ -166,8 +265,14 @@ fn exports_a_looping_gif() {
     let dir = tempfile::tempdir().unwrap();
     let root = make_project(dir.path());
     let output = dir.path().join("Export test.gif");
-    let options =
-        ExportOptions { width: 640, height: 400, fps: 15, format: Format::Gif, bitrate: 0.0, output: output.clone() };
+    let options = ExportOptions {
+        width: 640,
+        height: 400,
+        fps: 15,
+        format: Format::Gif,
+        bitrate: 0.0,
+        output: output.clone(),
+    };
     export(&root, &options, &mut |_| true).unwrap();
     let bytes = std::fs::read(&output).unwrap();
     assert_eq!(&bytes[..6], b"GIF89a");
@@ -187,8 +292,14 @@ fn cancelling_leaves_nothing_behind() {
     let dir = tempfile::tempdir().unwrap();
     let root = make_project(dir.path());
     let output = dir.path().join("Cancelled.mp4");
-    let options =
-        ExportOptions { width: 640, height: 360, fps: 30, format: Format::H264, bitrate: 2e6, output: output.clone() };
+    let options = ExportOptions {
+        width: 640,
+        height: 360,
+        fps: 30,
+        format: Format::H264,
+        bitrate: 2e6,
+        output: output.clone(),
+    };
     let mut calls = 0;
     let result = export(&root, &options, &mut |_| {
         calls += 1;

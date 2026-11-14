@@ -250,6 +250,8 @@
   --cursor-light: oklch(1 0 0);
   /* The soft dark edge that keeps a light click ring visible on light pages. */
   --cursor-shadow: oklch(0 0 0 / 0.45);
+  /* Under the camera bubble, in the preview and the export alike. */
+  --bubble-shadow: oklch(0 0 0 / 0.35);
   --on-stage-hover: oklch(1 0 0 / 0.1);
   --on-stage-fill: oklch(1 0 0 / 0.07);
   --on-stage-border: oklch(1 0 0 / 0.1);

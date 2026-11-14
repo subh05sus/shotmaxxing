@@ -19,8 +19,17 @@ pub struct LoadedProject {
     project: Project,
     /// The screen recording, as a file path for the asset protocol.
     media: Option<String>,
+    /// The sound and camera recordings, placed on the screen's timeline.
+    tracks: Vec<TrackMedia>,
     cursor: Vec<CursorSample>,
     events: Vec<InputEvent>,
+}
+
+#[derive(Serialize)]
+pub struct TrackMedia {
+    kind: TrackKind,
+    path: String,
+    offset_us: i64,
 }
 
 #[derive(Serialize)]
@@ -51,6 +60,21 @@ fn screen_media(root: &Path, project: &Project) -> Option<String> {
         .map(|t| root.join(&t.path))
         .filter(|p| p.exists())
         .map(|p| p.to_string_lossy().into_owned())
+}
+
+fn track_media(root: &Path, project: &Project) -> Vec<TrackMedia> {
+    project
+        .tracks
+        .iter()
+        .filter(|t| t.kind != TrackKind::Screen)
+        .map(|t| (t, root.join(&t.path)))
+        .filter(|(_, path)| path.exists())
+        .map(|(t, path)| TrackMedia {
+            kind: t.kind,
+            path: path.to_string_lossy().into_owned(),
+            offset_us: t.offset_us,
+        })
+        .collect()
 }
 
 fn read_telemetry(root: &Path) -> (Vec<CursorSample>, Vec<InputEvent>) {
@@ -105,6 +129,7 @@ pub async fn load_project<R: Runtime>(app: AppHandle<R>, path: String) -> Result
         Ok(LoadedProject {
             root: root.to_string_lossy().into_owned(),
             media: screen_media(&root, &project),
+            tracks: track_media(&root, &project),
             cursor: drawn_cursor(&project, &cursor, &events),
             project,
             events,

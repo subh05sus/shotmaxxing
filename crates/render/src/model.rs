@@ -9,7 +9,7 @@ use shotmaxxing_core::bundle::ProjectBundle;
 use shotmaxxing_core::cursor::{PathSettings, render_path};
 use shotmaxxing_core::geometry::{Point, Rect, Size};
 use shotmaxxing_core::project::{
-    Background, ClickEffect, CursorTheme, Project, TrackKind, ZoomMotion, ZoomRegion,
+    Background, ClickEffect, Corner, CursorTheme, Project, TrackKind, ZoomMotion, ZoomRegion,
 };
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent, decode_cursor, read_events};
 
@@ -76,6 +76,34 @@ pub struct Arrow {
     pub to: Point,
 }
 
+/// A recorded sound, placed on the screen recording's timeline.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sound {
+    pub path: PathBuf,
+    /// Where it starts on the screen's timeline, in seconds; negative when it started first.
+    pub offset: f64,
+    /// 1 is as recorded.
+    pub volume: f64,
+}
+
+/// The camera bubble, drawn in a corner above everything else.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bubble {
+    pub path: PathBuf,
+    /// Where the camera starts on the screen's timeline, in seconds.
+    pub offset: f64,
+    /// Diameter as a fraction of the frame height.
+    pub size: f64,
+    /// Corner radius as a fraction of the diameter: 0.5 is a circle.
+    pub radius: f64,
+    pub left: bool,
+    pub top: bool,
+    pub mirror: bool,
+    pub shadow: bool,
+    /// Ease down to 70% while zoomed in, so it never covers the action.
+    pub shrink: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct RenderProject {
     pub name: String,
@@ -109,6 +137,9 @@ pub struct RenderProject {
     pub titles: Vec<Title>,
     pub blurs: Vec<Blur>,
     pub arrows: Vec<Arrow>,
+    /// Every sound to mix into the export, loudness included.
+    pub sounds: Vec<Sound>,
+    pub bubble: Option<Bubble>,
 }
 
 const fn sec(us: u64) -> f64 {
@@ -166,7 +197,12 @@ impl RenderProject {
         Ok(Self::from_parts(root, &project, &cursor, &events))
     }
 
-    pub fn from_parts(root: &Path, project: &Project, cursor: &[CursorSample], events: &[InputEvent]) -> Self {
+    pub fn from_parts(
+        root: &Path,
+        project: &Project,
+        cursor: &[CursorSample],
+        events: &[InputEvent],
+    ) -> Self {
         let duration = sec(project.duration_us());
         let screen = project
             .tracks
@@ -218,6 +254,48 @@ impl RenderProject {
                 _ => {}
             }
         }
+        let sounds = project
+            .tracks
+            .iter()
+            .filter(|t| {
+                matches!(t.kind, TrackKind::Microphone | TrackKind::SystemAudio | TrackKind::Music)
+                    && !t.muted
+                    && t.volume > 0.0
+            })
+            .map(|t| (t, root.join(&t.path)))
+            .filter(|(_, path)| path.exists())
+            .map(|(t, path)| Sound {
+                path,
+                offset: t.offset_us as f64 / 1e6,
+                volume: t.volume.clamp(0.0, 2.0),
+            })
+            .collect();
+        let webcam = &project.webcam;
+        let bubble = project
+            .tracks
+            .iter()
+            .filter(|_| webcam.visible)
+            .find(|t| t.kind == TrackKind::Camera)
+            .map(|t| (t, root.join(&t.path)))
+            .filter(|(_, path)| path.exists())
+            .map(|(t, path)| Bubble {
+                path,
+                offset: t.offset_us as f64 / 1e6,
+                size: webcam.size.clamp(0.05, 0.6),
+                // The editor's three shapes: circle, rounded and square.
+                radius: if webcam.roundness >= 0.9 {
+                    0.5
+                } else if webcam.roundness >= 0.15 {
+                    0.22
+                } else {
+                    0.06
+                },
+                left: matches!(webcam.corner, Corner::TopLeft | Corner::BottomLeft),
+                top: matches!(webcam.corner, Corner::TopLeft | Corner::TopRight),
+                mirror: webcam.mirror,
+                shadow: webcam.shadow,
+                shrink: webcam.shrink_on_zoom,
+            });
         let edits = &project.edits;
         Self {
             name: project.name.clone(),
@@ -266,8 +344,15 @@ impl RenderProject {
             arrows: edits
                 .arrows
                 .iter()
-                .map(|a| Arrow { start: sec(a.range.start_us), end: sec(a.range.end_us), from: a.from, to: a.to })
+                .map(|a| Arrow {
+                    start: sec(a.range.start_us),
+                    end: sec(a.range.end_us),
+                    from: a.from,
+                    to: a.to,
+                })
                 .collect(),
+            sounds,
+            bubble,
         }
     }
 

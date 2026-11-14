@@ -1,13 +1,14 @@
 //! Recording from the app. One recording runs at a time, on a thread of its own: capture objects never cross threads,
 //! and the UI never waits on the encoder.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use shotmaxxing_capture::{FinishedProject, ProjectOptions, ProjectRecording, Target};
+use shotmaxxing_capture::{DeviceChoice, FinishedProject, ProjectOptions, ProjectRecording, Target};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::{tray, windows};
@@ -26,6 +27,45 @@ pub struct StartOptions {
     hide_desktop_icons: bool,
     /// The folder chosen in Settings. Empty or missing means the default folder.
     folder: Option<String>,
+    /// Record what the computer plays.
+    system_audio: bool,
+    /// A microphone id, `default` for the system's choice, or nothing for no microphone.
+    microphone: Option<String>,
+    /// A camera id, `default`, or nothing for no camera.
+    camera: Option<String>,
+}
+
+fn device_choice(choice: Option<&str>) -> DeviceChoice {
+    match choice.map(str::trim) {
+        None | Some("") => DeviceChoice::Off,
+        Some("default") => DeviceChoice::Default,
+        Some(id) => DeviceChoice::Id(id.to_string()),
+    }
+}
+
+/// What a finished recording wants to tell the person (a microphone that wasn't allowed, dropped frames), kept
+/// until the editor for that project opens and asks.
+#[derive(Default)]
+pub struct Notices(Mutex<HashMap<String, Vec<String>>>);
+
+impl Notices {
+    fn remember(&self, finished: &FinishedProject) {
+        let mut notes = finished.warnings.clone();
+        if finished.dropped > 0 {
+            notes.push(format!("{} frames were dropped while the computer was busy.", finished.dropped));
+        }
+        if !notes.is_empty()
+            && let Ok(mut map) = self.0.lock()
+        {
+            map.insert(finished.root.to_string_lossy().into_owned(), notes);
+        }
+    }
+}
+
+/// Hands over, once, what the recording of `project` wanted to say.
+#[tauri::command]
+pub fn take_recording_notices(state: State<'_, Notices>, project: String) -> Vec<String> {
+    state.0.lock().ok().and_then(|mut map| map.remove(&project)).unwrap_or_default()
 }
 
 struct Session {
@@ -123,6 +163,9 @@ fn start_session(
     let mut capture = ProjectOptions::new(target);
     capture.max_fps = options.fps.unwrap_or(60).clamp(15, 120);
     capture.hide_desktop_icons = options.hide_desktop_icons;
+    capture.system_audio = options.system_audio;
+    capture.microphone = device_choice(options.microphone.as_deref());
+    capture.camera = device_choice(options.camera.as_deref());
     let (ready_tx, ready_rx) = sync_channel::<Result<PathBuf, String>>(1);
     let (finish_tx, finish_rx) = channel::<Finish>();
     let (done_tx, done_rx) = sync_channel::<Result<Option<FinishedProject>, String>>(1);
@@ -152,9 +195,15 @@ fn start_session(
             let _ = done_tx.send(result);
         })
         .map_err(|e| e.to_string())?;
-    let root = ready_rx
-        .recv_timeout(Duration::from_secs(20))
-        .map_err(|_| "The recording didn't start in time. Try again.".to_string())??;
+    // The first recording with a microphone or camera waits while the system asks the person, so allow for that.
+    let root = match ready_rx.recv_timeout(Duration::from_secs(150)) {
+        Ok(root) => root?,
+        Err(_) => {
+            // If it starts after all, it stops straight away and leaves nothing behind.
+            let _ = finish_tx.send(Finish::Discard);
+            return Err("The recording didn't start in time. Try again.".to_string());
+        }
+    };
     Ok((Session { source, name, options, finish: finish_tx, done: done_rx }, root))
 }
 
@@ -209,6 +258,7 @@ pub async fn stop_recording<R: Runtime>(
         .await
         .map_err(|e| e.to_string())??
         .ok_or_else(|| "The recording was discarded.".to_string())?;
+    app.state::<Notices>().remember(&finished);
     Ok(Stopped {
         project: finished.root.to_string_lossy().into_owned(),
         duration_us: finished.project.duration_us(),
@@ -262,6 +312,7 @@ pub fn stop_and_edit<R: Runtime>(app: &AppHandle<R>) {
         close_pill(&app);
         let opened = match result {
             Ok(Ok(Some(finished))) => {
+                app.state::<Notices>().remember(&finished);
                 windows::open_editor(&app, &encode_component(&finished.root.to_string_lossy()))
             }
             Ok(Ok(None)) => Ok(()),

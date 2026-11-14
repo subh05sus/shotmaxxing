@@ -44,8 +44,10 @@
     exportProject,
     handOff,
     onExportProgress,
+    openPermissionSettings,
     openWindow,
     revealInFolder,
+    takeRecordingNotices,
   } from '../../lib/native';
   import { relativeTime } from '../../lib/format';
   import { EditorState, type ToolId } from './store.svelte';
@@ -61,7 +63,19 @@
 
   // `editor/sample` is the built-in sample; anything else is the path of a project on disk.
   const target = decodeURIComponent(route.path[1] ?? 'sample');
-  if (target !== 'sample') void ed.load(target);
+  if (target !== 'sample') {
+    void ed.load(target);
+    // What the recording wanted to say (a microphone that wasn't allowed, dropped frames), shown once.
+    void takeRecordingNotices(target).then((notes) => {
+      for (const note of notes) {
+        const pane = /› Microphone/.test(note) ? 'microphone' : /› Camera/.test(note) ? 'camera' : null;
+        toast(note, {
+          timeout: 10000,
+          action: pane ? { label: 'Open settings', run: () => openPermissionSettings(pane) } : undefined,
+        });
+      }
+    });
+  }
 
   const TOOLS: { id: ToolId; label: string; icon: typeof Image; chord: string }[] = [
     { id: 'background', label: 'Background', icon: Image, chord: '1' },

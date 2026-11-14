@@ -12,9 +12,12 @@ use shotmaxxing_core::project::{AgentInfo, MediaTrack, Project, SourceKind, Trac
 use shotmaxxing_core::telemetry::{encode_cursor, write_events};
 use shotmaxxing_core::zoom::{ZoomInput, plan_zooms};
 
-use crate::{CaptureError, RecordOptions, Recorder, Target};
+use crate::{CaptureError, DeviceChoice, DeviceRecording, RecordOptions, RecordedTrack, Recorder, Target};
 
 pub const SCREEN_TRACK: &str = "media/screen.mp4";
+pub const SYSTEM_AUDIO_TRACK: &str = "media/system-audio.m4a";
+pub const MIC_TRACK: &str = "media/microphone.m4a";
+pub const CAMERA_TRACK: &str = "media/camera.mp4";
 pub const CURSOR_FILE: &str = "telemetry/cursor.smxc";
 pub const EVENTS_FILE: &str = "telemetry/events.jsonl";
 
@@ -36,11 +39,23 @@ pub struct ProjectOptions {
     pub hide_desktop_icons: bool,
     /// The agent filming the take, if an agent is.
     pub agent: Option<AgentInfo>,
+    /// Record what the computer plays.
+    pub system_audio: bool,
+    pub microphone: DeviceChoice,
+    pub camera: DeviceChoice,
 }
 
 impl ProjectOptions {
     pub fn new(target: Target) -> Self {
-        Self { target, max_fps: 60, hide_desktop_icons: false, agent: None }
+        Self {
+            target,
+            max_fps: 60,
+            hide_desktop_icons: false,
+            agent: None,
+            system_audio: false,
+            microphone: DeviceChoice::Off,
+            camera: DeviceChoice::Off,
+        }
     }
 }
 
@@ -51,6 +66,29 @@ pub struct FinishedProject {
     pub project: Project,
     pub frames: u64,
     pub dropped: u64,
+    /// What didn't work without stopping the recording, such as a microphone that wasn't allowed.
+    pub warnings: Vec<String>,
+}
+
+fn device(choice: &DeviceChoice, root: &Path, file: &str) -> Option<DeviceRecording> {
+    let device = match choice {
+        DeviceChoice::Off => return None,
+        DeviceChoice::Default => None,
+        DeviceChoice::Id(id) => Some(id.clone()),
+    };
+    Some(DeviceRecording { device, output: root.join(file) })
+}
+
+fn media_track(id: &str, kind: TrackKind, path: &str, recorded: &RecordedTrack) -> MediaTrack {
+    MediaTrack {
+        id: id.into(),
+        kind,
+        path: path.into(),
+        duration_us: recorded.duration_us,
+        offset_us: recorded.offset_us,
+        volume: 1.0,
+        muted: false,
+    }
 }
 
 fn project_error(error: impl std::fmt::Display) -> CaptureError {
@@ -67,6 +105,9 @@ impl ProjectRecording {
         let mut record = RecordOptions::new(target, bundle.root().join(SCREEN_TRACK));
         record.max_fps = options.max_fps;
         record.hide_desktop_icons = options.hide_desktop_icons;
+        record.system_audio = options.system_audio.then(|| bundle.root().join(SYSTEM_AUDIO_TRACK));
+        record.microphone = device(&options.microphone, bundle.root(), MIC_TRACK);
+        record.camera = device(&options.camera, bundle.root(), CAMERA_TRACK);
         let recorder = match Recorder::start(record) {
             Ok(recorder) => recorder,
             Err(error) => {
@@ -127,6 +168,20 @@ impl ProjectRecording {
             volume: 1.0,
             muted: false,
         }];
+        if let Some(track) = &recording.system_audio {
+            project.tracks.push(media_track(
+                "system-audio",
+                TrackKind::SystemAudio,
+                SYSTEM_AUDIO_TRACK,
+                track,
+            ));
+        }
+        if let Some(track) = &recording.microphone {
+            project.tracks.push(media_track("microphone", TrackKind::Microphone, MIC_TRACK, track));
+        }
+        if let Some(track) = &recording.camera {
+            project.tracks.push(media_track("camera", TrackKind::Camera, CAMERA_TRACK, track));
+        }
 
         if project.zoom.auto {
             let input = ZoomInput {
@@ -150,6 +205,7 @@ impl ProjectRecording {
             project,
             frames: recording.frames,
             dropped: recording.dropped,
+            warnings: recording.warnings,
         })
     }
 }

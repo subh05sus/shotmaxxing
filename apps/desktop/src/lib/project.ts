@@ -106,6 +106,8 @@ export interface CoreProject {
     size: number;
     roundness: number;
     shrink_on_zoom: boolean;
+    mirror: boolean;
+    shadow: boolean;
     [key: string]: unknown;
   };
   captions: { range: CoreRange; text: string }[];
@@ -246,6 +248,8 @@ export function fromCore(core: CoreProject, os: Os): Project {
       size: core.webcam.size,
       corner: CORNERS[core.webcam.corner] ?? 'br',
       shrink: core.webcam.shrink_on_zoom,
+      mirror: core.webcam.mirror,
+      shadow: core.webcam.shadow,
     },
     audio: { mic: mic?.volume ?? 1, system: system?.volume ?? 1, cleanup: false, silence: false },
     captions: { state: core.captions.length ? 'ready' : 'none', style: 'bar', show: true },
@@ -360,6 +364,8 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
   core.webcam.visible = p.webcam.on;
   core.webcam.size = p.webcam.size;
   core.webcam.shrink_on_zoom = p.webcam.shrink;
+  core.webcam.mirror = p.webcam.mirror;
+  core.webcam.shadow = p.webcam.shadow;
   core.webcam.roundness = p.webcam.shape === 'circle' ? 1 : p.webcam.shape === 'rounded' ? 0.22 : 0.06;
   core.webcam.corner = ({ tl: 'top_left', tr: 'top_right', bl: 'bottom_left', br: 'bottom_right' } as const)[
     p.webcam.corner

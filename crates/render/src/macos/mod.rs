@@ -7,6 +7,7 @@
 //! cursor and arrows, drawn at the largest zoom, stay sharp.
 
 mod decode;
+mod sound;
 mod text;
 mod video;
 
@@ -19,7 +20,8 @@ use objc2::runtime::AnyObject;
 use objc2_core_foundation::{CFRetained, CGAffineTransform, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGColorSpace, kCGColorSpaceSRGB};
 use objc2_core_image::{
-    CIColor, CIContext, CIContextOption, CIFilter, CIImage, CIVector, kCIContextPriorityRequestLow, kCIFormatRGBA8,
+    CIColor, CIContext, CIContextOption, CIFilter, CIImage, CIVector, kCIContextPriorityRequestLow,
+    kCIFormatRGBA8,
 };
 use objc2_core_video::CVPixelBuffer;
 use objc2_foundation::{NSData, NSDictionary, NSNumber, NSString, ns_string};
@@ -27,8 +29,9 @@ use shotmaxxing_core::geometry::Point;
 use tiny_skia::Pixmap;
 
 use self::decode::{Decoder, system};
+use self::sound::Sound;
 use self::video::VideoWriter;
-use crate::model::RenderProject;
+use crate::model::{Bubble, RenderProject};
 use crate::scene::{Frame, Layout, frame_at};
 use crate::sprites::{self, Palette, Sprite};
 use crate::{ExportOptions, Format, RenderError, animated, wallpaper};
@@ -61,7 +64,8 @@ fn to_ci(pixmap: &Pixmap, space: &CGColorSpace) -> Retained<CIImage> {
 }
 
 fn placed(sprite: Sprite, space: &CGColorSpace) -> Placed {
-    let (w, h) = (f64::from(sprite.pixmap.width()) / sprite.scale, f64::from(sprite.pixmap.height()) / sprite.scale);
+    let (w, h) =
+        (f64::from(sprite.pixmap.width()) / sprite.scale, f64::from(sprite.pixmap.height()) / sprite.scale);
     Placed { image: to_ci(&sprite.pixmap, space), x: sprite.x, y: sprite.y, w, h }
 }
 
@@ -95,14 +99,16 @@ impl<'a> Compositor<'a> {
         .ok_or_else(|| system("the sRGB colour space is missing"))?;
         let palette = Palette::get();
         let (w, h) = (layout.width as u32, layout.height as u32);
-        let css = wallpaper::find(&project.wallpaper).map(|w| w.css).ok_or_else(|| system("no wallpapers"))?;
+        let css =
+            wallpaper::find(&project.wallpaper).map(|w| w.css).ok_or_else(|| system("no wallpapers"))?;
         let pixels = wallpaper::rasterize(&css, w, h).map_err(RenderError::Project)?;
         let background = sprites::background(&layout, pixels, &palette)
             .ok_or_else(|| system("couldn't draw the background"))?;
         let background = to_ci(&background, &space);
         // Drawn at the largest zoom, so they're never enlarged.
         let res = project.max_zoom().clamp(1.0, 4.0);
-        let cursor = sprites::cursor(project.cursor_look, layout.cursor_px, res, &palette).map(|s| placed(s, &space));
+        let cursor =
+            sprites::cursor(project.cursor_look, layout.cursor_px, res, &palette).map(|s| placed(s, &space));
         let ring = sprites::ring(layout.cursor_px, res, &palette).map(|s| placed(s, &space));
         let spotlight = sprites::spotlight(layout.cursor_px, res, &palette).map(|s| placed(s, &space));
         let arrows = project
@@ -110,7 +116,8 @@ impl<'a> Compositor<'a> {
             .iter()
             .map(|a| {
                 let (from, to) = (layout.point_to_frame(a.from), layout.point_to_frame(a.to));
-                sprites::arrow(&layout, (from.x, from.y), (to.x, to.y), res, &palette).map(|s| placed(s, &space))
+                sprites::arrow(&layout, (from.x, from.y), (to.x, to.y), res, &palette)
+                    .map(|s| placed(s, &space))
             })
             .collect();
         // SAFETY: an immutable framework colour.
@@ -139,7 +146,8 @@ impl<'a> Compositor<'a> {
         let glyphs = text::draw(text, size, LINE_HEIGHT, self.palette.accent_ink)?;
         let shadow = Some((0.25 * size, 0.375 * size, 0.3));
         let pill = f64::from(glyphs.height()) + size;
-        let pixmap = sprites::label(&glyphs, 1.4 * size, 0.5 * size, pill / 2.0, self.palette.accent, shadow)?;
+        let pixmap =
+            sprites::label(&glyphs, 1.4 * size, 0.5 * size, pill / 2.0, self.palette.accent, shadow)?;
         let margin = sprites::label_margin(shadow);
         let (w, h) = (f64::from(pixmap.width()), f64::from(pixmap.height()));
         let x = (at.x * layout.width - margin).round();
@@ -170,7 +178,9 @@ impl<'a> Compositor<'a> {
     fn place_edgeless(&self, image: &CIImage, x: f64, y: f64, w: f64, h: f64) -> Retained<CIImage> {
         let (t, downsample) = self.transform(image, x, y, w, h);
         // SAFETY: clamping and transforming an image are pure operations.
-        unsafe { image.imageByClampingToExtent().imageByApplyingTransform_highQualityDownsample(t, downsample) }
+        unsafe {
+            image.imageByClampingToExtent().imageByApplyingTransform_highQualityDownsample(t, downsample)
+        }
     }
 
     fn transform(&self, image: &CIImage, x: f64, y: f64, w: f64, h: f64) -> (CGAffineTransform, bool) {
@@ -178,7 +188,14 @@ impl<'a> Compositor<'a> {
         let e = unsafe { image.extent() };
         let (sx, sy) = (w / e.size.width, h / e.size.height);
         let (dx, dy) = (x, self.layout.height - y - h);
-        let t = CGAffineTransform { a: sx, b: 0.0, c: 0.0, d: sy, tx: dx - e.origin.x * sx, ty: dy - e.origin.y * sy };
+        let t = CGAffineTransform {
+            a: sx,
+            b: 0.0,
+            c: 0.0,
+            d: sy,
+            tx: dx - e.origin.x * sx,
+            ty: dy - e.origin.y * sy,
+        };
         (t, sx < 1.0 || sy < 1.0)
     }
 
@@ -234,8 +251,87 @@ impl<'a> Compositor<'a> {
         unsafe { top.imageByCompositingOverImage(bottom) }
     }
 
+    /// `image`'s shape in black at `alpha`, for shadows.
+    fn shade(image: &CIImage, alpha: f64) -> Retained<CIImage> {
+        // SAFETY: a built-in filter with valid inputs.
+        unsafe {
+            let zero = CIVector::vectorWithX_Y_Z_W(0.0, 0.0, 0.0, 0.0);
+            let a = CIVector::vectorWithX_Y_Z_W(0.0, 0.0, 0.0, alpha);
+            image.imageByApplyingFilter_withInputParameters(
+                ns_string!("CIColorMatrix"),
+                &params(&[
+                    (ns_string!("inputRVector"), zero.as_ref()),
+                    (ns_string!("inputGVector"), zero.as_ref()),
+                    (ns_string!("inputBVector"), zero.as_ref()),
+                    (ns_string!("inputAVector"), a.as_ref()),
+                ]),
+            )
+        }
+    }
+
+    /// The camera bubble in its corner, over everything else, sized, ringed and shaded as in the editor: a ring of
+    /// 0.4% of the frame height, a shadow 0.8% down with a 1.2% blur, 4% from the edges, and 70% of its size at
+    /// full zoom when it shrinks.
+    fn bubble(
+        &self,
+        bubble: &Bubble,
+        camera: &CVPixelBuffer,
+        zoom: f64,
+        out: Retained<CIImage>,
+    ) -> Retained<CIImage> {
+        let l = self.layout;
+        let shrink = if bubble.shrink { 1.0 - 0.3 * ((zoom - 1.0) / 0.5).clamp(0.0, 1.0) } else { 1.0 };
+        let d = l.height * bubble.size * shrink;
+        let margin = l.height * 0.04;
+        let x = if bubble.left { margin } else { l.width - d - margin };
+        let y = if bubble.top { margin } else { l.height - d - margin };
+        let border = l.height * 0.004;
+        let radius = d * bubble.radius;
+        let mut out = out;
+        if bubble.shadow
+            && let Some(shape) = self.rounded(self.rect(x, y + l.height * 0.008, d, d), radius)
+        {
+            // SAFETY: a pure Core Image operation.
+            let shadow =
+                unsafe { Self::shade(&shape, 0.35).imageByApplyingGaussianBlurWithSigma(l.height * 0.012) };
+            out = Self::over(&shadow, &out);
+        }
+        if let Some(ring) = self.rounded(self.rect(x, y, d, d), radius) {
+            out = Self::over(&ring, &out);
+        }
+        // SAFETY: the buffer comes from the decoder and stays alive for this frame; the rest is pure Core Image.
+        let picture = unsafe {
+            let picture = CIImage::imageWithCVPixelBuffer(camera);
+            // The middle square of the camera's picture, like `object-fit: cover`.
+            let e = picture.extent();
+            let side = e.size.width.min(e.size.height);
+            let (sx, sy) =
+                (e.origin.x + (e.size.width - side) / 2.0, e.origin.y + (e.size.height - side) / 2.0);
+            let square =
+                picture.imageByCroppingToRect(CGRect::new(CGPoint::new(sx, sy), CGSize::new(side, side)));
+            if bubble.mirror {
+                let flip =
+                    CGAffineTransform { a: -1.0, b: 0.0, c: 0.0, d: 1.0, tx: 2.0 * sx + side, ty: 0.0 };
+                square.imageByApplyingTransform(flip)
+            } else {
+                square
+            }
+        };
+        let inner = d - 2.0 * border;
+        let placed = self.place_edgeless(&picture, x + border, y + border, inner, inner);
+        match self.rounded(self.rect(x + border, y + border, inner, inner), (radius - border).max(0.0)) {
+            Some(mask) => Self::masked(&placed, &out, &mask),
+            None => out,
+        }
+    }
+
     /// One finished frame: the recording's picture `screen` with everything the project adds at this moment.
-    fn compose(&mut self, frame: &Frame, screen: &CVPixelBuffer) -> Retained<CIImage> {
+    fn compose(
+        &mut self,
+        frame: &Frame,
+        screen: &CVPixelBuffer,
+        camera: Option<&CVPixelBuffer>,
+    ) -> Retained<CIImage> {
         let (project, l) = (self.project, self.layout);
         let v = frame.view;
         let s = v.scale;
@@ -326,6 +422,9 @@ impl<'a> Compositor<'a> {
                 out = Self::over(&self.place(&key.image, key.x, key.y, key.w, key.h), &out);
             }
         }
+        if let (Some(bubble), Some(camera)) = (&project.bubble, camera) {
+            out = self.bubble(bubble, camera, s, out);
+        }
         out
     }
 }
@@ -335,7 +434,10 @@ fn context() -> Retained<CIContext> {
     let yes = NSNumber::new_bool(true);
     // SAFETY: an immutable framework constant used as a dictionary key.
     let options = unsafe {
-        NSDictionary::<CIContextOption, AnyObject>::from_slices(&[kCIContextPriorityRequestLow], &[yes.as_ref()])
+        NSDictionary::<CIContextOption, AnyObject>::from_slices(
+            &[kCIContextPriorityRequestLow],
+            &[yes.as_ref()],
+        )
     };
     // SAFETY: creating a GPU context with valid options.
     unsafe { CIContext::contextWithOptions(Some(&options)) }
@@ -360,7 +462,14 @@ fn remove_partial(temp: &Path) {
 }
 
 /// Draws `image` into RGBA bytes, top row first.
-fn render_rgba(context: &CIContext, image: &CIImage, width: usize, height: usize, space: &CGColorSpace, out: &mut Vec<u8>) {
+fn render_rgba(
+    context: &CIContext,
+    image: &CIImage,
+    width: usize,
+    height: usize,
+    space: &CGColorSpace,
+    out: &mut Vec<u8>,
+) {
     out.resize(width * height * 4, 0);
     let bounds = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(width as f64, height as f64));
     // SAFETY: `out` holds exactly `height` rows of `width` RGBA pixels and outlives the call.
@@ -382,6 +491,8 @@ struct Job<'a> {
     layout: Layout,
     compositor: Compositor<'a>,
     decoder: Decoder,
+    /// The camera recording, when the bubble shows.
+    camera: Option<Decoder>,
     context: Retained<CIContext>,
     fps: u32,
     /// Frames in the exported video.
@@ -392,15 +503,19 @@ struct Job<'a> {
 
 impl<'a> Job<'a> {
     fn new(project: &'a RenderProject, options: &ExportOptions) -> Result<Self, RenderError> {
-        let screen =
-            project.screen.as_ref().ok_or_else(|| RenderError::Project("there's no recording to export".into()))?;
+        let screen = project
+            .screen
+            .as_ref()
+            .ok_or_else(|| RenderError::Project("there's no recording to export".into()))?;
         let layout = Layout::new(project, options.width, options.height);
-        let fps = if options.format == Format::Gif { options.fps.clamp(1, 50) } else { options.fps.clamp(1, 120) };
+        let fps =
+            if options.format == Format::Gif { options.fps.clamp(1, 50) } else { options.fps.clamp(1, 120) };
         Ok(Self {
             project,
             layout,
             compositor: Compositor::new(project, layout)?,
             decoder: Decoder::open(screen)?,
+            camera: project.bubble.as_ref().map(|b| Decoder::open(&b.path)).transpose()?,
             context: context(),
             fps,
             total: (project.output_duration() * f64::from(fps) - 1e-6).ceil().max(1.0) as u64,
@@ -417,8 +532,12 @@ impl<'a> Job<'a> {
     fn draw(&mut self, i: u64) -> Result<Retained<CIImage>, RenderError> {
         let t = self.time(i);
         let picture = self.decoder.frame_at(t)?.ok_or_else(|| system("the recording has no frames"))?;
+        let camera = match (&mut self.camera, &self.project.bubble) {
+            (Some(decoder), Some(bubble)) => decoder.frame_at(t - bubble.offset)?,
+            _ => None,
+        };
         let frame = frame_at(self.project, &self.layout, t);
-        Ok(self.compositor.compose(&frame, &picture))
+        Ok(self.compositor.compose(&frame, &picture, camera.as_deref()))
     }
 }
 
@@ -457,7 +576,9 @@ fn export_video(
 ) -> Result<u64, RenderError> {
     let mut job = Job::new(project, options)?;
     let (width, height) = (options.width as usize, options.height as usize);
-    let mut writer = VideoWriter::new(temp, width, height, job.fps, options.format, options.bitrate)?;
+    let mut sound = Sound::open(project)?;
+    let mut writer =
+        VideoWriter::new(temp, width, height, job.fps, options.format, options.bitrate, sound.is_some())?;
     let drawn = (|| {
         for i in 0..job.total {
             if !progress(i as f64 / job.total as f64) {
@@ -465,13 +586,13 @@ fn export_video(
             }
             autoreleasepool(|_| -> Result<(), RenderError> {
                 let image = job.draw(i)?;
-                writer.write(&job.context, &image, &job.compositor.space)
+                writer.write(&job.context, &image, &job.compositor.space, sound.as_mut())
             })?;
         }
         Ok(())
     })();
     match drawn {
-        Ok(()) => writer.finish().map(|()| job.total),
+        Ok(()) => writer.finish(sound.as_mut()).map(|()| job.total),
         Err(error) => {
             writer.cancel();
             Err(error)

@@ -140,6 +140,17 @@ export interface RecordingOptions {
   hideDesktopIcons?: boolean;
   /** Empty for the default folder. */
   folder?: string;
+  /** Record what the computer plays. */
+  systemAudio?: boolean;
+  /** A microphone id, `default` for the system's choice, or nothing for no microphone. */
+  microphone?: string;
+  /** A camera id, `default`, or nothing for no camera. */
+  camera?: string;
+}
+
+/** What the recording of a project wanted to say (a microphone that wasn't allowed, dropped frames), once. */
+export function takeRecordingNotices(project: string): Promise<string[]> {
+  return call('take_recording_notices', { project }, () => []);
 }
 
 export function startRecording(
@@ -189,10 +200,18 @@ export type CoreEvent =
   | { type: 'focus'; t_us: number; label?: string | null; role: string }
   | { type: string; t_us: number };
 
+export interface TrackMedia {
+  kind: 'camera' | 'microphone' | 'system_audio' | 'music';
+  path: string;
+  /** Where it starts on the screen's timeline; negative when it started first. */
+  offset_us: number;
+}
+
 export interface LoadedProject {
   root: string;
   project: CoreProject;
   media: string | null;
+  tracks: TrackMedia[];
   cursor: CursorPoint[];
   events: CoreEvent[];
 }

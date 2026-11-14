@@ -38,6 +38,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(recording::Recordings::default())
+        .manage(recording::Notices::default())
         .manage(system::MenuBarIcon::default())
         .manage(export::Exports::default())
         .setup(|app| {
@@ -64,6 +65,7 @@ pub fn run() {
             recording::stop_recording,
             recording::discard_recording,
             recording::restart_recording,
+            recording::take_recording_notices,
             projects::load_project,
             projects::cursor_path,
             projects::save_project,

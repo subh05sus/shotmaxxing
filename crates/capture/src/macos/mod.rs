@@ -1,6 +1,8 @@
 //! macOS capture: ScreenCaptureKit for frames, AVAssetWriter for encoding, CoreGraphics for input telemetry.
 
+mod audio;
 mod clock;
+mod devices;
 mod input;
 mod preview;
 mod writer;
@@ -16,15 +18,29 @@ use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AllocAnyThread, DefinedClass, define_class, msg_send};
+use objc2_core_foundation::CFString;
 use objc2_core_media::{CMSampleBuffer, CMTime};
-use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
+use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_screen_capture_kit::{
     SCContentFilter, SCRunningApplication, SCShareableContent, SCStream, SCStreamConfiguration,
     SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
-use crate::{CaptureError, DisplayInfo, RecordOptions, Recording, Sources, Target, WindowInfo};
+use crate::{
+    CaptureError, DisplayInfo, RecordOptions, RecordedTrack, Recording, Sources, Target, WindowInfo,
+};
+use audio::AudioWriter;
+use devices::DeviceCapture;
 use writer::Writer;
+
+/// '420v': video-range 4:2:0, the encoder's native format, so frames go in without conversion.
+pub(crate) const YUV_420V: u32 = 0x3432_3076;
+
+/// A Core Foundation string constant as the NSString it is toll-free bridged to.
+pub(crate) fn ns(string: &'static CFString) -> &'static NSString {
+    // SAFETY: CFString and NSString are toll-free bridged, so the pointer is a valid NSString.
+    unsafe { &*(string as *const CFString).cast::<NSString>() }
+}
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -171,6 +187,8 @@ fn is_system_ui(bundle: &str) -> bool {
 /// What the stream output shares with the recorder.
 struct Shared {
     writer: Mutex<Option<Writer>>,
+    /// What the computer plays, when it's being recorded.
+    audio: Mutex<Option<AudioWriter>>,
 }
 
 struct OutputIvars {
@@ -189,10 +207,15 @@ define_class!(
     unsafe impl SCStreamOutput for StreamOutput {
         #[unsafe(method(stream:didOutputSampleBuffer:ofType:))]
         fn stream_did_output(&self, _stream: &SCStream, sample: &CMSampleBuffer, kind: SCStreamOutputType) {
-            if kind != SCStreamOutputType::Screen {
-                return;
-            }
-            if let Ok(mut guard) = self.ivars().shared.writer.lock()
+            let shared = &self.ivars().shared;
+            if kind == SCStreamOutputType::Screen {
+                if let Ok(mut guard) = shared.writer.lock()
+                    && let Some(writer) = guard.as_mut()
+                {
+                    writer.append(sample);
+                }
+            } else if kind == SCStreamOutputType::Audio
+                && let Ok(mut guard) = shared.audio.lock()
                 && let Some(writer) = guard.as_mut()
             {
                 writer.append(sample);
@@ -213,7 +236,9 @@ pub struct Recorder {
     stream: Retained<SCStream>,
     _output: Retained<StreamOutput>,
     _queue: dispatch2::DispatchRetained<DispatchQueue>,
+    _audio_queue: Option<dispatch2::DispatchRetained<DispatchQueue>>,
     shared: Arc<Shared>,
+    devices: Option<DeviceCapture>,
     input: Option<input::Telemetry>,
     started: f64,
     options: RecordOptions,
@@ -228,6 +253,9 @@ impl Recorder {
         ensure_window_server();
         let content = shareable_content()?;
         let own_pid = std::process::id() as i32;
+        // The microphone and camera start first: a camera takes a moment to wake, and the first words of a take
+        // shouldn't be lost to it. If the screen then fails to start, dropping them stops them again.
+        let devices = DeviceCapture::start(options.microphone.as_ref(), options.camera.as_ref())?;
 
         // SAFETY: ScreenCaptureKit objects are created and configured before the stream starts; all arguments are
         // valid objects from `content`.
@@ -303,13 +331,23 @@ impl Recorder {
             config.setHeight(height_px);
             config
                 .setMinimumFrameInterval(CMTime::with_seconds(1.0 / f64::from(options.max_fps.max(1)), 600));
-            // '420v': the encoder's native format, so frames go in without conversion.
-            config.setPixelFormat(0x3432_3076);
+            config.setPixelFormat(YUV_420V);
             config.setShowsCursor(false);
             config.setQueueDepth(6);
+            let audio = match &options.system_audio {
+                Some(path) => {
+                    config.setCapturesAudio(true);
+                    config.setSampleRate(48_000);
+                    config.setChannelCount(2);
+                    // This app's own sounds (the countdown) stay out of the take.
+                    config.setExcludesCurrentProcessAudio(true);
+                    Some(AudioWriter::new(path, 2)?)
+                }
+                None => None,
+            };
 
             let writer = Writer::new(&options.output, width_px, height_px, options.max_fps)?;
-            let shared = Arc::new(Shared { writer: Mutex::new(Some(writer)) });
+            let shared = Arc::new(Shared { writer: Mutex::new(Some(writer)), audio: Mutex::new(audio) });
             let output = StreamOutput::new(shared.clone());
             let stream =
                 SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, None);
@@ -321,6 +359,19 @@ impl Recorder {
                     Some(&queue),
                 )
                 .map_err(|e| CaptureError::System(e.localizedDescription().to_string()))?;
+            let audio_queue = if options.system_audio.is_some() {
+                let queue = DispatchQueue::new("dev.shotmaxxing.capture.audio", None);
+                stream
+                    .addStreamOutput_type_sampleHandlerQueue_error(
+                        ProtocolObject::from_ref(&*output),
+                        SCStreamOutputType::Audio,
+                        Some(&queue),
+                    )
+                    .map_err(|e| CaptureError::System(e.localizedDescription().to_string()))?;
+                Some(queue)
+            } else {
+                None
+            };
 
             let (tx, rx) = sync_channel::<Option<String>>(1);
             let handler = RcBlock::new(move |error: *mut NSError| {
@@ -340,7 +391,9 @@ impl Recorder {
                 stream,
                 _output: output,
                 _queue: queue,
+                _audio_queue: audio_queue,
                 shared,
+                devices,
                 input,
                 started,
                 options,
@@ -379,6 +432,35 @@ impl Recorder {
         let (frames, dropped) = (writer.frames, writer.dropped);
         writer.finish(stopped)?;
 
+        // Every other track is placed on the screen's timeline: its offset is where it starts relative to the
+        // first frame.
+        let track = |output: &std::path::Path, (start, end): (f64, f64)| RecordedTrack {
+            output: output.to_path_buf(),
+            offset_us: ((start - first) * 1e6).round() as i64,
+            duration_us: ((end - start).max(0.0) * 1e6).round() as u64,
+        };
+        let mut warnings = Vec::new();
+        let audio = self.shared.audio.lock().ok().and_then(|mut guard| guard.take());
+        let system_audio = match (audio.map(AudioWriter::finish), &self.options.system_audio) {
+            (Some(Ok(Some(times))), Some(path)) => Some(track(path, times)),
+            (Some(Err(error)), _) => {
+                warnings.push(format!("The computer's sound couldn't be saved: {error}"));
+                None
+            }
+            _ => None,
+        };
+        let (mut microphone, mut camera) = (None, None);
+        if let Some(devices) = self.devices {
+            let recorded = devices.stop(stopped);
+            warnings.extend(recorded.warnings);
+            microphone = recorded
+                .microphone
+                .zip(self.options.microphone.as_ref())
+                .map(|(times, d)| track(&d.output, times));
+            camera =
+                recorded.camera.zip(self.options.camera.as_ref()).map(|(times, d)| track(&d.output, times));
+        }
+
         let (cursor, events) = match self.input {
             Some(input) => input.stop(first),
             None => (Vec::new(), Vec::new()),
@@ -395,6 +477,10 @@ impl Recorder {
             window_title: self.window_title,
             cursor,
             events,
+            system_audio,
+            microphone,
+            camera,
+            warnings,
         })
     }
 }

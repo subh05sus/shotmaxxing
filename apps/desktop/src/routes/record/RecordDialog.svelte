@@ -35,15 +35,18 @@
   let mode = $state<Mode>('window');
   let sources = $state<CaptureSource[]>([]);
   let selected = $state<string | null>(null);
-  let camera = $state(false);
-  let mic = $state(true);
-  let systemAudio = $state(true);
   let microphones = $state<Device[]>([]);
   let cameras = $state<Device[]>([]);
-  let micId = $state<string | null>(null);
-  let cameraId = $state<string | null>(null);
-  const micName = $derived(microphones.find((d) => d.id === micId)?.name ?? 'No microphone');
-  const cameraName = $derived(cameras.find((d) => d.id === cameraId)?.name ?? 'No camera');
+  /** The chosen device when it's still plugged in, otherwise the system's default. */
+  const pickDevice = (list: Device[], id: string) =>
+    list.find((d) => d.id === id) ?? list.find((d) => d.is_default) ?? list[0];
+  const micDevice = $derived(pickDevice(microphones, settings.microphoneId));
+  const cameraDevice = $derived(pickDevice(cameras, settings.cameraId));
+  const micName = $derived(micDevice?.name ?? 'No microphone');
+  const cameraName = $derived(cameraDevice?.name ?? 'No camera');
+  // Switches show off while no such device is plugged in, without forgetting the choice for next time.
+  const micOn = $derived(settings.microphone && !!micDevice);
+  const cameraOn = $derived(settings.camera && !!cameraDevice);
   let countdown = $state<number | null>(null);
   let starting = $state(false);
   let loadError = $state('');
@@ -71,10 +74,6 @@
     const found = await listDevices().catch(() => ({ microphones: [], cameras: [] }));
     microphones = found.microphones;
     cameras = found.cameras;
-    micId = microphones[0]?.id ?? null;
-    cameraId = cameras[0]?.id ?? null;
-    if (!micId) mic = false;
-    if (!cameraId) camera = false;
   }
 
   onMount(() => {
@@ -115,7 +114,11 @@
     starting = true;
     try {
       // Area recording records the whole screen for now; the crop is applied in the editor.
-      await startRecording(selected, undefined, recordingOptions());
+      await startRecording(selected, undefined, {
+        ...recordingOptions(),
+        microphone: micOn ? micDevice?.id : undefined,
+        camera: cameraOn ? cameraDevice?.id : undefined,
+      });
       // Without the pill, Stop lives in the menu bar and on the shortcut.
       if (settings.showPill) await handOff('pill');
       else await closeThisWindow();
@@ -135,10 +138,10 @@
   }
 
   const micItems: MenuItem[] = $derived(
-    microphones.map((d) => ({ label: d.name, run: () => (micId = d.id) })),
+    microphones.map((d) => ({ label: d.name, run: () => (settings.microphoneId = d.id) })),
   );
   const cameraItems: MenuItem[] = $derived(
-    cameras.map((d) => ({ label: d.name, run: () => (cameraId = d.id) })),
+    cameras.map((d) => ({ label: d.name, run: () => (settings.cameraId = d.id) })),
   );
 
   function onkeydown(e: KeyboardEvent) {
@@ -251,13 +254,18 @@
   <div class="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-t border-border px-5 py-3">
     <span class="flex items-center gap-2">
       <Mic size={15} class="text-fg-muted" aria-hidden="true" />
-      <Switch bind:checked={mic} label="Microphone" disabled={!microphones.length} />
+      <Switch
+        checked={micOn}
+        onchange={(on: boolean) => (settings.microphone = on)}
+        label="Microphone"
+        disabled={!microphones.length}
+      />
       {#if microphones.length > 1}
         <Menu items={micItems} label="Microphone">
           {#snippet trigger({ props })}
             <button
               type="button"
-              disabled={!mic}
+              disabled={!micOn}
               class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
               {...props}
             >
@@ -266,18 +274,23 @@
           {/snippet}
         </Menu>
       {:else}
-        <span class={['px-1.5 text-footnote', mic ? 'text-fg-muted' : 'text-fg-subtle']}>{micName}</span>
+        <span class={['px-1.5 text-footnote', micOn ? 'text-fg-muted' : 'text-fg-subtle']}>{micName}</span>
       {/if}
     </span>
     <span class="flex items-center gap-2">
       <Video size={15} class="text-fg-muted" aria-hidden="true" />
-      <Switch bind:checked={camera} label="Camera" disabled={!cameras.length} />
+      <Switch
+        checked={cameraOn}
+        onchange={(on: boolean) => (settings.camera = on)}
+        label="Camera"
+        disabled={!cameras.length}
+      />
       {#if cameras.length > 1}
         <Menu items={cameraItems} label="Camera">
           {#snippet trigger({ props })}
             <button
               type="button"
-              disabled={!camera}
+              disabled={!cameraOn}
               class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
               {...props}
             >
@@ -286,13 +299,14 @@
           {/snippet}
         </Menu>
       {:else}
-        <span class={['px-1.5 text-footnote', camera ? 'text-fg-muted' : 'text-fg-subtle']}>{cameraName}</span
+        <span class={['px-1.5 text-footnote', cameraOn ? 'text-fg-muted' : 'text-fg-subtle']}
+          >{cameraName}</span
         >
       {/if}
     </span>
     <span class="flex items-center gap-2">
       <Volume2 size={15} class="text-fg-muted" aria-hidden="true" />
-      <Switch bind:checked={systemAudio} label="System audio" hideLabel={false} />
+      <Switch bind:checked={settings.systemAudio} label="System audio" hideLabel={false} />
     </span>
   </div>
 

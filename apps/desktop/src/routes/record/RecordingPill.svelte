@@ -48,10 +48,9 @@
     busy = 'saving';
     clearInterval(timer);
     try {
+      // Anything the recording wants to say (dropped frames, a microphone that wasn't allowed) shows in the editor;
+      // this window closes straight away.
       const done = await stopRecording();
-      if (done.dropped_frames > 0) {
-        toast(`${done.dropped_frames} frames were dropped while the computer was busy.`);
-      }
       await handOff('editor', editorTarget(done.project));
     } catch (error) {
       failed(error);

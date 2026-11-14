@@ -22,7 +22,8 @@ use shotmaxxing_core::telemetry::{CursorSample, InputEvent};
 mod project;
 
 pub use project::{
-    CURSOR_FILE, EVENTS_FILE, FinishedProject, ProjectOptions, ProjectRecording, SCREEN_TRACK,
+    CAMERA_TRACK, CURSOR_FILE, EVENTS_FILE, FinishedProject, MIC_TRACK, ProjectOptions, ProjectRecording,
+    SCREEN_TRACK, SYSTEM_AUDIO_TRACK,
 };
 
 #[cfg(target_os = "macos")]
@@ -90,6 +91,40 @@ pub struct Sources {
     pub windows: Vec<WindowInfo>,
 }
 
+/// Which microphone or camera to record.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum DeviceChoice {
+    #[default]
+    Off,
+    /// The one the system uses unless told otherwise.
+    Default,
+    /// A device id from [`microphones`] or [`cameras`].
+    Id(String),
+}
+
+impl DeviceChoice {
+    pub fn is_on(&self) -> bool {
+        *self != Self::Off
+    }
+}
+
+/// A microphone or camera to record, and the file it goes into.
+#[derive(Clone, Debug)]
+pub struct DeviceRecording {
+    /// `None` is the system's default device.
+    pub device: Option<String>,
+    pub output: PathBuf,
+}
+
+/// A track recorded alongside the screen, placed on the screen recording's timeline.
+#[derive(Clone, Debug)]
+pub struct RecordedTrack {
+    pub output: PathBuf,
+    /// Where the track starts relative to the screen recording's first frame; negative if it started earlier.
+    pub offset_us: i64,
+    pub duration_us: u64,
+}
+
 /// What to record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -110,11 +145,26 @@ pub struct RecordOptions {
     /// Leave the desktop icons out of screen recordings. Windows are recorded on their own, so this only applies to
     /// screens.
     pub hide_desktop_icons: bool,
+    /// Record what the computer plays into this file (`.m4a`). This app's own sounds are left out.
+    pub system_audio: Option<PathBuf>,
+    /// Record a microphone into an `.m4a` file.
+    pub microphone: Option<DeviceRecording>,
+    /// Record a camera into an `.mp4` file.
+    pub camera: Option<DeviceRecording>,
 }
 
 impl RecordOptions {
     pub fn new(target: Target, output: impl Into<PathBuf>) -> Self {
-        Self { target, output: output.into(), max_fps: 60, telemetry: true, hide_desktop_icons: false }
+        Self {
+            target,
+            output: output.into(),
+            max_fps: 60,
+            telemetry: true,
+            hide_desktop_icons: false,
+            system_audio: None,
+            microphone: None,
+            camera: None,
+        }
     }
 }
 
@@ -136,6 +186,11 @@ pub struct Recording {
     pub window_title: Option<String>,
     pub cursor: Vec<CursorSample>,
     pub events: Vec<InputEvent>,
+    pub system_audio: Option<RecordedTrack>,
+    pub microphone: Option<RecordedTrack>,
+    pub camera: Option<RecordedTrack>,
+    /// What didn't work without stopping the recording, such as a microphone that wasn't allowed.
+    pub warnings: Vec<String>,
 }
 
 /// Lists displays and on-screen windows.

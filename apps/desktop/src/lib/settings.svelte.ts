@@ -25,6 +25,14 @@ interface Settings {
   /** Where exports go, the short way. Empty means next to the project. */
   exportFolder: string;
   frameRate: 'adaptive60' | 'adaptive30' | 'adaptive120';
+  /** Record what the computer plays. */
+  systemAudio: boolean;
+  microphone: boolean;
+  /** The chosen microphone; empty means the system's default. */
+  microphoneId: string;
+  camera: boolean;
+  /** The chosen camera; empty means the system's default. */
+  cameraId: string;
   checkUpdates: boolean;
   updatesCheckedAt: number;
   completedGuides: string[];
@@ -45,6 +53,11 @@ const DEFAULTS: Settings = {
   saveFolder: '',
   exportFolder: '',
   frameRate: 'adaptive60',
+  systemAudio: true,
+  microphone: true,
+  microphoneId: '',
+  camera: false,
+  cameraId: '',
   checkUpdates: true,
   updatesCheckedAt: 0,
   completedGuides: [],
@@ -90,5 +103,8 @@ export function recordingOptions(): RecordingOptions {
     fps: FPS[settings.frameRate] ?? 60,
     hideDesktopIcons: settings.hideDesktopIcons,
     folder: settings.saveFolder || undefined,
+    systemAudio: settings.systemAudio,
+    microphone: settings.microphone ? settings.microphoneId || 'default' : undefined,
+    camera: settings.camera ? settings.cameraId || 'default' : undefined,
   };
 }

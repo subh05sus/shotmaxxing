@@ -18,6 +18,11 @@
     ed.attachVideo(video);
     return () => ed.attachVideo(null);
   });
+  let cameraVideo = $state<HTMLVideoElement | null>(null);
+  $effect(() => {
+    ed.attachCamera(cameraVideo);
+    return () => ed.attachCamera(null);
+  });
 
   // Smoothing, snapping and looping change the path the cursor takes; redraw it once a slider settles.
   $effect(() => {
@@ -142,8 +147,13 @@
 
   const SPOTLIGHT =
     'radial-gradient(circle, color-mix(in oklch, var(--cursor-light) 28%, transparent), transparent 70%)';
-  const zoomed = $derived(cam.scale > 1.05);
-  const bubble = $derived(frame.height * p.webcam.size * (p.webcam.shrink && zoomed ? 0.7 : 1));
+  // The bubble eases down to 70% as a zoom goes in, so it never covers the action. The exporter uses the same
+  // sizes, ring and shadow, in fractions of the frame height.
+  const shrink = $derived(p.webcam.shrink ? 1 - 0.3 * clamp((cam.scale - 1) / 0.5, 0, 1) : 1);
+  const bubble = $derived(frame.height * p.webcam.size * shrink);
+  const bubbleRadius = $derived(
+    p.webcam.shape === 'circle' ? '50%' : p.webcam.shape === 'rounded' ? '22%' : '6%',
+  );
   const corner = $derived({
     left: p.webcam.corner.endsWith('l') ? frame.height * 0.04 : frame.width - bubble - frame.height * 0.04,
     top: p.webcam.corner.startsWith('t') ? frame.height * 0.04 : frame.height - bubble - frame.height * 0.04,
@@ -320,20 +330,31 @@
 
       {#if p.webcam.on}
         <span
-          class={[
-            'absolute grid place-items-center overflow-hidden border-2 border-[var(--cursor-light)] bg-accent-tint text-accent-text shadow-[var(--elev-2)] transition-transform duration-[var(--dur-slow)] ease-[var(--ease-spring)]',
-            p.webcam.shape === 'circle'
-              ? 'rounded-full'
-              : p.webcam.shape === 'rounded'
-                ? 'rounded-[22%]'
-                : 'rounded-[6%]',
-          ]}
+          class="absolute grid place-items-center overflow-hidden border-solid border-[var(--cursor-light)] bg-accent-tint text-accent-text"
           style:left="{corner.left}px"
           style:top="{corner.top}px"
           style:width="{bubble}px"
           style:height="{bubble}px"
+          style:border-radius={bubbleRadius}
+          style:border-width="{frame.height * 0.004}px"
+          style:box-shadow={p.webcam.shadow
+            ? `0 ${frame.height * 0.008}px ${frame.height * 0.024}px var(--bubble-shadow)`
+            : 'none'}
         >
-          <UserRound size={bubble * 0.5} strokeWidth={1.5} aria-hidden="true" />
+          {#if ed.camera}
+            <video
+              bind:this={cameraVideo}
+              src={ed.camera.url}
+              class="size-full object-cover"
+              style:transform={p.webcam.mirror ? 'scaleX(-1)' : undefined}
+              muted
+              playsinline
+              preload="auto"
+              disablepictureinpicture
+            ></video>
+          {:else}
+            <UserRound size={bubble * 0.5} strokeWidth={1.5} aria-hidden="true" />
+          {/if}
         </span>
       {/if}
     </div>
