@@ -16,10 +16,36 @@ You can drive it by hand, or let an AI agent such as Claude or Codex film the de
 
 ## Status
 
-Early development. See the [roadmap](docs/roadmap.md) for what is being built now. No release is available yet.
+Early development, macOS first. No release is available yet; you can build it from source. Working today on macOS:
+
+- recording a display or a window with the computer's sound, a microphone and a camera;
+- the editor, with automatic zooms, a rendered cursor, cuts, speed, text, arrows, blur and a camera bubble;
+- voice cleanup and silence cutting, on device;
+- export to MP4 and GIF;
+- an MCP server and one-click connect for AI agents.
+
+Windows capture and export are next. See the [roadmap](docs/roadmap.md).
+
+## Build from source
+
+You need Rust (stable), Node 22 or later, pnpm and the Xcode command line tools.
+
+```sh
+pnpm install
+pnpm tauri dev                                       # the app
+cargo run -p shotmaxxing-cli -- record --app Safari  # a take from the terminal; Ctrl-C stops it
+cargo run -p shotmaxxing-cli -- export ~/Movies/Shotmaxxing/Recording.smx
+```
+
+## Use it from an AI agent
+
+Connect Claude Code, Codex, Cursor or another agent from the app's Agents page, or add `shotmaxxing mcp` to the
+agent's MCP settings. Then ask, for example: "Film a 30-second demo of the export flow in Safari".
+See [Agents](docs/agents.md) and the [agent skill](skills/shotmaxxing/SKILL.md).
 
 ## Documentation
 
+- [Agents](docs/agents.md): connecting agents, the MCP tools and a typical take
 - [Architecture](docs/architecture.md): how the recorder, editor and agent layer fit together
 - [Design principles](docs/design/principles.md): motion, interaction laws and craft rules
 - [Roadmap](docs/roadmap.md)

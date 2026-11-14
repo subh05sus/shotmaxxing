@@ -2,48 +2,53 @@
 
 Shotmaxxing is built in milestones. Each one ships something usable on macOS and Windows.
 
-## Milestone 0: Foundations (in progress)
+## Milestone 0: Foundations
 
 - [x] Design principles and architecture
-- [ ] Monorepo: Cargo workspace and pnpm workspace
-- [ ] Desktop app shell (Tauri 2 + Svelte 5), with design tokens and motion
-- [ ] Onboarding, Home (Library, Learn, Agents) and editor layout, using sample data
-- [ ] CI on macOS and Windows
+- [x] Monorepo: Cargo workspace and pnpm workspace
+- [x] Desktop app shell (Tauri 2 + Svelte 5), with design tokens and motion
+- [x] Onboarding, Home (Library, Learn, Agents) and editor layout
+- [x] CI on macOS and Windows
 
 ## Milestone 1: Record and play back
 
-- [ ] macOS capture: ScreenCaptureKit → VideoToolbox HEVC → fragmented MP4
+- [x] macOS capture: ScreenCaptureKit → VideoToolbox HEVC → fragmented MP4
 - [ ] Windows capture: Windows.Graphics.Capture → Media Foundation → fragmented MP4
-- [ ] Cursor, click and key telemetry
-- [ ] Microphone, system audio and camera tracks
-- [ ] Recording pill, record dialog, permissions checks
-- [ ] Open a recording in the editor and play it back through the compositor
+- [x] Cursor, click and key telemetry
+- [x] Microphone, system audio and camera tracks (macOS)
+- [x] Recording pill, record dialog, permissions checks
+- [x] Open a recording in the editor and play it back, with its sound and camera
 
 ## Milestone 2: Studio editor
 
-- [ ] Compositor: background, padding, corners, shadows, aspect ratios
-- [ ] Rendered cursor: size, smoothing, styles, click effects, snap, motion blur, spotlight
-- [ ] Auto zoom (multi-signal, explainable) and manual zooms
-- [ ] Timeline: trim, split, speed, text, arrows, blur, extra audio
-- [ ] Webcam bubble
-- [ ] Export presets and background export queue (MP4, GIF)
-- [ ] Autosave and version history
+- [x] Compositor: background, padding, corners, shadows, aspect ratios (Core Image on macOS)
+- [x] Rendered cursor: size, smoothing, styles, click effects, snap, spotlight
+- [ ] Cursor motion blur
+- [x] Auto zoom (multi-signal, explainable) and manual zooms
+- [x] Timeline: trim, split, speed, text, arrows, blur
+- [ ] Extra audio tracks (music, voice-over)
+- [x] Webcam bubble
+- [x] Export: MP4 (H.264, HEVC) and GIF, with the sound mixed
+- [ ] Background export queue
+- [x] Autosave and version history
 - [ ] Styled screenshots
 
 ## Milestone 3: Agents
 
-- [ ] Control API (Unix socket / named pipe)
-- [ ] `shotmaxxing mcp` and the CLI
-- [ ] Take script schema, beats compiler, performer
+- [ ] Control API for the running app (Unix socket / named pipe)
+- [x] `shotmaxxing mcp` and the CLI
+- [x] Take script schema and checks
+- [ ] Beats compiler and performer
 - [ ] Accessibility refs with fingerprints (AX, UIA)
 - [ ] Consent, trust policy, take card and hand-off
 - [ ] macOS virtual display
-- [ ] One-click connect for Claude Code, Claude Desktop, Codex, Cursor, VS Code, Windsurf, OpenCode, Gemini CLI
-- [ ] Agent skill
+- [x] One-click connect for Claude Code, Claude Desktop, Codex, Cursor, VS Code, Windsurf, OpenCode, Gemini CLI
+- [x] Agent skill ([skills/shotmaxxing](../skills/shotmaxxing/SKILL.md))
 
 ## Milestone 4: Local AI and polish
 
-- [ ] On-device captions, voice cleanup, silence cutting
+- [x] Voice cleanup and silence cutting, on device
+- [ ] On-device captions
 - [ ] Learn tab guides filmed by Shotmaxxing itself
 - [ ] Plugins: WASM effects and content packs
 - [ ] Signed releases, auto-updates, Homebrew, winget, Microsoft Store
