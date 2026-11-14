@@ -30,6 +30,7 @@
   --color-fill: var(--fill);
   --color-fill-hover: var(--fill-hover);
   --color-fill-strong: var(--fill-strong);
+  --color-segment-thumb: var(--segment-thumb);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-fg: var(--accent-fg);
@@ -113,8 +114,8 @@
   --os-radius-sheet: 16px;
   --os-control-height: 28px;
   --titlebar-height: 52px;
-  /* Room for the traffic lights. */
-  --titlebar-inset-start: 78px;
+  /* Room for the traffic lights (they end at 80 pt on macOS 26) plus a gap before the title. */
+  --titlebar-inset-start: 96px;
   --titlebar-inset-end: 12px;
 }
 
@@ -149,6 +150,7 @@
   --fill: oklch(0.21 0.008 264 / 0.05);
   --fill-hover: oklch(0.21 0.008 264 / 0.08);
   --fill-strong: oklch(0.21 0.008 264 / 0.12);
+  --segment-thumb: oklch(1 0 0);
   --accent: var(--lime);
   --accent-hover: var(--lime-hover);
   --accent-fg: var(--lime-ink);
@@ -191,6 +193,7 @@
   --fill: oklch(1 0 0 / 0.06);
   --fill-hover: oklch(1 0 0 / 0.09);
   --fill-strong: oklch(1 0 0 / 0.13);
+  --segment-thumb: oklch(0.42 0.006 264);
   --accent: var(--lime);
   --accent-hover: var(--lime-hover);
   --accent-fg: var(--lime-ink);

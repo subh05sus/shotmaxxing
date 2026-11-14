@@ -60,7 +60,7 @@
 >
   <span
     aria-hidden="true"
-    class="absolute inset-y-[2px] left-[2px] rounded-[calc(var(--radius-control)-2px)] bg-surface shadow-[var(--elev-1)] transition-[translate] duration-[var(--dur-slow)] ease-[var(--ease-spring)]"
+    class="absolute inset-y-[2px] left-[2px] rounded-[calc(var(--radius-control)-2px)] bg-segment-thumb shadow-[var(--elev-1)] transition-[translate] duration-[var(--dur-slow)] ease-[var(--ease-spring)]"
     style:width="calc((100% - 4px) / {options.length})"
     style:translate="{index * 100}% 0"
   ></span>

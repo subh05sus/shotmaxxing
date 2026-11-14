@@ -1,11 +1,13 @@
 <script lang="ts">
   import { Bot, Clapperboard, Copy, Hand, Lock, Play, ShieldCheck, Sparkles, Wand } from '@lucide/svelte';
   import { Button, CheckDraw, Group, Row, Segmented, StatusDot, Switch, env, toast } from '@shotmaxxing/ui';
-  import { AGENTS, STARTER_PROMPTS, type Agent } from '../../lib/sample';
+  import { onMount } from 'svelte';
+  import { STARTER_PROMPTS, type Agent } from '../../lib/sample';
   import { connectAgent, openWindow } from '../../lib/native';
   import { go } from '../../lib/router.svelte';
+  import { agents, refreshAgents } from '../../lib/agents.svelte';
 
-  let agents = $state<(Agent & { busy?: boolean })[]>(AGENTS.map((a) => ({ ...a })));
+  onMount(() => void refreshAgents());
   let askMode = $state<'session' | 'every'>('session');
   let showLiveCard = $state(true);
 
@@ -64,8 +66,7 @@
             <div class="min-w-0 flex-1">
               <p class="text-callout font-semibold">{agent.name}</p>
               <p class="text-footnote text-fg-muted">
-                {agent.kind}{#if agent.lastTake}
-                  · last take {agent.lastTake}{/if}
+                {agent.kind}{#if agent.lastTake}{' · '}last take {agent.lastTake}{/if}
               </p>
             </div>
             {#if agent.state === 'connected'}

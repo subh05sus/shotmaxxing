@@ -4,8 +4,22 @@
  * and schedules an autosave.
  */
 
-import { env } from '@shotmaxxing/ui';
-import { SAMPLE_PROJECT, type EffectBlock, type ZoomBlock } from '../../lib/sample';
+import { env, toast } from '@shotmaxxing/ui';
+import {
+  SAMPLE_CURSOR,
+  SAMPLE_KEYS,
+  SAMPLE_PROJECT,
+  type EffectBlock,
+  type ZoomBlock,
+} from '../../lib/sample';
+import { loadProject, mediaUrl, planAutoZooms, saveProject } from '../../lib/native';
+import { fromCore, toCore, zoomFromCore, type CoreProject } from '../../lib/project';
+
+export interface TimedPoint {
+  t: number;
+  x: number;
+  y: number;
+}
 
 export type Aspect = '16:9' | '4:3' | '1:1' | '9:16' | 'original';
 export type ToolId = 'background' | 'cursor' | 'zoom' | 'annotate' | 'camera' | 'audio' | 'ai';
@@ -119,6 +133,17 @@ const DEPTH_SCALE = { subtle: 1.45, standard: 1.9, bold: 2.6 };
 
 export class EditorState {
   project = $state<Project>(sampleProject());
+  /** Where the project lives on disk; `null` for the built-in sample. */
+  path = $state<string | null>(null);
+  status = $state<'ready' | 'loading' | 'error'>('ready');
+  error = $state('');
+  saveError = $state('');
+  /** The screen recording, for real projects. */
+  media = $state<string | null>(null);
+  /** What was recorded besides the video, in seconds and capture points. */
+  cursorPath = $state.raw<TimedPoint[]>(SAMPLE_CURSOR);
+  clicks = $state.raw<TimedPoint[]>(SAMPLE_PROJECT.clicks);
+  keys = $state.raw<{ t: number; label: string }[]>(SAMPLE_KEYS);
   time = $state(10.6);
   playing = $state(false);
   rate = $state(1);
@@ -139,6 +164,8 @@ export class EditorState {
   #versionTimer: ReturnType<typeof setTimeout> | undefined;
   #raf = 0;
   #last = 0;
+  #core: CoreProject | null = null;
+  #video: HTMLVideoElement | null = null;
 
   constructor() {
     const json = JSON.stringify(this.project);
@@ -147,6 +174,47 @@ export class EditorState {
       { id: 'v-import', label: 'Recorded by Claude Code', at: now - 2 * 3600_000, json },
       { id: 'v-auto', label: 'Auto zoom added 3 zooms', at: now - 2 * 3600_000 + 4000, json },
     ];
+  }
+
+  /** Opens a project from disk. The sample stays in place until it loads, so a failure can say what went wrong. */
+  async load(path: string): Promise<void> {
+    this.status = 'loading';
+    try {
+      const loaded = await loadProject(path);
+      this.#core = loaded.project;
+      this.path = loaded.root;
+      this.project = fromCore(loaded.project, env.os === 'windows' ? 'windows' : 'mac');
+      this.media = loaded.media ? await mediaUrl(loaded.media) : null;
+      this.cursorPath = loaded.cursor.map((c) => ({ t: c.t_us / 1e6, x: c.x, y: c.y }));
+      const clicks: TimedPoint[] = [];
+      const keys: { t: number; label: string }[] = [];
+      for (const event of loaded.events) {
+        if (event.type === 'mouse_down' && 'x' in event) {
+          clicks.push({ t: event.t_us / 1e6, x: event.x, y: event.y });
+        } else if (event.type === 'key_down' && 'label' in event && event.label) {
+          keys.push({ t: event.t_us / 1e6, label: event.label });
+        }
+      }
+      this.clicks = clicks;
+      this.keys = keys;
+      this.time = 0;
+      this.selection = null;
+      this.#past = [];
+      this.#future = [];
+      this.canUndo = false;
+      this.canRedo = false;
+      this.versions = [{ id: 'v-open', label: 'Opened', at: Date.now(), json: JSON.stringify(this.project) }];
+      this.status = 'ready';
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : String(error);
+      this.status = 'error';
+    }
+  }
+
+  /** The editor's <video>, when a real recording is shown. Playback follows its clock. */
+  attachVideo(video: HTMLVideoElement | null): void {
+    this.#video = video;
+    if (video) video.currentTime = this.time;
   }
 
   /** Applies an edit with undo history. Repeats of the same edit within 800 ms count as one step. */
@@ -190,21 +258,32 @@ export class EditorState {
   #scheduleSave(label: string): void {
     this.saving = true;
     clearTimeout(this.#saveTimer);
-    this.#saveTimer = setTimeout(() => {
-      try {
-        localStorage.setItem(`smx.project.${this.project.id}`, JSON.stringify(this.project));
-      } catch {
-        /* preview only */
-      }
-      this.saving = false;
-      this.savedAt = Date.now();
-    }, 700);
+    this.#saveTimer = setTimeout(() => void this.#save(), 700);
     // A version is kept after a quiet minute of editing, so history stays readable.
     clearTimeout(this.#versionTimer);
     this.#versionTimer = setTimeout(() => this.snapshot(`Edited: ${label.toLowerCase()}`), 60_000);
   }
 
+  async #save(label?: string): Promise<void> {
+    try {
+      if (this.path && this.#core) {
+        this.#core = toCore(this.project, this.#core);
+        await saveProject(this.path, this.#core, label);
+      } else {
+        localStorage.setItem(`smx.project.${this.project.id}`, JSON.stringify(this.project));
+      }
+      this.saveError = '';
+      this.savedAt = Date.now();
+    } catch (error) {
+      // Sample previews may have no storage; real projects say why saving failed.
+      if (this.path) this.saveError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.saving = false;
+    }
+  }
+
   snapshot(label: string): void {
+    if (this.path) void this.#save(label);
     this.versions = [
       { id: `v-${Date.now()}`, label, at: Date.now(), json: JSON.stringify(this.project) },
       ...this.versions,
@@ -224,6 +303,12 @@ export class EditorState {
     if (this.time >= this.project.duration - 0.05) this.time = 0;
     this.playing = true;
     this.#last = performance.now();
+    const video = this.#video;
+    if (video) {
+      video.currentTime = this.time;
+      video.playbackRate = this.rate * (this.clipAt(this.time)?.speed ?? 1);
+      video.play().catch(() => this.pause());
+    }
     const frame = (now: number) => {
       if (!this.playing) return;
       const dt = (now - this.#last) / 1000;
@@ -232,14 +317,22 @@ export class EditorState {
         return;
       }
       this.#last = now;
-      const clip = this.clipAt(this.time);
-      let t = this.time + dt * this.rate * (clip?.speed ?? 1);
+      let t: number;
+      if (video) {
+        // The video is the clock; the frame loop only follows it and applies speed changes.
+        t = video.currentTime;
+        const speed = this.rate * (this.clipAt(t)?.speed ?? 1);
+        if (video.playbackRate !== speed) video.playbackRate = speed;
+      } else {
+        t = this.time + dt * this.rate * (this.clipAt(this.time)?.speed ?? 1);
+      }
       // Skip removed parts.
       if (!this.clipAt(t)) {
         const next = this.project.clips
           .filter((c) => c.start >= t - 0.001)
           .sort((a, b) => a.start - b.start)[0];
         t = next ? next.start : this.project.duration;
+        if (video && next) video.currentTime = t;
       }
       if (t >= this.project.duration || t <= 0) {
         this.time = Math.min(this.project.duration, Math.max(0, t));
@@ -255,6 +348,7 @@ export class EditorState {
   pause(): void {
     this.playing = false;
     cancelAnimationFrame(this.#raf);
+    this.#video?.pause();
   }
 
   toggle(): void {
@@ -264,6 +358,8 @@ export class EditorState {
 
   seek(t: number): void {
     this.time = Math.min(this.project.duration, Math.max(0, t));
+    const video = this.#video;
+    if (video && Math.abs(video.currentTime - this.time) > 0.02) video.currentTime = this.time;
   }
 
   clipAt(t: number): Clip | undefined {
@@ -327,7 +423,23 @@ export class EditorState {
   }
 
   /** Re-plans auto zooms at the chosen depth, keeping zooms added by hand. */
-  redoAutoZoom(): void {
+  async redoAutoZoom(): Promise<void> {
+    if (this.path) {
+      let planned: Awaited<ReturnType<typeof planAutoZooms>>;
+      try {
+        planned = await planAutoZooms(this.path, this.project.zoom.depth);
+      } catch (error) {
+        toast(`Couldn’t plan auto zoom again: ${error instanceof Error ? error.message : String(error)}`, {
+          tone: 'danger',
+        });
+        return;
+      }
+      this.change('Redo auto zoom', () => {
+        const manual = this.project.zooms.filter((z) => z.source === 'manual');
+        this.project.zooms = [...planned.map(zoomFromCore), ...manual];
+      });
+      return;
+    }
     const scale = DEPTH_SCALE[this.project.zoom.depth];
     this.change('Redo auto zoom', () => {
       const manual = this.project.zooms.filter((z) => z.source === 'manual');

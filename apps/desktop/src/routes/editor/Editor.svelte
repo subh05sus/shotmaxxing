@@ -4,6 +4,7 @@
     AudioLines,
     ChevronLeft,
     Circle,
+    CircleAlert,
     Download,
     History,
     Image,
@@ -21,9 +22,11 @@
     Button,
     CheckDraw,
     CoachMarks,
+    EmptyState,
     IconButton,
     Keycap,
     ProgressRing,
+    Spinner,
     Tooltip,
     confetti,
     env,
@@ -35,7 +38,7 @@
   import { go, route } from '../../lib/router.svelte';
   import { registerCommands, ui } from '../../lib/commands.svelte';
   import { settings } from '../../lib/settings.svelte';
-  import { openWindow, revealInFolder } from '../../lib/native';
+  import { handOff, openWindow, revealInFolder } from '../../lib/native';
   import { relativeTime } from '../../lib/format';
   import { EditorState, type ToolId } from './store.svelte';
   import Canvas from './Canvas.svelte';
@@ -47,6 +50,10 @@
 
   const ed = new EditorState();
   onDestroy(() => ed.destroy());
+
+  // `editor/sample` is the built-in sample; anything else is the path of a project on disk.
+  const target = decodeURIComponent(route.path[1] ?? 'sample');
+  if (target !== 'sample') void ed.load(target);
 
   const TOOLS: { id: ToolId; label: string; icon: typeof Image; chord: string }[] = [
     { id: 'background', label: 'Background', icon: Image, chord: '1' },
@@ -295,7 +302,28 @@
 
 <svelte:window {onkeydown} />
 
-<div class="flex h-full flex-col bg-bg">
+<div class="relative flex h-full flex-col bg-bg">
+  {#if ed.status !== 'ready'}
+    <div
+      data-tauri-drag-region
+      class="absolute inset-0 z-20 grid place-items-center bg-bg"
+      out:fade={{ duration: 150 }}
+    >
+      {#if ed.status === 'loading'}
+        <div class="flex flex-col items-center gap-3 text-fg-muted" role="status">
+          <Spinner />
+          <span class="text-callout">Opening your recording…</span>
+        </div>
+      {:else}
+        <EmptyState icon={CircleAlert} title="This project couldn’t be opened" body={ed.error}>
+          <div class="flex gap-2">
+            <Button variant="primary" onclick={() => ed.load(target)}>Try again</Button>
+            <Button onclick={() => handOff('home', 'home/library')}>Back to Library</Button>
+          </div>
+        </EmptyState>
+      {/if}
+    </div>
+  {/if}
   <header
     data-tauri-drag-region
     class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center gap-2 border-b border-border bg-chrome pl-[var(--titlebar-inset-start)] pr-3"
@@ -333,6 +361,10 @@
     <span class="flex w-24 items-center gap-1 text-footnote text-fg-subtle" aria-live="polite">
       {#if ed.saving}
         <span in:fade={{ duration: 100 }}>Saving…</span>
+      {:else if ed.saveError}
+        <span class="flex items-center gap-1 text-danger" in:fade={{ duration: 100 }} title={ed.saveError}>
+          <CircleAlert size={12} aria-hidden="true" /> Not saved
+        </span>
       {:else}
         <span
           class="flex items-center gap-1"

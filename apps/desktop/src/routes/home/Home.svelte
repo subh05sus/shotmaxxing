@@ -1,21 +1,21 @@
 <script lang="ts">
-  import { BookOpen, Bot, Circle, Film, Search, Settings as SettingsIcon } from '@lucide/svelte';
+  import { BookOpen, Bot, Film, Search, Settings as SettingsIcon } from '@lucide/svelte';
   import { Button, Keycap, StatusDot, Tooltip, env, fade } from '@shotmaxxing/ui';
   import { go, route } from '../../lib/router.svelte';
   import { openWindow } from '../../lib/native';
   import { ui } from '../../lib/commands.svelte';
   import { settings } from '../../lib/settings.svelte';
-  import { AGENTS, LIBRARY } from '../../lib/sample';
+  import { counts } from '../../lib/counts.svelte';
+  import RecordDot from '../../components/RecordDot.svelte';
   import Library from './Library.svelte';
   import Learn from './Learn.svelte';
   import Agents from './Agents.svelte';
   import Settings from './Settings.svelte';
 
   const page = $derived(route.path[1] ?? 'library');
-  const connectedAgents = $derived(AGENTS.filter((a) => a.state === 'connected').length);
 
   const NAV = $derived([
-    { id: 'library', label: 'Library', icon: Film, count: LIBRARY.length },
+    { id: 'library', label: 'Library', icon: Film, count: counts.library },
     { id: 'learn', label: 'Learn', icon: BookOpen, count: undefined },
     { id: 'agents', label: 'Agents', icon: Bot, count: undefined },
     { id: 'settings', label: 'Settings', icon: SettingsIcon, count: undefined },
@@ -43,7 +43,7 @@
           class={[
             'ring-inside flex h-8 items-center gap-2.5 rounded-[7px] px-2.5 text-callout transition-colors duration-[var(--dur-fast)]',
             page === item.id
-              ? 'bg-accent-tint font-semibold text-fg'
+              ? 'bg-fill-strong font-semibold text-fg'
               : 'text-fg-muted hover:bg-fill hover:text-fg',
           ]}
         >
@@ -54,7 +54,7 @@
             aria-hidden="true"
           />
           <span class="flex-1 text-left">{item.label}</span>
-          {#if item.id === 'agents' && connectedAgents}
+          {#if item.id === 'agents' && counts.connectedAgents}
             <StatusDot tone="success" />
           {:else if item.count}
             <span class="text-footnote text-fg-subtle tabular">{item.count}</span>
@@ -94,7 +94,7 @@
       </Tooltip>
       <span class="no-drag">
         <Tooltip label="New recording" chord="alt+shift+5">
-          <Button variant="record" icon={Circle} onclick={() => openWindow('record')}>Record</Button>
+          <Button variant="primary" icon={RecordDot} onclick={() => openWindow('record')}>Record</Button>
         </Tooltip>
       </span>
     </header>

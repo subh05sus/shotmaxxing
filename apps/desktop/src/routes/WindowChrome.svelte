@@ -34,10 +34,14 @@
         </span>
       </div>
     {:else}
-      <div class="pointer-events-none absolute left-[13px] top-[19px] z-[700] flex gap-2" aria-hidden="true">
-        <span class="size-3 rounded-full bg-traffic-close"></span>
-        <span class="size-3 rounded-full bg-traffic-min"></span>
-        <span class="size-3 rounded-full bg-traffic-max"></span>
+      <!-- macOS 26 metrics: 14 pt lights, 23 pt apart, centred in the 52 pt title bar. -->
+      <div
+        class="pointer-events-none absolute left-[20px] top-[19px] z-[700] flex gap-[9px]"
+        aria-hidden="true"
+      >
+        <span class="size-3.5 rounded-full bg-traffic-close"></span>
+        <span class="size-3.5 rounded-full bg-traffic-min"></span>
+        <span class="size-3.5 rounded-full bg-traffic-max"></span>
       </div>
     {/if}
     <div class="min-h-0 flex-1">{@render children()}</div>

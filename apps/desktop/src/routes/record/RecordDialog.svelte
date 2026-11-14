@@ -1,9 +1,31 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { AppWindow, Bot, ChevronDown, Circle, Crop, Mic, Monitor, Video, Volume2 } from '@lucide/svelte';
-  import { Button, Keycap, Menu, Segmented, Switch, env, fade, pop, type MenuItem } from '@shotmaxxing/ui';
+  import {
+    Button,
+    Keycap,
+    Menu,
+    Segmented,
+    Switch,
+    env,
+    fade,
+    pop,
+    toast,
+    type MenuItem,
+  } from '@shotmaxxing/ui';
   import Scene from '../../components/Scene.svelte';
-  import { handOff, listSources, type CaptureSource } from '../../lib/native';
+  import RecordDot from '../../components/RecordDot.svelte';
+  import {
+    handOff,
+    isTauri,
+    listDevices,
+    listSources,
+    openPermissionSettings,
+    sourceThumbnails,
+    type Device,
+    startRecording,
+    type CaptureSource,
+  } from '../../lib/native';
   import { settings } from '../../lib/settings.svelte';
   import { wallpaper } from '../../lib/wallpapers';
 
@@ -15,14 +37,49 @@
   let camera = $state(false);
   let mic = $state(true);
   let systemAudio = $state(true);
-  let micName = $state(env.os === 'mac' ? 'MacBook Pro Microphone' : 'Microphone Array');
-  let cameraName = $state(env.os === 'mac' ? 'FaceTime HD Camera' : 'Integrated Camera');
+  let microphones = $state<Device[]>([]);
+  let cameras = $state<Device[]>([]);
+  let micId = $state<string | null>(null);
+  let cameraId = $state<string | null>(null);
+  const micName = $derived(microphones.find((d) => d.id === micId)?.name ?? 'No microphone');
+  const cameraName = $derived(cameras.find((d) => d.id === cameraId)?.name ?? 'No camera');
   let countdown = $state<number | null>(null);
+  let starting = $state(false);
+  let loadError = $state('');
   let tileWidth = $state(0);
+  let tick: ReturnType<typeof setInterval> | undefined;
 
-  onMount(async () => {
-    sources = await listSources();
-    selected = sources.find((s) => s.kind === 'window')?.id ?? null;
+  async function load() {
+    loadError = '';
+    try {
+      sources = await listSources();
+      selected = sources.find((s) => s.kind === 'window')?.id ?? sources[0]?.id ?? null;
+    } catch (error) {
+      loadError = error instanceof Error ? error.message : String(error);
+      return;
+    }
+    // Pictures arrive a moment later; tiles show a placeholder until then.
+    const pictures = await sourceThumbnails(sources.map((s) => s.id)).catch(() => ({}));
+    sources = sources.map((s) => ({
+      ...s,
+      thumbnail: pictures[s.id as keyof typeof pictures] ?? s.thumbnail,
+    }));
+  }
+
+  async function loadDevices() {
+    const found = await listDevices().catch(() => ({ microphones: [], cameras: [] }));
+    microphones = found.microphones;
+    cameras = found.cameras;
+    micId = microphones[0]?.id ?? null;
+    cameraId = cameras[0]?.id ?? null;
+    if (!micId) mic = false;
+    if (!cameraId) camera = false;
+  }
+
+  onMount(() => {
+    void load();
+    void loadDevices();
+    return () => clearInterval(tick);
   });
 
   const shown = $derived(sources.filter((s) => (mode === 'area' ? s.kind === 'display' : s.kind === mode)));
@@ -34,36 +91,56 @@
   const sceneFor: Record<string, number> = { Safari: 4, Figma: 1, Notes: 5, Terminal: 2, Xcode: 1 };
 
   function record() {
-    if (!settings.countdown) return void handOff('pill');
+    if (!selected || starting || countdown !== null) return;
+    if (!settings.countdown) return void begin();
     countdown = 3;
-    const tick = setInterval(() => {
+    tick = setInterval(() => {
       countdown = (countdown ?? 1) - 1;
       if (countdown <= 0) {
         clearInterval(tick);
-        handOff('pill');
+        countdown = null;
+        void begin();
       }
     }, 1000);
   }
 
-  const micItems: MenuItem[] = [
-    {
-      label: env.os === 'mac' ? 'MacBook Pro Microphone' : 'Microphone Array',
-      run: () => (micName = env.os === 'mac' ? 'MacBook Pro Microphone' : 'Microphone Array'),
-    },
-    { label: 'Studio Display Microphone', run: () => (micName = 'Studio Display Microphone') },
-    { label: 'USB Audio Interface', run: () => (micName = 'USB Audio Interface') },
-  ];
-  const cameraItems: MenuItem[] = [
-    {
-      label: env.os === 'mac' ? 'FaceTime HD Camera' : 'Integrated Camera',
-      run: () => (cameraName = env.os === 'mac' ? 'FaceTime HD Camera' : 'Integrated Camera'),
-    },
-    { label: 'Studio Display Camera', run: () => (cameraName = 'Studio Display Camera') },
-  ];
+  function cancelCountdown() {
+    clearInterval(tick);
+    countdown = null;
+  }
+
+  async function begin() {
+    if (!selected) return;
+    starting = true;
+    try {
+      // Area recording records the whole screen for now; the crop is applied in the editor.
+      await startRecording(selected);
+      await handOff('pill');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const permission = /Screen Recording/i.test(message);
+      toast(message, {
+        tone: 'danger',
+        timeout: 8000,
+        action: permission
+          ? { label: 'Open settings', run: () => openPermissionSettings('screen') }
+          : undefined,
+      });
+    } finally {
+      starting = false;
+    }
+  }
+
+  const micItems: MenuItem[] = $derived(
+    microphones.map((d) => ({ label: d.name, run: () => (micId = d.id) })),
+  );
+  const cameraItems: MenuItem[] = $derived(
+    cameras.map((d) => ({ label: d.name, run: () => (cameraId = d.id) })),
+  );
 
   function onkeydown(e: KeyboardEvent) {
     if (e.key === 'Enter' && !(e.target instanceof HTMLInputElement) && countdown === null) record();
-    if (e.key === 'Escape' && countdown !== null) countdown = null;
+    if (e.key === 'Escape' && countdown !== null) cancelCountdown();
   }
 </script>
 
@@ -100,6 +177,14 @@
       role="radiogroup"
       aria-label="Source"
     >
+      {#if loadError}
+        <p class="col-span-full px-1 py-6 text-center text-callout text-fg-muted" role="alert">
+          {loadError}
+          <button type="button" class="ml-1 font-medium text-accent-text underline" onclick={load}
+            >Try again</button
+          >
+        </p>
+      {/if}
       {#each shown as source, i (source.id)}
         <button
           type="button"
@@ -120,7 +205,24 @@
               ? wallpaper(i % 2 ? 'ocean' : 'aurora-lime').css
               : 'var(--fill-strong)'}
           >
-            {#if tileWidth}
+            {#if source.thumbnail && source.kind === 'display'}
+              <img src={source.thumbnail} alt="" class="absolute inset-0 size-full object-cover" in:fade />
+            {:else if source.thumbnail}
+              <!-- A window floats on the tile, its own shape, so its rounded corners stay rounded. -->
+              <span class="absolute inset-0 grid place-items-center">
+                <img
+                  src={source.thumbnail}
+                  alt=""
+                  class="max-h-[84%] max-w-[88%] rounded-[5px] shadow-[var(--elev-2)]"
+                  in:fade
+                />
+              </span>
+            {:else if isTauri}
+              <span class="absolute inset-0 grid place-items-center text-fg-subtle">
+                {#if source.kind === 'display'}<Monitor size={28} strokeWidth={1.5} aria-hidden="true" />
+                {:else}<AppWindow size={28} strokeWidth={1.5} aria-hidden="true" />{/if}
+              </span>
+            {:else if tileWidth}
               {#if source.kind === 'display'}
                 <span
                   class="absolute left-[10%] top-[12%] block aspect-[16/10] w-[62%] overflow-hidden rounded-[3px] shadow-[var(--elev-2)]"
@@ -146,35 +248,44 @@
   <div class="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-t border-border px-5 py-3">
     <span class="flex items-center gap-2">
       <Mic size={15} class="text-fg-muted" aria-hidden="true" />
-      <Switch bind:checked={mic} label="Microphone" />
-      <Menu items={micItems} label="Microphone">
-        {#snippet trigger({ props })}
-          <button
-            type="button"
-            disabled={!mic}
-            class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
-            {...props}
-          >
-            {micName}<ChevronDown size={12} aria-hidden="true" />
-          </button>
-        {/snippet}
-      </Menu>
+      <Switch bind:checked={mic} label="Microphone" disabled={!microphones.length} />
+      {#if microphones.length > 1}
+        <Menu items={micItems} label="Microphone">
+          {#snippet trigger({ props })}
+            <button
+              type="button"
+              disabled={!mic}
+              class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
+              {...props}
+            >
+              {micName}<ChevronDown size={12} aria-hidden="true" />
+            </button>
+          {/snippet}
+        </Menu>
+      {:else}
+        <span class={['px-1.5 text-footnote', mic ? 'text-fg-muted' : 'text-fg-subtle']}>{micName}</span>
+      {/if}
     </span>
     <span class="flex items-center gap-2">
       <Video size={15} class="text-fg-muted" aria-hidden="true" />
-      <Switch bind:checked={camera} label="Camera" />
-      <Menu items={cameraItems} label="Camera">
-        {#snippet trigger({ props })}
-          <button
-            type="button"
-            disabled={!camera}
-            class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
-            {...props}
-          >
-            {cameraName}<ChevronDown size={12} aria-hidden="true" />
-          </button>
-        {/snippet}
-      </Menu>
+      <Switch bind:checked={camera} label="Camera" disabled={!cameras.length} />
+      {#if cameras.length > 1}
+        <Menu items={cameraItems} label="Camera">
+          {#snippet trigger({ props })}
+            <button
+              type="button"
+              disabled={!camera}
+              class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
+              {...props}
+            >
+              {cameraName}<ChevronDown size={12} aria-hidden="true" />
+            </button>
+          {/snippet}
+        </Menu>
+      {:else}
+        <span class={['px-1.5 text-footnote', camera ? 'text-fg-muted' : 'text-fg-subtle']}>{cameraName}</span
+        >
+      {/if}
     </span>
     <span class="flex items-center gap-2">
       <Volume2 size={15} class="text-fg-muted" aria-hidden="true" />
@@ -194,8 +305,9 @@
     <span class="text-footnote text-fg-subtle"
       >{settings.countdown ? '3-second countdown' : 'Starts right away'}</span
     >
-    <Button variant="record" size="lg" icon={Circle} disabled={!selected} onclick={record}>
-      Record <Keycap chord="return" tone="on-accent" />
+    <Button variant="primary" size="lg" icon={RecordDot} disabled={!selected || starting} onclick={record}>
+      {starting ? 'Starting…' : 'Record'}
+      <Keycap chord="return" tone="on-accent" />
     </Button>
   </footer>
 </div>

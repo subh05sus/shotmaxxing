@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import {
     Bot,
     Check,
@@ -29,11 +29,16 @@
   } from '@shotmaxxing/ui';
   import { settings } from '../../lib/settings.svelte';
   import { go } from '../../lib/router.svelte';
-  import { AGENTS } from '../../lib/sample';
+  import { agents, refreshAgents } from '../../lib/agents.svelte';
   import {
     connectAgent,
+    editorTarget,
+    isTauri,
     openPermissionSettings,
+    openWindow,
     permissionStatus,
+    startRecording,
+    stopRecording,
     type PermissionKind,
     type PermissionState,
   } from '../../lib/native';
@@ -56,6 +61,13 @@
     settings.onboardingDone = true;
     settings.onboardingStep = 0;
     go(target);
+  }
+
+  /** The app opens projects in their own editor window and leaves this one on the Library. */
+  function finishInEditor(target: string) {
+    if (!isTauri) return finish(`editor/${target}`);
+    finish('home/library');
+    void openWindow('editor', target);
   }
 
   // Permissions, checked live while the step is open (one cheap call a second, stopped when it isn't needed).
@@ -112,9 +124,11 @@
   const screenReady = $derived(states.screen === 'granted' || states.screen === 'not_needed');
 
   // Agents
-  let connected = $state<Record<string, 'idle' | 'busy' | 'done'>>(
-    Object.fromEntries(AGENTS.map((a) => [a.id, a.state === 'connected' ? 'done' : 'idle'])),
-  );
+  let connected = $state<Record<string, 'idle' | 'busy' | 'done'>>({});
+  $effect(() => {
+    for (const a of agents) if (a.state === 'connected' && !connected[a.id]) connected[a.id] = 'done';
+  });
+  onMount(() => void refreshAgents());
   async function connect(id: string) {
     connected[id] = 'busy';
     try {
@@ -129,18 +143,40 @@
   const connectedCount = $derived(Object.values(connected).filter((s) => s === 'done').length);
 
   // Practice take: countdown, ten seconds of recording, then the result.
-  let practice = $state<'ready' | 'countdown' | 'recording' | 'done'>('ready');
+  let practice = $state<'ready' | 'countdown' | 'recording' | 'saving' | 'done'>('ready');
+  // In the app the practice take is a real recording of the main screen; a browser preview acts it out.
+  let practiceProject = $state<string | null>(null);
+  let practiceZooms = $state(3);
   let count = $state(3);
   let elapsed = $state(0);
   let timer: ReturnType<typeof setInterval> | undefined;
 
+  function practiceFailed(error: unknown) {
+    practice = 'ready';
+    const message = error instanceof Error ? error.message : String(error);
+    toast(message, {
+      tone: 'danger',
+      timeout: 8000,
+      action: /Screen Recording/i.test(message)
+        ? { label: 'Open settings', run: () => openPermissionSettings('screen') }
+        : undefined,
+    });
+  }
+
   function startPractice() {
     practice = 'countdown';
     count = 3;
-    timer = setInterval(() => {
+    timer = setInterval(async () => {
       count -= 1;
       if (count === 0) {
         clearInterval(timer);
+        if (isTauri) {
+          try {
+            await startRecording('display', 'Practice take');
+          } catch (error) {
+            return practiceFailed(error);
+          }
+        }
         practice = 'recording';
         elapsed = 0;
         const started = performance.now();
@@ -152,8 +188,18 @@
     }, 1000);
   }
 
-  function stopPractice() {
+  async function stopPractice() {
     clearInterval(timer);
+    if (isTauri) {
+      practice = 'saving';
+      try {
+        const done = await stopRecording();
+        practiceProject = done.project;
+        practiceZooms = done.zooms;
+      } catch (error) {
+        return practiceFailed(error);
+      }
+    }
     practice = 'done';
   }
 
@@ -276,7 +322,7 @@
               before it touches your mouse or keyboard. Everything stays on this {machine}.
             </p>
             <ul class="mt-6 grid grid-cols-2 gap-2">
-              {#each AGENTS as agent, i (agent.id)}
+              {#each agents as agent, i (agent.id)}
                 <li
                   class="rise-in flex items-center gap-3 rounded-card border border-border bg-surface px-3 py-2.5 shadow-[var(--elev-1)]"
                   style="--i: {i}"
@@ -330,11 +376,13 @@
                     in:pop
                   >
                     <span
-                      class="grid size-20 place-items-center rounded-full bg-record text-record-fg shadow-[var(--elev-3)]"
+                      class="grid size-20 place-items-center rounded-full bg-accent text-accent-fg shadow-[var(--elev-3)]"
                     >
                       <Circle size={30} fill="currentColor" aria-hidden="true" />
                     </span>
-                    <span class="text-callout font-semibold">Record practice take</span>
+                    <span class="rounded-full bg-scrim px-3 py-1 text-callout font-semibold"
+                      >Record practice take</span
+                    >
                   </button>
                 {:else if practice === 'countdown'}
                   {#key count}
@@ -343,6 +391,13 @@
                       in:pop={{ from: 0.6, duration: 260 }}>{count}</span
                     >
                   {/key}
+                {:else if practice === 'saving'}
+                  <div class="flex flex-col items-center gap-3 text-fg-on-stage" in:fade role="status">
+                    <Spinner size={22} />
+                    <span class="rounded-full bg-scrim px-3 py-1 text-callout font-semibold"
+                      >Adding zooms…</span
+                    >
+                  </div>
                 {:else if practice === 'recording'}
                   <div class="flex flex-col items-center gap-4 text-fg-on-stage" in:fade>
                     <span
@@ -353,7 +408,7 @@
                     </span>
                     <button
                       type="button"
-                      class="press flex items-center gap-2 rounded-full bg-record px-4 py-2 text-callout font-semibold text-record-fg"
+                      class="press flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-callout font-semibold text-accent-fg"
                       onclick={stopPractice}
                     >
                       <ProgressRing value={elapsed / 10} size={16} label="Practice take progress" />
@@ -366,13 +421,18 @@
                       ><CheckDraw size={26} /></span
                     >
                     <span class="text-title-3">Nice take</span>
-                    <span class="text-callout opacity-80">3 zooms added from your clicks</span>
+                    <span class="text-callout opacity-80"
+                      >{practiceZooms === 0
+                        ? 'Nothing was clicked, so no zooms yet'
+                        : `${practiceZooms} ${practiceZooms === 1 ? 'zoom' : 'zooms'} added from your clicks`}</span
+                    >
                   </div>
                 {/if}
               </div>
             </div>
             <p class="mt-3 text-footnote text-fg-muted">
-              Practice takes stay on this {machine} and are deleted when you close the editor, unless you keep them.
+              It records your main screen. Practice takes go to your Library like any recording, so you can
+              delete them there.
             </p>
           {:else}
             <div class="flex flex-col items-start">
@@ -451,7 +511,11 @@
       >
     {:else}
       <Button variant="ghost" onclick={() => finish('home/library')}>Go to Library</Button>
-      <Button variant="primary" onclick={() => finish('editor/sample?tour=1')}>
+      <Button
+        variant="primary"
+        onclick={() =>
+          finishInEditor(practiceProject ? `${editorTarget(practiceProject)}?tour=1` : 'sample?tour=1')}
+      >
         {practice === 'done' ? 'Open my practice take' : 'Open the sample project'}
       </Button>
     {/if}

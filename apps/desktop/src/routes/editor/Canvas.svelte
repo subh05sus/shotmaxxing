@@ -1,16 +1,22 @@
 <script lang="ts">
   import { UserRound } from '@lucide/svelte';
   import Scene from '../../components/Scene.svelte';
-  import { SAMPLE_CURSOR, SAMPLE_PROJECT } from '../../lib/sample';
   import { wallpaper } from '../../lib/wallpapers';
   import { ASPECTS, cameraAt, clamp, cursorAt, placeWindow } from './camera';
   import type { EditorState } from './store.svelte';
 
   /**
-   * The browser stand-in for the native preview. In the app, the wgpu compositor draws this area from the real
-   * video; here the same layout and camera maths drive a few DOM layers, updated with transforms only.
+   * The live preview. The recording plays in a <video> (decoded in hardware), and the camera, cursor, clicks and
+   * overlays are layers moved with transforms only, so the preview costs about what playing the video costs. The
+   * built-in sample draws a stand-in scene instead of a video. Exports are drawn natively from the same settings.
    */
   let { ed }: { ed: EditorState } = $props();
+
+  let video = $state<HTMLVideoElement | null>(null);
+  $effect(() => {
+    ed.attachVideo(video);
+    return () => ed.attachVideo(null);
+  });
 
   let stageW = $state(0);
   let stageH = $state(0);
@@ -33,7 +39,7 @@
 
   const win = $derived(placeWindow(frame, capture, p.canvas.padding));
   const k = $derived(win.width / capture.width);
-  const cursor = $derived(cursorAt(ed.time, SAMPLE_CURSOR));
+  const cursor = $derived(cursorAt(ed.time, ed.cursorPath));
   const cam = $derived(
     cameraAt(ed.time, p.zooms, capture, { motion: p.zoom.motion, follow: p.zoom.follow, cursor }),
   );
@@ -57,10 +63,27 @@
   );
 
   // Clicks: a ring that grows and fades, computed from time so scrubbing shows it too.
-  const click = $derived(SAMPLE_PROJECT.clicks.find((c) => ed.time >= c.t && ed.time < c.t + 0.5));
+  const click = $derived(ed.clicks.find((c) => ed.time >= c.t && ed.time < c.t + 0.5));
   const clickAge = $derived(click ? (ed.time - click.t) / 0.5 : 0);
   const pressed = $derived(p.cursor.click === 'press' && !!click && clickAge < 0.3);
-  const idle = $derived(p.cursor.hideIdle && ed.time > 36.5);
+
+  // The cursor fades out after it has rested for a while, and comes back on the next move or click.
+  const lastActive = $derived.by(() => {
+    const path = ed.cursorPath;
+    let lo = 0;
+    let hi = path.length - 1;
+    let found = -Infinity;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (path[mid].t <= ed.time) {
+        found = path[mid].t;
+        lo = mid + 1;
+      } else hi = mid - 1;
+    }
+    const lastClick = ed.clicks.findLast((c) => c.t <= ed.time)?.t ?? -Infinity;
+    return Math.max(found, lastClick);
+  });
+  const idle = $derived(p.cursor.hideIdle && ed.time - lastActive > 2.5 && ed.time > 2.5);
   const cursorPx = $derived(24 * p.cursor.size * k * (capture.width / 1440) * (frame.height / 520));
 
   const blur = $derived(p.effects.filter((e) => e.kind === 'blur' && ed.time >= e.start && ed.time <= e.end));
@@ -71,6 +94,7 @@
     p.effects.filter((e) => e.kind === 'arrow' && ed.time >= e.start && ed.time <= e.end),
   );
 
+  // The sample's captions; real projects get theirs from local transcription.
   const CAPTIONS = [
     { start: 0.4, end: 2.8, text: 'Here’s how sign-up works in Northwind.' },
     { start: 2.9, end: 6.4, text: 'Start with Get started, top right.' },
@@ -80,16 +104,24 @@
     { start: 30.0, end: 35.0, text: 'Pricing is one click away.' },
   ];
   const caption = $derived(
-    p.captions.state === 'ready' && p.captions.show
+    !ed.path && p.captions.state === 'ready' && p.captions.show
       ? CAPTIONS.find((c) => ed.time >= c.start && ed.time <= c.end)
       : undefined,
   );
 
-  const KEYS = [
-    { t: 15.2, label: '⇥  Tab' },
-    { t: 19.0, label: '↩  Return' },
-  ];
-  const key = $derived(p.keystrokes ? KEYS.find((x) => ed.time >= x.t && ed.time < x.t + 0.9) : undefined);
+  const key = $derived(
+    p.keystrokes ? ed.keys.findLast((x) => ed.time >= x.t && ed.time < x.t + 0.9) : undefined,
+  );
+
+  /** Arrow geometry in window pixels: a shaft and a two-stroke head at `to`. */
+  function arrowPath(from: { x: number; y: number }, to: { x: number; y: number }): string {
+    const [x1, y1, x2, y2] = [from.x * k, from.y * k, to.x * k, to.y * k];
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const head = Math.max(10, 26 * k);
+    const a1 = angle + Math.PI - 0.5;
+    const a2 = angle + Math.PI + 0.5;
+    return `M${x1} ${y1} L${x2} ${y2} M${x2 + head * Math.cos(a1)} ${y2 + head * Math.sin(a1)} L${x2} ${y2} L${x2 + head * Math.cos(a2)} ${y2 + head * Math.sin(a2)}`;
+  }
 
   const SPOTLIGHT =
     'radial-gradient(circle, color-mix(in oklch, var(--cursor-light) 28%, transparent), transparent 70%)';
@@ -131,17 +163,47 @@
           style:border-radius="{radius}px"
           style:box-shadow={shadow}
         >
-          <Scene variant={0} width={win.width} t={ed.time} />
+          {#if ed.media}
+            <video
+              bind:this={video}
+              src={ed.media}
+              class="absolute inset-0 size-full object-cover"
+              muted
+              playsinline
+              preload="auto"
+              disablepictureinpicture
+              onended={() => ed.pause()}
+            ></video>
+          {:else}
+            <Scene variant={0} width={win.width} t={ed.time} />
+          {/if}
           {#each blur as b (b.id)}
             <div
               class="scn-blur absolute"
-              style:left="{840 * k}px"
-              style:top="{396 * k}px"
-              style:width="{440 * k}px"
-              style:height="{48 * k}px"
+              style:left="{(b.rect?.x ?? 840) * k}px"
+              style:top="{(b.rect?.y ?? 396) * k}px"
+              style:width="{(b.rect?.width ?? 440) * k}px"
+              style:height="{(b.rect?.height ?? 48) * k}px"
             ></div>
           {/each}
-          {#each arrows as a (a.id)}
+          {#each arrows.filter((a) => a.from && a.to) as a (a.id)}
+            <svg
+              class="absolute inset-0 overflow-visible"
+              width={win.width}
+              height={win.height}
+              aria-hidden="true"
+            >
+              <path
+                d={arrowPath(a.from!, a.to!)}
+                stroke="var(--accent)"
+                stroke-width={Math.max(3, 7 * k)}
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                fill="none"
+              />
+            </svg>
+          {/each}
+          {#each arrows.filter((a) => !a.from || !a.to) as a (a.id)}
             <svg
               class="absolute"
               style:left="{1120 * k}px"
@@ -229,7 +291,9 @@
 
       {#each titles as title (title.id)}
         <span
-          class="absolute left-[5%] top-[6%] rounded-full bg-accent px-[1.4em] py-[0.5em] font-semibold text-accent-fg shadow-[var(--elev-2)]"
+          style:left="{(title.pos?.x ?? 0.05) * 100}%"
+          style:top="{(title.pos?.y ?? 0.06) * 100}%"
+          class="absolute rounded-full bg-accent px-[1.4em] py-[0.5em] font-semibold text-accent-fg shadow-[var(--elev-2)]"
           style:font-size="{frame.height * 0.035}px">{title.label}</span
         >
       {/each}

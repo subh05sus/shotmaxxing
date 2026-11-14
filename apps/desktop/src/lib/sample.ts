@@ -17,6 +17,9 @@ export interface LibraryItem {
   agent?: string;
   kind: 'recording' | 'screenshot';
   sizeMb: number;
+  /** Real projects: where the project folder is, and a URL for its video. */
+  path?: string;
+  media?: string;
 }
 
 export const LIBRARY: LibraryItem[] = [
@@ -337,6 +340,13 @@ export interface EffectBlock {
   start: number;
   end: number;
   label: string;
+  /** Text: position as a fraction of the canvas. */
+  pos?: { x: number; y: number };
+  /** Blur: the region in capture points. */
+  rect?: { x: number; y: number; width: number; height: number };
+  /** Arrow: from and to, in capture points. */
+  from?: { x: number; y: number };
+  to?: { x: number; y: number };
 }
 
 export const SAMPLE_PROJECT = {
@@ -406,4 +416,10 @@ export const SAMPLE_CURSOR: { t: number; x: number; y: number }[] = [
   { t: 30.6, x: 430, y: 110 },
   { t: 36.0, x: 760, y: 470 },
   { t: 42.0, x: 900, y: 640 },
+];
+
+/** Shortcuts shown in the sample, keyed by time (seconds). */
+export const SAMPLE_KEYS: { t: number; label: string }[] = [
+  { t: 15.2, label: '⇥  Tab' },
+  { t: 19.0, label: '↩  Return' },
 ];

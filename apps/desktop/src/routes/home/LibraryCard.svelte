@@ -19,6 +19,12 @@
 
   let width = $state(0);
   let scrub = $state<number | null>(null);
+  let video = $state<HTMLVideoElement | null>(null);
+
+  // Real recordings show a frame of the video; hover scrubbing seeks it. Nothing plays.
+  $effect(() => {
+    if (video && video.readyState >= 1) video.currentTime = t;
+  });
   let menuButton: HTMLButtonElement | undefined = $state();
 
   // Hover scrub: the pointer is the playhead. Only transforms change, and only while the pointer moves.
@@ -62,7 +68,18 @@
         class="absolute left-[7%] top-[8%] aspect-[16/10] w-[86%] overflow-hidden rounded-[5px] shadow-[var(--elev-2)] transition-transform duration-[var(--dur-base)] ease-[var(--ease-out)]"
         style:transform="scale({push})"
       >
-        {#if width}<Scene variant={item.scene} width={width * 0.86} {t} />{/if}
+        {#if item.media}
+          <video
+            bind:this={video}
+            src={item.media}
+            class="size-full object-cover"
+            muted
+            playsinline
+            preload="metadata"
+            disablepictureinpicture
+            onloadedmetadata={() => video && (video.currentTime = t)}
+          ></video>
+        {:else if width}<Scene variant={item.scene} width={width * 0.86} {t} />{/if}
       </div>
       {#if scrub !== null}
         <span

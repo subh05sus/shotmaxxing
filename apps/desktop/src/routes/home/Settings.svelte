@@ -28,7 +28,7 @@
     { label: 'New recording', chord: 'alt+shift+5' },
     { label: 'Styled screenshot', chord: 'alt+shift+4' },
     { label: 'Stop recording', chord: 'alt+shift+5' },
-    { label: 'Stop an agent take', chord: 'escape' },
+    { label: 'Stop an agent take (press it three times)', chord: 'escape' },
   ];
 </script>
 
@@ -70,7 +70,7 @@
       </Row>
       <Row
         label="Show the recording pill"
-        description="A small pill with the timer, Pause and Stop. It never appears in the video."
+        description="A small pill with the timer and Stop. It never appears in the video."
       >
         <Switch bind:checked={settings.showPill} label="Show the recording pill" />
       </Row>

@@ -3,7 +3,7 @@
   import type { HTMLButtonAttributes } from 'svelte/elements';
   import Spinner from './Spinner.svelte';
 
-  type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'record';
+  type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
   type Size = 'sm' | 'md' | 'lg';
 
   interface Props extends HTMLButtonAttributes {
@@ -41,7 +41,6 @@
     secondary: 'bg-fill text-fg hover:bg-fill-hover border border-border',
     ghost: 'text-fg-muted hover:text-fg hover:bg-fill',
     danger: 'bg-danger text-record-fg hover:opacity-90 font-semibold',
-    record: 'bg-record text-record-fg hover:opacity-95 font-semibold shadow-[var(--top-light)]',
   };
   const iconSize = $derived(size === 'lg' ? 18 : size === 'sm' ? 14 : 16);
 </script>

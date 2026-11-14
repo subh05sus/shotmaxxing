@@ -3,7 +3,7 @@
  * screenshot QA) the same calls return sample answers, so every screen can be previewed without the app.
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -29,6 +29,8 @@ export interface CaptureSource {
   app?: string;
   width: number;
   height: number;
+  /** A small picture of the source, as a data URL, when the platform can take one. */
+  thumbnail?: string;
 }
 
 /**
@@ -116,6 +118,163 @@ export async function closeThisWindow(): Promise<void> {
 export async function handOff(kind: WindowKind, target?: string): Promise<void> {
   await openWindow(kind, target);
   await closeThisWindow();
+}
+
+// Recording -----------------------------------------------------------------------------------------------------
+
+export interface StartedRecording {
+  project: string;
+}
+
+export interface StoppedRecording {
+  project: string;
+  duration_us: number;
+  zooms: number;
+  dropped_frames: number;
+}
+
+/** Starts recording a source from `listSources` into a new project. */
+export function startRecording(source: string, name?: string): Promise<StartedRecording> {
+  return call('start_recording', { source, name }, () => ({ project: 'sample' }));
+}
+
+/** Stops, saves the project with auto zoom applied, and says where it is. */
+export function stopRecording(): Promise<StoppedRecording> {
+  return call('stop_recording', undefined, () => ({
+    project: 'sample',
+    duration_us: 42_000_000,
+    zooms: 4,
+    dropped_frames: 0,
+  }));
+}
+
+export function discardRecording(): Promise<void> {
+  return call('discard_recording', undefined, () => undefined);
+}
+
+/** Throws away what was recorded so far and starts again on the same source. */
+export function restartRecording(): Promise<StartedRecording> {
+  return call('restart_recording', undefined, () => ({ project: 'sample' }));
+}
+
+// Projects ------------------------------------------------------------------------------------------------------
+
+/** A project as saved on disk (`project.json`). The editor maps it to its own model; see `project.ts`. */
+export type CoreProject = import('./project').CoreProject;
+export type CoreZoom = import('./project').CoreZoom;
+
+export interface CursorPoint {
+  t_us: number;
+  x: number;
+  y: number;
+}
+
+export type CoreEvent =
+  | { type: 'mouse_down'; t_us: number; x: number; y: number; button: string; clicks?: number }
+  | { type: 'mouse_up'; t_us: number; x: number; y: number }
+  | { type: 'key_down'; t_us: number; label?: string | null; redacted?: boolean }
+  | { type: 'scroll'; t_us: number; x: number; y: number }
+  | { type: 'focus'; t_us: number; label?: string | null; role: string }
+  | { type: string; t_us: number };
+
+export interface LoadedProject {
+  root: string;
+  project: CoreProject;
+  media: string | null;
+  cursor: CursorPoint[];
+  events: CoreEvent[];
+}
+
+export interface ProjectSummary {
+  path: string;
+  name: string;
+  duration_us: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+  app: string | null;
+  agent: string | null;
+  zooms: number;
+  width: number;
+  height: number;
+  media: string | null;
+  size_bytes: number;
+}
+
+export function loadProject(path: string): Promise<LoadedProject> {
+  return call('load_project', { path }, () => {
+    throw new Error('Real projects open in the app.');
+  });
+}
+
+/** Saves the editor's changes; with a label, also keeps a version in the project's history. */
+export function saveProject(path: string, project: CoreProject, label?: string): Promise<void> {
+  return call('save_project', { path, project, label }, () => undefined);
+}
+
+/** Every project in the projects folder, newest first. Empty in a browser preview, which shows samples instead. */
+export function listProjects(): Promise<ProjectSummary[]> {
+  return call('list_projects', undefined, () => []);
+}
+
+export function renameProject(path: string, name: string): Promise<void> {
+  return call('rename_project', { path, name }, () => undefined);
+}
+
+/** Copies a project next to the original and returns the copy's path. */
+export function duplicateProject(path: string): Promise<string> {
+  return call('duplicate_project', { path }, () => path);
+}
+
+/** Moves a project to the Trash (the Recycle Bin on Windows). */
+export function trashProject(path: string): Promise<void> {
+  return call('trash_project', { path }, () => undefined);
+}
+
+export function planAutoZooms(path: string, depth: string): Promise<CoreZoom[]> {
+  return call('plan_auto_zooms', { path, depth }, () => []);
+}
+
+/** A URL the web view can stream a local file from. */
+export async function mediaUrl(path: string): Promise<string> {
+  return convertFileSrc(path);
+}
+
+/** Editor routes carry a project path; it is encoded so it survives as one route segment. */
+export function editorTarget(path: string): string {
+  return path === 'sample' ? path : encodeURIComponent(path);
+}
+
+export interface AgentStatus {
+  id: string;
+  installed: boolean;
+  connected: boolean;
+}
+
+/** Which agents are installed here and which already have Shotmaxxing connected. */
+export function detectAgents(): Promise<AgentStatus[]> {
+  return call('detect_agents', undefined, () => []);
+}
+
+export interface Device {
+  id: string;
+  name: string;
+  is_default: boolean;
+}
+
+/** Microphones and cameras, the system default first. A browser preview lists sample devices. */
+export function listDevices(): Promise<{ microphones: Device[]; cameras: Device[] }> {
+  return call('list_devices', undefined, () => ({
+    microphones: [
+      { id: 'mic-1', name: 'MacBook Pro Microphone', is_default: true },
+      { id: 'mic-2', name: 'Studio Display Microphone', is_default: false },
+    ],
+    cameras: [{ id: 'cam-1', name: 'FaceTime HD Camera', is_default: true }],
+  }));
+}
+
+/** Small pictures of sources, as data URLs keyed by source id. Empty in a browser preview. */
+export function sourceThumbnails(ids: string[]): Promise<Record<string, string>> {
+  return call('source_thumbnails', { ids }, () => ({}));
 }
 
 export function connectAgent(agent: string): Promise<{ ok: boolean; message: string }> {

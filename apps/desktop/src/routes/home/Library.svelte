@@ -18,21 +18,85 @@
     Menu,
     SearchField,
     Segmented,
+    Spinner,
     env,
     spring,
     toast,
     type MenuItem,
   } from '@shotmaxxing/ui';
   import LibraryCard from './LibraryCard.svelte';
+  import RecordDot from '../../components/RecordDot.svelte';
+  import { counts } from '../../lib/counts.svelte';
   import { LIBRARY, type LibraryItem } from '../../lib/sample';
-  import { openWindow, revealInFolder } from '../../lib/native';
+  import { onMount } from 'svelte';
+  import {
+    duplicateProject,
+    editorTarget,
+    isTauri,
+    listProjects,
+    mediaUrl,
+    openWindow,
+    revealInFolder,
+    trashProject,
+    type ProjectSummary,
+  } from '../../lib/native';
   import { go, route } from '../../lib/router.svelte';
   import { registerCommands } from '../../lib/commands.svelte';
 
   type Filter = 'all' | 'recording' | 'screenshot' | 'agent';
   type Sort = 'newest' | 'oldest' | 'longest' | 'name';
 
-  let items = $state<LibraryItem[]>(route.query.get('empty') ? [] : [...LIBRARY]);
+  // The app lists real projects; a browser preview shows samples.
+  let items = $state<LibraryItem[]>(isTauri || route.query.get('empty') ? [] : [...LIBRARY]);
+  let loading = $state(isTauri);
+  const pendingTrash = new Map<string, ReturnType<typeof setTimeout>>();
+
+  async function toItem(p: ProjectSummary): Promise<LibraryItem> {
+    return {
+      id: p.path,
+      path: p.path,
+      title: p.name,
+      app: p.app ?? 'Screen',
+      duration: p.duration_us / 1e6,
+      created: new Date(p.created_at_ms),
+      wallpaper: 'aurora-lime',
+      scene: 0,
+      agent: p.agent ?? undefined,
+      kind: 'recording',
+      sizeMb: Math.max(1, Math.round(p.size_bytes / 1e6)),
+      media: p.media ? await mediaUrl(p.media) : undefined,
+    };
+  }
+
+  async function refresh() {
+    try {
+      const found = await listProjects();
+      items = await Promise.all(found.filter((p) => !pendingTrash.has(p.path)).map(toItem));
+      counts.library = items.length;
+    } catch (error) {
+      toast(`Couldn’t read your projects: ${error instanceof Error ? error.message : String(error)}`, {
+        tone: 'danger',
+      });
+    } finally {
+      loading = false;
+    }
+  }
+
+  onMount(() => {
+    if (!isTauri) return;
+    void refresh();
+    // New recordings land while Home is open; look again whenever the window comes back to the front.
+    const onfocus = () => void refresh();
+    window.addEventListener('focus', onfocus);
+    return () => {
+      window.removeEventListener('focus', onfocus);
+      // Anything still waiting on Undo goes to the Trash now.
+      for (const [path, timer] of pendingTrash) {
+        clearTimeout(timer);
+        void trashProject(path);
+      }
+    };
+  });
   let filter = $state<Filter>('all');
   let sort = $state<Sort>('newest');
   let query = $state('');
@@ -57,20 +121,65 @@
 
   const reveal = env.os === 'mac' ? 'Show in Finder' : 'Show in File Explorer';
 
-  function open(item: LibraryItem) {
-    openWindow('editor', item.id === 'launch-demo' ? 'sample' : item.id);
+  function open(item: LibraryItem, query = '') {
+    openWindow(
+      'editor',
+      (item.path ? editorTarget(item.path) : item.id === 'launch-demo' ? 'sample' : item.id) + query,
+    );
   }
 
   function remove(item: LibraryItem) {
     const at = items.indexOf(item);
     items.splice(at, 1);
     if (selected === item.id) selected = null;
-    toast(`Moved “${item.title}” to the Trash`, {
-      action: { label: 'Undo', run: () => items.splice(at, 0, item) },
+    const trash = env.os === 'windows' ? 'Recycle Bin' : 'Trash';
+    // Real projects move to the Trash once the chance to undo has passed.
+    const path = item.path;
+    if (path) {
+      pendingTrash.set(
+        path,
+        setTimeout(() => {
+          pendingTrash.delete(path);
+          trashProject(path).catch((error) => {
+            items.splice(Math.min(at, items.length), 0, item);
+            toast(
+              `Couldn’t move “${item.title}” to the ${trash}: ${error instanceof Error ? error.message : error}`,
+              {
+                tone: 'danger',
+              },
+            );
+          });
+        }, 5000),
+      );
+    }
+    toast(`Moved “${item.title}” to the ${trash}`, {
+      timeout: 5000,
+      action: {
+        label: 'Undo',
+        run: () => {
+          if (path) {
+            clearTimeout(pendingTrash.get(path));
+            pendingTrash.delete(path);
+          }
+          items.splice(Math.min(at, items.length), 0, item);
+        },
+      },
     });
   }
 
-  function duplicate(item: LibraryItem) {
+  async function duplicate(item: LibraryItem) {
+    if (item.path) {
+      try {
+        await duplicateProject(item.path);
+        await refresh();
+        toast(`Duplicated “${item.title}”`);
+      } catch (error) {
+        toast(`Couldn’t duplicate: ${error instanceof Error ? error.message : String(error)}`, {
+          tone: 'danger',
+        });
+      }
+      return;
+    }
     const copy = {
       ...item,
       id: `${item.id}-copy-${Date.now()}`,
@@ -86,8 +195,13 @@
       { label: 'Open', icon: Film, chord: 'return', run: () => open(item) },
       { label: 'Rename', icon: Pencil, run: () => toast('Rename from the editor title for now') },
       { label: 'Duplicate', icon: Copy, chord: 'mod+d', run: () => duplicate(item) },
-      { label: reveal, icon: FolderOpen, run: () => revealInFolder(item.id) },
-      { label: 'Export…', icon: Download, chord: 'mod+e', run: () => go(`editor/${item.id}?export=1`) },
+      { label: reveal, icon: FolderOpen, run: () => revealInFolder(item.path ?? item.id) },
+      {
+        label: 'Export…',
+        icon: Download,
+        chord: 'mod+e',
+        run: () => (item.path ? open(item, '?export=1') : go(`editor/${item.id}?export=1`)),
+      },
       {
         label: 'Move to Trash',
         icon: Trash,
@@ -179,14 +293,18 @@
   {/if}
 
   <div class="scroll-room min-h-0 flex-1 overflow-y-auto px-5 pb-6">
-    {#if !items.length}
+    {#if loading}
+      <div class="grid h-full place-items-center" role="status" aria-label="Loading your projects">
+        <Spinner />
+      </div>
+    {:else if !items.length}
       <EmptyState
         icon={Film}
         title="Your recordings will live here"
         body="Record your screen, or open the sample project to see what Shotmaxxing does with a recording."
       >
-        <Button variant="record" onclick={() => openWindow('record')}>New recording</Button>
-        <Button onclick={() => openWindow('editor', 'sample')}>Open the sample</Button>
+        <Button icon={RecordDot} onclick={() => openWindow('record')}>New recording</Button>
+        <Button variant="ghost" onclick={() => openWindow('editor', 'sample')}>Open the sample</Button>
       </EmptyState>
     {:else if !visible.length}
       {#if query}
