@@ -3,32 +3,42 @@
   import { Button, CheckDraw, Group, Row, Segmented, StatusDot, Switch, env, toast } from '@shotmaxxing/ui';
   import { onMount } from 'svelte';
   import { STARTER_PROMPTS, type Agent } from '../../lib/sample';
-  import { connectAgent, openWindow } from '../../lib/native';
+  import { connectAgent, disconnectAgent, mcpCommand, openWindow } from '../../lib/native';
   import { go } from '../../lib/router.svelte';
-  import { agents, refreshAgents } from '../../lib/agents.svelte';
+  import { agents, connectProblem, refreshAgents, type AgentEntry } from '../../lib/agents.svelte';
 
-  onMount(() => void refreshAgents());
+  let command = $state('shotmaxxing');
+  onMount(() => {
+    void refreshAgents();
+    void mcpCommand().then((path) => (command = path));
+  });
   let askMode = $state<'session' | 'every'>('session');
   let showLiveCard = $state(true);
 
-  async function connect(agent: Agent & { busy?: boolean }) {
+  async function connect(agent: AgentEntry) {
     agent.busy = true;
     const result = await connectAgent(agent.id).catch((error) => ({
       ok: false,
       message: `Couldn’t connect: ${error}`,
     }));
     agent.busy = false;
-    if (result.ok) {
-      agent.state = 'connected';
-      toast(`${agent.name} can now film with Shotmaxxing. Start a new chat to use it.`, { tone: 'success' });
-    } else toast(result.message, { tone: 'danger' });
+    if (!result.ok) return connectProblem(result);
+    agent.state = 'connected';
+    toast(`${agent.name} can now film with Shotmaxxing. Start a new chat to use it.`, { tone: 'success' });
+    void refreshAgents();
   }
 
-  function disconnect(agent: Agent) {
+  async function disconnect(agent: AgentEntry) {
+    agent.busy = true;
+    const result = await disconnectAgent(agent.id).catch((error) => ({
+      ok: false,
+      message: `Couldn’t disconnect: ${error}`,
+    }));
+    agent.busy = false;
+    if (!result.ok) return connectProblem(result);
     agent.state = 'available';
-    toast(`Disconnected ${agent.name}`, {
-      action: { label: 'Undo', run: () => (agent.state = 'connected') },
-    });
+    toast(`Disconnected ${agent.name}`, { action: { label: 'Undo', run: () => void connect(agent) } });
+    void refreshAgents();
   }
 
   async function copy(text: string, what = 'Copied') {
@@ -40,11 +50,11 @@
     }
   }
 
-  const config = `{
+  const config = $derived(`{
   "mcpServers": {
-    "shotmaxxing": { "command": "shotmaxxing", "args": ["mcp"] }
+    "shotmaxxing": { "command": ${JSON.stringify(command)}, "args": ["mcp"] }
   }
-}`;
+}`);
 
   const machine = env.os === 'mac' ? 'Mac' : 'PC';
 </script>
@@ -71,7 +81,9 @@
             </div>
             {#if agent.state === 'connected'}
               <StatusDot tone="success" label="Connected" />
-              <Button size="sm" variant="ghost" onclick={() => disconnect(agent)}>Disconnect</Button>
+              <Button size="sm" variant="ghost" loading={agent.busy} onclick={() => disconnect(agent)}
+                >Disconnect</Button
+              >
             {:else if agent.state === 'not_installed'}
               <StatusDot tone="neutral" label="Not installed" />
             {:else}

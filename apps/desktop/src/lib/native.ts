@@ -442,15 +442,30 @@ export function sourceThumbnails(ids: string[]): Promise<Record<string, string>>
   return call('source_thumbnails', { ids }, () => ({}));
 }
 
-export function connectAgent(agent: string): Promise<{ ok: boolean; message: string }> {
+export interface ConnectResult {
+  ok: boolean;
+  message: string;
+  /** When the settings have to be changed by hand: the file, and the lines to add. */
+  manual?: { path: string; snippet: string };
+}
+
+/** Adds Shotmaxxing to an agent's MCP settings. */
+export function connectAgent(agent: string): Promise<ConnectResult> {
   return call(
     'connect_agent',
     { agent },
-    () =>
-      new Promise<{ ok: boolean; message: string }>((r) =>
-        setTimeout(() => r({ ok: true, message: 'Connected' }), 900),
-      ),
+    () => new Promise<ConnectResult>((r) => setTimeout(() => r({ ok: true, message: 'Connected' }), 900)),
   );
+}
+
+/** Takes Shotmaxxing out of an agent's MCP settings. */
+export function disconnectAgent(agent: string): Promise<ConnectResult> {
+  return call('disconnect_agent', { agent }, () => ({ ok: true, message: 'Disconnected' }));
+}
+
+/** The command agents run to reach Shotmaxxing, for setting one up by hand. */
+export function mcpCommand(): Promise<string> {
+  return call('mcp_command', undefined, () => 'shotmaxxing');
 }
 
 export function revealInFolder(path: string): Promise<void> {

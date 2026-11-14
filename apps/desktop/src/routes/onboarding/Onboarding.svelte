@@ -29,7 +29,7 @@
   } from '@shotmaxxing/ui';
   import { recordingOptions, settings } from '../../lib/settings.svelte';
   import { go } from '../../lib/router.svelte';
-  import { agents, refreshAgents } from '../../lib/agents.svelte';
+  import { agents, connectProblem, refreshAgents } from '../../lib/agents.svelte';
   import {
     connectAgent,
     editorTarget,
@@ -134,7 +134,7 @@
     try {
       const result = await connectAgent(id);
       connected[id] = result.ok ? 'done' : 'idle';
-      if (!result.ok) toast(result.message, { tone: 'danger' });
+      if (!result.ok) connectProblem(result);
     } catch (error) {
       connected[id] = 'idle';
       toast(`Couldn’t connect: ${error}`, { tone: 'danger' });

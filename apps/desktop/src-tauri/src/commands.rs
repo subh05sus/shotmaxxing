@@ -243,17 +243,3 @@ pub fn open_link<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), Strin
     }
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
-
-#[derive(Debug, Serialize)]
-pub struct ConnectResult {
-    ok: bool,
-    message: String,
-}
-
-/// Adds Shotmaxxing to an agent's MCP settings.
-#[tauri::command]
-pub fn connect_agent(agent: String) -> Result<ConnectResult, String> {
-    Err(format!(
-        "Connecting {agent} from the app arrives with the agent server. Until then, add the MCP settings shown on this page by hand."
-    ))
-}

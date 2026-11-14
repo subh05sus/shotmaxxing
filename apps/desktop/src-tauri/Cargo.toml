@@ -19,7 +19,9 @@ shotmaxxing-capture.workspace = true
 shotmaxxing-render.workspace = true
 anyhow.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# Settings files keep their order when an agent is connected.
+serde_json = { workspace = true, features = ["preserve_order"] }
+toml_edit = "0.25"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api", "protocol-asset"] }
@@ -40,6 +42,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_System_Power"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
