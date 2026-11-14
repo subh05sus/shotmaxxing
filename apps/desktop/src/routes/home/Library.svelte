@@ -42,6 +42,7 @@
   } from '../../lib/native';
   import { go, route } from '../../lib/router.svelte';
   import { registerCommands } from '../../lib/commands.svelte';
+  import { settings } from '../../lib/settings.svelte';
 
   type Filter = 'all' | 'recording' | 'screenshot' | 'agent';
   type Sort = 'newest' | 'oldest' | 'longest' | 'name';
@@ -70,7 +71,7 @@
 
   async function refresh() {
     try {
-      const found = await listProjects();
+      const found = await listProjects(settings.saveFolder);
       items = await Promise.all(found.filter((p) => !pendingTrash.has(p.path)).map(toItem));
       counts.library = items.length;
     } catch (error) {

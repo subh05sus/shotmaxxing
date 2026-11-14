@@ -1,12 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 
 // Tauri expects a fixed port in development and loads the built files in production.
 const host = process.env.TAURI_DEV_HOST;
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 
 export default defineConfig({
   plugins: [tailwindcss(), svelte()],
+  define: { 'import.meta.env.VITE_APP_VERSION': JSON.stringify(version) },
   clearScreen: false,
   server: {
     port: 1420,

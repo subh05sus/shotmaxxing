@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { BookOpen, Bot, Film, Search, Settings as SettingsIcon } from '@lucide/svelte';
   import { Button, Keycap, StatusDot, Tooltip, env, fade } from '@shotmaxxing/ui';
   import { go, route } from '../../lib/router.svelte';
@@ -11,6 +12,9 @@
   import Learn from './Learn.svelte';
   import Agents from './Agents.svelte';
   import Settings from './Settings.svelte';
+  import { checkForUpdates } from '../../lib/updates';
+
+  onMount(() => void checkForUpdates());
 
   const page = $derived(route.path[1] ?? 'library');
 

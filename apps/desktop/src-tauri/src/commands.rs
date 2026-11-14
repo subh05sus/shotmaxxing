@@ -235,6 +235,15 @@ pub fn reveal_in_folder<R: Runtime>(app: AppHandle<R>, path: String) -> Result<(
     app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
 }
 
+/// Opens a web page in the default browser. Only `https` links, so the UI can't be made to open anything else.
+#[tauri::command]
+pub fn open_link<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("Only web links can be opened.".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[derive(Debug, Serialize)]
 pub struct ConnectResult {
     ok: bool,

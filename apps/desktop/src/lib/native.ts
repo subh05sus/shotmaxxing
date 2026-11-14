@@ -134,8 +134,20 @@ export interface StoppedRecording {
 }
 
 /** Starts recording a source from `listSources` into a new project. */
-export function startRecording(source: string, name?: string): Promise<StartedRecording> {
-  return call('start_recording', { source, name }, () => ({ project: 'sample' }));
+/** Choices from Settings that shape a recording. */
+export interface RecordingOptions {
+  fps?: number;
+  hideDesktopIcons?: boolean;
+  /** Empty for the default folder. */
+  folder?: string;
+}
+
+export function startRecording(
+  source: string,
+  name?: string,
+  options?: RecordingOptions,
+): Promise<StartedRecording> {
+  return call('start_recording', { source, name, options }, () => ({ project: 'sample' }));
 }
 
 /** Stops, saves the project with auto zoom applied, and says where it is. */
@@ -212,8 +224,40 @@ export function saveProject(path: string, project: CoreProject, label?: string):
 }
 
 /** Every project in the projects folder, newest first. Empty in a browser preview, which shows samples instead. */
-export function listProjects(): Promise<ProjectSummary[]> {
-  return call('list_projects', undefined, () => []);
+export function listProjects(folder?: string): Promise<ProjectSummary[]> {
+  return call('list_projects', { folder: folder || null }, () => []);
+}
+
+/** The default projects folder, the short way (`~/Movies/Shotmaxxing`). */
+export function defaultProjectsFolder(fallback: string): Promise<string> {
+  return call('default_projects_folder', undefined, () => fallback);
+}
+
+/** Asks where to save recordings. Resolves to the folder the short way, or null if cancelled. */
+export function chooseProjectsFolder(current?: string): Promise<string | null> {
+  return call('choose_projects_folder', { current: current || null }, () => null);
+}
+
+export function setMenuBarIcon(visible: boolean): Promise<void> {
+  return call('set_menu_bar_icon', { visible }, () => undefined);
+}
+
+/** Whether the app opens at login, as the system has it. */
+export function launchAtLogin(): Promise<boolean> {
+  return call('launch_at_login', undefined, () => false);
+}
+
+export function setLaunchAtLogin(enabled: boolean): Promise<void> {
+  return call('set_launch_at_login', { enabled }, () => undefined);
+}
+
+/** Opens a web page in the default browser. */
+export async function openLink(url: string): Promise<void> {
+  if (!isTauri) {
+    window.open(url, '_blank', 'noopener');
+    return;
+  }
+  await invoke('open_link', { url });
 }
 
 export function renameProject(path: string, name: string): Promise<void> {

@@ -4,6 +4,7 @@
  */
 
 import type { ThemeSetting } from '@shotmaxxing/ui';
+import type { RecordingOptions } from './native';
 
 export type LowPowerSetting = 'automatic' | 'always_on' | 'always_off';
 
@@ -19,8 +20,11 @@ interface Settings {
   hideDesktopIcons: boolean;
   launchAtLogin: boolean;
   menuBarIcon: boolean;
+  /** Where recordings go, the short way (`~/…`). Empty means the default folder. */
   saveFolder: string;
   frameRate: 'adaptive60' | 'adaptive30' | 'adaptive120';
+  checkUpdates: boolean;
+  updatesCheckedAt: number;
   completedGuides: string[];
 }
 
@@ -36,17 +40,24 @@ const DEFAULTS: Settings = {
   hideDesktopIcons: false,
   launchAtLogin: false,
   menuBarIcon: true,
-  saveFolder: '~/Movies/Shotmaxxing',
+  saveFolder: '',
   frameRate: 'adaptive60',
+  checkUpdates: true,
+  updatesCheckedAt: 0,
   completedGuides: [],
 };
+
+// Earlier builds stored the default folder itself.
+const OLD_DEFAULT_FOLDER = '~/Movies/Shotmaxxing';
 
 const KEY = 'smx.settings';
 
 function load(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    const loaded: Settings = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    if (loaded.saveFolder === OLD_DEFAULT_FOLDER) loaded.saveFolder = '';
+    return loaded;
   } catch {
     return { ...DEFAULTS };
   }
@@ -66,4 +77,15 @@ export function persist(): void {
 
 export function resetSettings(): void {
   Object.assign(settings, DEFAULTS);
+}
+
+const FPS = { adaptive30: 30, adaptive60: 60, adaptive120: 120 } as const;
+
+/** What a new recording should use, from Settings. */
+export function recordingOptions(): RecordingOptions {
+  return {
+    fps: FPS[settings.frameRate] ?? 60,
+    hideDesktopIcons: settings.hideDesktopIcons,
+    folder: settings.saveFolder || undefined,
+  };
 }

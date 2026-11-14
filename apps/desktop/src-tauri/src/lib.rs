@@ -10,6 +10,7 @@ mod platform;
 mod projects;
 mod recording;
 mod shortcuts;
+mod system;
 mod tray;
 mod windows;
 
@@ -33,7 +34,10 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(recording::Recordings::default())
+        .manage(system::MenuBarIcon::default())
         .setup(|app| {
             let handle = app.handle();
             tray::create(handle)?;
@@ -52,6 +56,7 @@ pub fn run() {
             agents::detect_agents,
             commands::open_window,
             commands::reveal_in_folder,
+            commands::open_link,
             commands::connect_agent,
             recording::start_recording,
             recording::stop_recording,
@@ -64,6 +69,11 @@ pub fn run() {
             projects::rename_project,
             projects::duplicate_project,
             projects::trash_project,
+            projects::default_projects_folder,
+            projects::choose_projects_folder,
+            system::set_menu_bar_icon,
+            system::launch_at_login,
+            system::set_launch_at_login,
         ])
         .build(tauri::generate_context!())
         .expect("Shotmaxxing could not start");
@@ -75,7 +85,16 @@ pub fn run() {
         RunEvent::Exit => app.state::<recording::Recordings>().finish_on_quit(),
         RunEvent::WindowEvent { event: WindowEvent::Destroyed, .. } => {
             if app.webview_windows().is_empty() {
-                windows::set_dock_visible(app, false);
+                if !app.state::<system::MenuBarIcon>().hidden() {
+                    windows::set_dock_visible(app, false);
+                } else {
+                    // Without a menu bar icon the app must stay findable: macOS keeps the Dock icon, and on Windows
+                    // closing the last window ends the app (a recording keeps going until it is stopped).
+                    #[cfg(not(target_os = "macos"))]
+                    if !app.state::<recording::Recordings>().is_recording() {
+                        app.exit(0);
+                    }
+                }
             }
         }
         #[cfg(target_os = "macos")]

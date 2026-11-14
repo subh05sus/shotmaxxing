@@ -12,11 +12,59 @@
     setThemeSetting,
     toast,
   } from '@shotmaxxing/ui';
+  import { onMount } from 'svelte';
   import { resetSettings, settings, type LowPowerSetting } from '../../lib/settings.svelte';
   import { go } from '../../lib/router.svelte';
   import { ui } from '../../lib/commands.svelte';
+  import {
+    chooseProjectsFolder,
+    defaultProjectsFolder,
+    isTauri,
+    launchAtLogin,
+    openLink,
+    setLaunchAtLogin,
+    setMenuBarIcon,
+  } from '../../lib/native';
 
-  const mac = env.os === 'mac';
+  const mac = $derived(env.os === 'mac');
+  const version = import.meta.env.VITE_APP_VERSION;
+
+  let defaultFolder = $state(env.os === 'windows' ? '~\\Videos\\Shotmaxxing' : '~/Movies/Shotmaxxing');
+
+  onMount(async () => {
+    defaultFolder = await defaultProjectsFolder(defaultFolder).catch(() => defaultFolder);
+    // The system decides whether the app opens at login; show what it says.
+    if (isTauri) settings.launchAtLogin = await launchAtLogin().catch(() => settings.launchAtLogin);
+  });
+
+  function changeMenuBarIcon(visible: boolean) {
+    setMenuBarIcon(visible).catch((error) => {
+      settings.menuBarIcon = !visible;
+      toast(`Couldn’t change the ${mac ? 'menu bar' : 'tray'} icon: ${error}`, { tone: 'danger' });
+    });
+  }
+
+  function changeLaunchAtLogin(enabled: boolean) {
+    setLaunchAtLogin(enabled).catch((error) => {
+      settings.launchAtLogin = !enabled;
+      toast(`Couldn’t change Open at login: ${error}`, { tone: 'danger' });
+    });
+  }
+
+  async function chooseFolder() {
+    try {
+      const folder = await chooseProjectsFolder(settings.saveFolder);
+      if (folder) settings.saveFolder = folder === defaultFolder ? '' : folder;
+    } catch (error) {
+      toast(`Couldn’t choose that folder: ${error}`, { tone: 'danger' });
+    }
+  }
+
+  const stopHow = $derived(
+    settings.menuBarIcon
+      ? `Stop from the ${mac ? 'menu bar' : 'tray'} or with ${mac ? '⌥⇧5' : 'Alt+Shift+5'}.`
+      : `Stop with ${mac ? '⌥⇧5' : 'Alt+Shift+5'}.`,
+  );
 
   function setLowPower(value: LowPowerSetting) {
     settings.lowPower = value;
@@ -55,12 +103,20 @@
       </Row>
       <Row
         label={mac ? 'Show in the menu bar' : 'Show in the system tray'}
-        description="Start recordings and see agent takes from there."
+        description={settings.menuBarIcon
+          ? 'Start recordings and see agent takes from there.'
+          : mac
+            ? 'Shotmaxxing keeps its Dock icon instead.'
+            : 'Closing the last window quits Shotmaxxing.'}
       >
-        <Switch bind:checked={settings.menuBarIcon} label="Show the status icon" />
+        <Switch
+          bind:checked={settings.menuBarIcon}
+          onchange={changeMenuBarIcon}
+          label={mac ? 'Show in the menu bar' : 'Show in the system tray'}
+        />
       </Row>
       <Row label="Open at login">
-        <Switch bind:checked={settings.launchAtLogin} label="Open at login" />
+        <Switch bind:checked={settings.launchAtLogin} onchange={changeLaunchAtLogin} label="Open at login" />
       </Row>
     </Group>
 
@@ -70,13 +126,20 @@
       </Row>
       <Row
         label="Show the recording pill"
-        description="A small pill with the timer and Stop. It never appears in the video."
+        description={settings.showPill
+          ? 'A small pill with the timer and Stop. It never appears in the video.'
+          : stopHow}
       >
         <Switch bind:checked={settings.showPill} label="Show the recording pill" />
       </Row>
-      <Row label="Hide desktop icons while recording">
-        <Switch bind:checked={settings.hideDesktopIcons} label="Hide desktop icons while recording" />
-      </Row>
+      {#if mac}
+        <Row
+          label="Hide desktop icons while recording"
+          description="Screen recordings keep your wallpaper and leave the icons out. Finder windows opened during the recording stay out too."
+        >
+          <Switch bind:checked={settings.hideDesktopIcons} label="Hide desktop icons while recording" />
+        </Row>
+      {/if}
       <Row
         label="Frame rate"
         info="Adaptive frame rate records new frames only when something on screen changes, up to the limit you pick. A still screen costs almost nothing."
@@ -94,12 +157,13 @@
           />
         </div>
       </Row>
-      <Row label="Save recordings to" description={settings.saveFolder}>
-        <Button
-          size="sm"
-          icon={FolderOpen}
-          onclick={() => toast('The folder picker arrives with the native app.')}>Change…</Button
-        >
+      <Row label="Save recordings to" description={settings.saveFolder || defaultFolder}>
+        <div class="flex items-center gap-1">
+          {#if settings.saveFolder}
+            <Button size="sm" variant="ghost" onclick={() => (settings.saveFolder = '')}>Use default</Button>
+          {/if}
+          <Button size="sm" icon={FolderOpen} disabled={!isTauri} onclick={chooseFolder}>Change…</Button>
+        </div>
       </Row>
     </Group>
 
@@ -149,7 +213,7 @@
         label="Check for updates"
         description="Asks GitHub once a day whether a new version exists. Nothing else is sent."
       >
-        <Switch checked={true} label="Check for updates" />
+        <Switch bind:checked={settings.checkUpdates} label="Check for updates" />
       </Row>
     </Group>
 
@@ -183,13 +247,12 @@
     </Group>
 
     <Group title="About">
-      <Row label="Shotmaxxing 0.1.0" description="Free and open source under the GNU AGPL 3.0.">
+      <Row label="Shotmaxxing {version}" description="Free and open source under the GNU AGPL 3.0.">
         <Button
           size="sm"
           variant="ghost"
           iconEnd={ExternalLink}
-          onclick={() => window.open('https://github.com/subh05sus/shotmaxxing', '_blank')}
-          >Source code</Button
+          onclick={() => openLink('https://github.com/subh05sus/shotmaxxing')}>Source code</Button
         >
       </Row>
     </Group>

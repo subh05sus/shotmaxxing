@@ -26,7 +26,7 @@
   import { go, route, startRouter } from './lib/router.svelte';
   import { persist, settings } from './lib/settings.svelte';
   import { allCommands, registerCommands, ui } from './lib/commands.svelte';
-  import { isTauri, openWindow, platform, powerStatus } from './lib/native';
+  import { isTauri, openWindow, platform, powerStatus, setMenuBarIcon } from './lib/native';
   import WindowChrome from './routes/WindowChrome.svelte';
   import Onboarding from './routes/onboarding/Onboarding.svelte';
   import Home from './routes/home/Home.svelte';
@@ -55,6 +55,8 @@
       });
     }
     env.material = isTauri;
+    // The menu bar icon starts shown; hide it if Settings says so.
+    if (isTauri && !settings.menuBarIcon) void setMenuBarIcon(false).catch(() => undefined);
     if (params.get('motion') === 'fades') env.lowPower = true;
     applyEnv();
 

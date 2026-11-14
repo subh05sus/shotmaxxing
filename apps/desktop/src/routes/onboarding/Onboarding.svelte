@@ -27,7 +27,7 @@
     slide,
     toast,
   } from '@shotmaxxing/ui';
-  import { settings } from '../../lib/settings.svelte';
+  import { recordingOptions, settings } from '../../lib/settings.svelte';
   import { go } from '../../lib/router.svelte';
   import { agents, refreshAgents } from '../../lib/agents.svelte';
   import {
@@ -172,7 +172,7 @@
         clearInterval(timer);
         if (isTauri) {
           try {
-            await startRecording('display', 'Practice take');
+            await startRecording('display', 'Practice take', recordingOptions());
           } catch (error) {
             return practiceFailed(error);
           }

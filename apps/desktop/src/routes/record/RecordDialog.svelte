@@ -16,6 +16,7 @@
   import Scene from '../../components/Scene.svelte';
   import RecordDot from '../../components/RecordDot.svelte';
   import {
+    closeThisWindow,
     handOff,
     isTauri,
     listDevices,
@@ -26,7 +27,7 @@
     startRecording,
     type CaptureSource,
   } from '../../lib/native';
-  import { settings } from '../../lib/settings.svelte';
+  import { recordingOptions, settings } from '../../lib/settings.svelte';
   import { wallpaper } from '../../lib/wallpapers';
 
   type Mode = 'display' | 'window' | 'area';
@@ -114,8 +115,10 @@
     starting = true;
     try {
       // Area recording records the whole screen for now; the crop is applied in the editor.
-      await startRecording(selected);
-      await handOff('pill');
+      await startRecording(selected, undefined, recordingOptions());
+      // Without the pill, Stop lives in the menu bar and on the shortcut.
+      if (settings.showPill) await handOff('pill');
+      else await closeThisWindow();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const permission = /Screen Recording/i.test(message);

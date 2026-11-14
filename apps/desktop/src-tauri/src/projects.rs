@@ -8,9 +8,9 @@ use shotmaxxing_core::bundle::ProjectBundle;
 use shotmaxxing_core::project::{Project, TrackKind, ZoomDepth, ZoomRegion};
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent, decode_cursor, read_events};
 use shotmaxxing_core::zoom::{ZoomInput, plan_zooms};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
-use crate::recording::projects_folder;
+use crate::recording::{projects_folder, tildify};
 
 #[derive(Serialize)]
 pub struct LoadedProject {
@@ -125,9 +125,48 @@ pub async fn save_project(path: String, mut project: Project, label: Option<Stri
 
 /// Every project in the projects folder, most recently changed first.
 #[tauri::command]
-pub async fn list_projects<R: Runtime>(app: AppHandle<R>) -> Result<Vec<ProjectSummary>, String> {
-    let folder = projects_folder(&app)?;
+pub async fn list_projects<R: Runtime>(
+    app: AppHandle<R>,
+    folder: Option<String>,
+) -> Result<Vec<ProjectSummary>, String> {
+    let folder = projects_folder(&app, folder.as_deref())?;
+    // The Library shows frames from each project's video.
+    if folder.is_dir()
+        && let Err(error) = app.asset_protocol_scope().allow_directory(&folder, true)
+    {
+        tracing::warn!(%error, "could not allow the projects folder for previews");
+    }
     tauri::async_runtime::spawn_blocking(move || Ok(scan(&folder))).await.map_err(text)?
+}
+
+/// The default projects folder, the short way (`~/Movies/Shotmaxxing`), for Settings to show.
+#[tauri::command]
+pub fn default_projects_folder<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
+    Ok(tildify(&projects_folder(&app, None)?, app.path().home_dir().ok().as_deref()))
+}
+
+/// Asks where to save recordings, starting from the current folder. Returns the folder the short way, or nothing
+/// if the person cancelled.
+#[tauri::command]
+pub async fn choose_projects_folder<R: Runtime>(
+    app: AppHandle<R>,
+    window: tauri::WebviewWindow<R>,
+    current: Option<String>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let start = projects_folder(&app, current.as_deref())?;
+    let mut dialog = app.dialog().file().set_title("Save recordings to").set_parent(&window);
+    if start.is_dir() {
+        dialog = dialog.set_directory(&start);
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    dialog.pick_folder(move |picked| {
+        let _ = tx.send(picked);
+    });
+    let picked =
+        tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten()).await.map_err(text)?;
+    let home = app.path().home_dir().ok();
+    Ok(picked.and_then(|p| p.into_path().ok()).map(|p| tildify(&p, home.as_deref())))
 }
 
 fn scan(folder: &Path) -> Vec<ProjectSummary> {
