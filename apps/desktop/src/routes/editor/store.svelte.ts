@@ -12,7 +12,7 @@ import {
   type EffectBlock,
   type ZoomBlock,
 } from '../../lib/sample';
-import { loadProject, mediaUrl, planAutoZooms, saveProject } from '../../lib/native';
+import { cursorPath, loadProject, mediaUrl, planAutoZooms, saveProject } from '../../lib/native';
 import { fromCore, toCore, zoomFromCore, type CoreProject } from '../../lib/project';
 
 export interface TimedPoint {
@@ -90,6 +90,8 @@ export interface ExportJob {
   name: string;
   progress: number;
   done: boolean;
+  /** When it started, to tell how long is left. */
+  startedAt: number;
 }
 
 function sampleProject(): Project {
@@ -189,6 +191,7 @@ export class EditorState {
       this.project = fromCore(loaded.project, env.os === 'windows' ? 'windows' : 'mac');
       this.media = loaded.media ? await mediaUrl(loaded.media) : null;
       this.cursorPath = loaded.cursor.map((c) => ({ t: c.t_us / 1e6, x: c.x, y: c.y }));
+      this.#cursorKey = '';
       const clicks: TimedPoint[] = [];
       const keys: { t: number; label: string }[] = [];
       for (const event of loaded.events) {
@@ -471,9 +474,46 @@ export class EditorState {
   }
 
   startExport(name: string): ExportJob {
-    const job: ExportJob = { id: `x${Date.now()}`, name, progress: 0, done: false };
+    const job: ExportJob = { id: `x${Date.now()}`, name, progress: 0, done: false, startedAt: Date.now() };
     this.exports.push(job);
     return this.exports[this.exports.length - 1];
+  }
+
+  #cursorKey = '';
+  #cursorRequest = 0;
+
+  /**
+   * Redraws the cursor path when smoothing, snapping or looping change, so the preview shows the path the export
+   * will draw. Cheap to call: it only asks the app when one of those settings actually changed.
+   */
+  async refreshCursorPath(): Promise<void> {
+    const c = this.project.cursor;
+    const key = `${c.smoothing}|${c.snap}|${c.loop}`;
+    if (!this.path || key === this.#cursorKey) return;
+    const first = this.#cursorKey === '';
+    this.#cursorKey = key;
+    // The path loaded with the project already uses its settings.
+    if (first) return;
+    const request = ++this.#cursorRequest;
+    try {
+      const path = await cursorPath(this.path, {
+        smoothing: c.smoothing,
+        snapToClicks: c.snap,
+        loopToStart: c.loop,
+      });
+      // A newer change may have finished first; only the latest one counts.
+      if (request === this.#cursorRequest)
+        this.cursorPath = path.map((p) => ({ t: p.t_us / 1e6, x: p.x, y: p.y }));
+    } catch {
+      // The old path stays; the export still uses the new settings.
+    }
+  }
+
+  /** Saves any pending change now, so an export sees exactly what's on screen. */
+  async flush(): Promise<void> {
+    if (!this.saving) return;
+    clearTimeout(this.#saveTimer);
+    await this.#save();
   }
 
   destroy(): void {

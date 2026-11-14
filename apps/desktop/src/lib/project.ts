@@ -185,6 +185,7 @@ export function fromCore(core: CoreProject, os: Os): Project {
       end: sec(b.range.end_us),
       label: 'Blur',
       rect: { ...b.rect },
+      strength: b.strength,
     })),
     ...core.edits.arrows.map((a) => ({
       id: a.id,
@@ -256,6 +257,16 @@ export function fromCore(core: CoreProject, os: Os): Project {
 const range = (start: number, end: number): CoreRange => ({ start_us: us(start), end_us: us(end) });
 
 /** The saved project with the editor's changes written over `base`. */
+/** Where a new blur or arrow goes before it's placed, in capture points. The preview and the export agree. */
+export function effectDefaults(capture: { width: number; height: number }) {
+  const { width: w, height: h } = capture;
+  return {
+    blur: { x: w * 0.35, y: h * 0.4, width: w * 0.3, height: h * 0.08 },
+    from: { x: w * 0.75, y: h * 0.3 },
+    to: { x: w * 0.6, y: h * 0.18 },
+  };
+}
+
 export function toCore(p: Project, base: CoreProject): CoreProject {
   const core = plainCopy(base);
   core.name = p.title;
@@ -320,8 +331,7 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
     .filter((c) => c.speed !== 1)
     .map((c) => ({ range: range(c.start, c.end), factor: c.speed }));
 
-  const w = p.capture.width;
-  const h = p.capture.height;
+  const spots = effectDefaults(p.capture);
   core.edits.texts = p.effects
     .filter((e) => e.kind === 'text')
     .map((e) => ({
@@ -335,15 +345,16 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
     .map((e) => ({
       id: e.id,
       range: range(e.start, e.end),
-      rect: e.rect ?? { x: w * 0.35, y: h * 0.4, width: w * 0.3, height: h * 0.08 },
+      rect: e.rect ?? spots.blur,
+      strength: e.strength ?? 1,
     }));
   core.edits.arrows = p.effects
     .filter((e) => e.kind === 'arrow')
     .map((e) => ({
       id: e.id,
       range: range(e.start, e.end),
-      from: e.from ?? { x: w * 0.75, y: h * 0.3 },
-      to: e.to ?? { x: w * 0.6, y: h * 0.18 },
+      from: e.from ?? spots.from,
+      to: e.to ?? spots.to,
     }));
 
   core.webcam.visible = p.webcam.on;

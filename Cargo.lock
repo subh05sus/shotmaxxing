@@ -3705,6 +3705,7 @@ dependencies = [
  "serde_json",
  "shotmaxxing-capture",
  "shotmaxxing-core",
+ "shotmaxxing-render",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",

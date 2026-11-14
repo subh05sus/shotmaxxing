@@ -167,11 +167,21 @@ pub async fn choose_projects_folder<R: Runtime>(
     window: tauri::WebviewWindow<R>,
     current: Option<String>,
 ) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
     let start = projects_folder(&app, current.as_deref())?;
-    let mut dialog = app.dialog().file().set_title("Save recordings to").set_parent(&window);
+    pick_folder(&app, &window, "Save recordings to", &start).await
+}
+
+/// The system's folder picker as a sheet on `window`, starting in `start`. Gives the folder the short way (`~/…`).
+pub async fn pick_folder<R: Runtime>(
+    app: &AppHandle<R>,
+    window: &tauri::WebviewWindow<R>,
+    title: &str,
+    start: &Path,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = app.dialog().file().set_title(title).set_parent(window);
     if start.is_dir() {
-        dialog = dialog.set_directory(&start);
+        dialog = dialog.set_directory(start);
     }
     let (tx, rx) = std::sync::mpsc::channel();
     dialog.pick_folder(move |picked| {

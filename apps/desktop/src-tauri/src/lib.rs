@@ -6,6 +6,7 @@
 
 mod agents;
 mod commands;
+mod export;
 mod platform;
 mod projects;
 mod recording;
@@ -38,6 +39,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(recording::Recordings::default())
         .manage(system::MenuBarIcon::default())
+        .manage(export::Exports::default())
         .setup(|app| {
             let handle = app.handle();
             tray::create(handle)?;
@@ -72,6 +74,9 @@ pub fn run() {
             projects::trash_project,
             projects::default_projects_folder,
             projects::choose_projects_folder,
+            export::export_project,
+            export::cancel_export,
+            export::choose_export_folder,
             system::set_menu_bar_icon,
             system::launch_at_login,
             system::set_launch_at_login,
@@ -83,7 +88,10 @@ pub fn run() {
         // Closing the last window keeps the app running in the menu bar. Quit from the menu ends it.
         RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
         // Quitting mid-recording keeps the take.
-        RunEvent::Exit => app.state::<recording::Recordings>().finish_on_quit(),
+        RunEvent::Exit => {
+            app.state::<recording::Recordings>().finish_on_quit();
+            app.state::<export::Exports>().cancel_all();
+        }
         RunEvent::WindowEvent { event: WindowEvent::Destroyed, .. } => {
             if app.webview_windows().is_empty() {
                 if !app.state::<system::MenuBarIcon>().hidden() {

@@ -218,6 +218,14 @@ export function loadProject(path: string): Promise<LoadedProject> {
   });
 }
 
+/** The drawn cursor path for these settings, the same path the export draws. */
+export function cursorPath(
+  path: string,
+  settings: { smoothing: number; snapToClicks: boolean; loopToStart: boolean },
+): Promise<CursorPoint[]> {
+  return call('cursor_path', { path, ...settings }, () => [] as CursorPoint[]);
+}
+
 /** Saves the editor's changes; with a label, also keeps a version in the project's history. */
 export function saveProject(path: string, project: CoreProject, label?: string): Promise<void> {
   return call('save_project', { path, project, label }, () => undefined);
@@ -236,6 +244,79 @@ export function defaultProjectsFolder(fallback: string): Promise<string> {
 /** Asks where to save recordings. Resolves to the folder the short way, or null if cancelled. */
 export function chooseProjectsFolder(current?: string): Promise<string | null> {
   return call('choose_projects_folder', { current: current || null }, () => null);
+}
+
+export type ExportFormat = 'h264' | 'hevc' | 'gif';
+
+export interface ExportRequest {
+  id: string;
+  /** The `.smx` project folder. */
+  project: string;
+  /** The file name without its extension. */
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
+  format: ExportFormat;
+  /** Bits per second. */
+  bitrate: number;
+  /** Where to save, the short way; next to the project when empty. */
+  folder?: string;
+}
+
+export type ExportOutcome = { status: 'done'; path: string; file: string } | { status: 'cancelled' };
+
+// Browser preview: exports run on a timer so the flow can be tried without the app.
+const previewExports = new Map<string, { cancelled: boolean; listeners: Set<(p: number) => void> }>();
+const progressListeners = new Set<(id: string, progress: number) => void>();
+
+/** Exports a project with every edit applied. Resolves when the file is written or the export is cancelled. */
+export function exportProject(request: ExportRequest): Promise<ExportOutcome> {
+  return call('export_project', { request }, async () => {
+    const job = { cancelled: false, listeners: new Set<(p: number) => void>() };
+    previewExports.set(request.id, job);
+    const started = performance.now();
+    while (!job.cancelled) {
+      const progress = Math.min(1, (performance.now() - started) / 3200);
+      for (const listener of progressListeners) listener(request.id, progress);
+      if (progress >= 1) break;
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    previewExports.delete(request.id);
+    const ext = request.format === 'gif' ? 'gif' : 'mp4';
+    return job.cancelled
+      ? { status: 'cancelled' }
+      : {
+          status: 'done',
+          path: `~/Movies/Shotmaxxing/${request.name}.${ext}`,
+          file: `${request.name}.${ext}`,
+        };
+  });
+}
+
+export function cancelExport(id: string): Promise<void> {
+  return call('cancel_export', { id }, () => {
+    const job = previewExports.get(id);
+    if (job) job.cancelled = true;
+  });
+}
+
+/** Calls `listener` as exports from this window make progress. Returns a function that stops listening. */
+export async function onExportProgress(
+  listener: (id: string, progress: number) => void,
+): Promise<() => void> {
+  if (!isTauri) {
+    progressListeners.add(listener);
+    return () => progressListeners.delete(listener);
+  }
+  const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+  return getCurrentWebviewWindow().listen<{ id: string; progress: number }>('export-progress', (event) =>
+    listener(event.payload.id, event.payload.progress),
+  );
+}
+
+export function chooseExportFolder(current?: string): Promise<string | null> {
+  return call('choose_export_folder', { current: current || null }, () => null);
 }
 
 export function setMenuBarIcon(visible: boolean): Promise<void> {

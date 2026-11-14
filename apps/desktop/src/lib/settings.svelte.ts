@@ -22,6 +22,8 @@ interface Settings {
   menuBarIcon: boolean;
   /** Where recordings go, the short way (`~/…`). Empty means the default folder. */
   saveFolder: string;
+  /** Where exports go, the short way. Empty means next to the project. */
+  exportFolder: string;
   frameRate: 'adaptive60' | 'adaptive30' | 'adaptive120';
   checkUpdates: boolean;
   updatesCheckedAt: number;
@@ -41,6 +43,7 @@ const DEFAULTS: Settings = {
   launchAtLogin: false,
   menuBarIcon: true,
   saveFolder: '',
+  exportFolder: '',
   frameRate: 'adaptive60',
   checkUpdates: true,
   updatesCheckedAt: 0,

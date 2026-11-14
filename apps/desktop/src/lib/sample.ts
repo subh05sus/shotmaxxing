@@ -344,6 +344,8 @@ export interface EffectBlock {
   pos?: { x: number; y: number };
   /** Blur: the region in capture points. */
   rect?: { x: number; y: number; width: number; height: number };
+  /** Blur: 1 is the standard blur. */
+  strength?: number;
   /** Arrow: from and to, in capture points. */
   from?: { x: number; y: number };
   to?: { x: number; y: number };
@@ -393,7 +395,14 @@ export const SAMPLE_PROJECT = {
     },
   ] as ZoomBlock[],
   effects: [
-    { id: 'e1', kind: 'blur', start: 10.0, end: 15.0, label: 'Blur email' },
+    {
+      id: 'e1',
+      kind: 'blur',
+      start: 10.0,
+      end: 15.0,
+      label: 'Blur email',
+      rect: { x: 840, y: 396, width: 440, height: 48 },
+    },
     { id: 'e2', kind: 'text', start: 24.5, end: 29.0, label: 'New in 0.3' },
   ] as EffectBlock[],
   clicks: [

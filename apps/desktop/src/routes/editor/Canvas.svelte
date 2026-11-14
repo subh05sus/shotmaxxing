@@ -1,6 +1,7 @@
 <script lang="ts">
   import { UserRound } from '@lucide/svelte';
   import Scene from '../../components/Scene.svelte';
+  import { effectDefaults } from '../../lib/project';
   import { wallpaper } from '../../lib/wallpapers';
   import { ASPECTS, cameraAt, clamp, cursorAt, placeWindow } from './camera';
   import type { EditorState } from './store.svelte';
@@ -16,6 +17,14 @@
   $effect(() => {
     ed.attachVideo(video);
     return () => ed.attachVideo(null);
+  });
+
+  // Smoothing, snapping and looping change the path the cursor takes; redraw it once a slider settles.
+  $effect(() => {
+    const { smoothing, snap, loop } = ed.project.cursor;
+    void [smoothing, snap, loop, ed.path];
+    const id = setTimeout(() => void ed.refreshCursorPath(), 150);
+    return () => clearTimeout(id);
   });
 
   let stageW = $state(0);
@@ -84,7 +93,15 @@
     return Math.max(found, lastClick);
   });
   const idle = $derived(p.cursor.hideIdle && ed.time - lastActive > 2.5 && ed.time > 2.5);
-  const cursorPx = $derived(24 * p.cursor.size * k * (capture.width / 1440) * (frame.height / 520));
+  // The arrow is 20 units wide; at size 1 a unit is a capture point, about the real cursor's size.
+  const cursorPx = $derived(20 * p.cursor.size * k);
+  const unit = $derived(cursorPx / 20);
+  // Rings and the dot's edge scale with the cursor, as in the export.
+  const ringPx = $derived(cursorPx / 11);
+  const spots = $derived(effectDefaults(capture));
+  // The privacy blur is part of the picture, not interface translucency, and only covers its own small box.
+  const privacyBlur = (px: number) =>
+    `backdrop-filter: blur(${px}px); -webkit-backdrop-filter: blur(${px}px)`; // design-guard-allow backdrop
 
   const blur = $derived(p.effects.filter((e) => e.kind === 'blur' && ed.time >= e.start && ed.time <= e.end));
   const titles = $derived(
@@ -178,15 +195,18 @@
             <Scene variant={0} width={win.width} t={ed.time} />
           {/if}
           {#each blur as b (b.id)}
+            {@const r = b.rect ?? spots.blur}
             <div
-              class="scn-blur absolute"
-              style:left="{(b.rect?.x ?? 840) * k}px"
-              style:top="{(b.rect?.y ?? 396) * k}px"
-              style:width="{(b.rect?.width ?? 440) * k}px"
-              style:height="{(b.rect?.height ?? 48) * k}px"
+              class="absolute"
+              style={privacyBlur(frame.height * 0.016 * (b.strength ?? 1))}
+              style:left="{r.x * k}px"
+              style:top="{r.y * k}px"
+              style:width="{r.width * k}px"
+              style:height="{r.height * k}px"
+              style:border-radius="{frame.height * 0.012}px"
             ></div>
           {/each}
-          {#each arrows.filter((a) => a.from && a.to) as a (a.id)}
+          {#each arrows as a (a.id)}
             <svg
               class="absolute inset-0 overflow-visible"
               width={win.width}
@@ -194,38 +214,12 @@
               aria-hidden="true"
             >
               <path
-                d={arrowPath(a.from!, a.to!)}
+                d={arrowPath(a.from ?? spots.from, a.to ?? spots.to)}
                 stroke="var(--accent)"
                 stroke-width={Math.max(3, 7 * k)}
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 fill="none"
-              />
-            </svg>
-          {/each}
-          {#each arrows.filter((a) => !a.from || !a.to) as a (a.id)}
-            <svg
-              class="absolute"
-              style:left="{1120 * k}px"
-              style:top="{150 * k}px"
-              width={140 * k}
-              height={110 * k}
-              viewBox="0 0 140 110"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M130 100 C 90 90, 50 60, 22 18"
-                stroke="var(--accent)"
-                stroke-width="7"
-                stroke-linecap="round"
-              />
-              <path
-                d="M10 40 L22 14 L46 26"
-                stroke="var(--accent)"
-                stroke-width="7"
-                stroke-linecap="round"
-                stroke-linejoin="round"
               />
             </svg>
           {/each}
@@ -241,13 +235,15 @@
           >
             {#if click && p.cursor.click === 'ripple'}
               <span
-                class="absolute rounded-full border-2 border-[var(--cursor-light)]"
+                class="absolute rounded-full border-solid border-[var(--cursor-light)]"
                 style:left="{-cursorPx}px"
                 style:top="{-cursorPx}px"
                 style:width="{cursorPx * 2}px"
                 style:height="{cursorPx * 2}px"
+                style:border-width="{ringPx}px"
                 style:opacity={1 - clickAge}
                 style:transform="scale({0.35 + clickAge * 0.9})"
+                style:filter="drop-shadow(0 0 {ringPx * 0.6}px var(--cursor-shadow))"
               ></span>
             {/if}
             {#if p.cursor.spotlight}
@@ -262,18 +258,22 @@
             {/if}
             {#if p.cursor.style === 'dot'}
               <span
-                class="absolute rounded-full border-2 border-[var(--cursor-light)] bg-[var(--cursor-dark)]"
+                class="absolute rounded-full border-solid border-[var(--cursor-light)] bg-[var(--cursor-dark)]"
                 style:left="{-cursorPx * 0.35}px"
                 style:top="{-cursorPx * 0.35}px"
                 style:width="{cursorPx * 0.7}px"
                 style:height="{cursorPx * 0.7}px"
+                style:border-width="{ringPx}px"
               ></span>
             {:else}
+              <!-- The arrow's tip sits at (2, 1.5) in its box, so the box is moved back by that much. -->
               <svg
                 width={cursorPx}
                 height={cursorPx * 1.4}
                 viewBox="0 0 20 28"
-                class="absolute left-[-1px] top-[-1px] overflow-visible"
+                class="absolute overflow-visible"
+                style:left="{-2 * unit}px"
+                style:top="{-1.5 * unit}px"
                 aria-hidden="true"
               >
                 <path
@@ -293,14 +293,14 @@
         <span
           style:left="{(title.pos?.x ?? 0.05) * 100}%"
           style:top="{(title.pos?.y ?? 0.06) * 100}%"
-          class="absolute rounded-full bg-accent px-[1.4em] py-[0.5em] font-semibold text-accent-fg shadow-[var(--elev-2)]"
+          class="absolute rounded-full bg-accent px-[1.4em] py-[0.5em] leading-[1.25] font-semibold whitespace-nowrap text-accent-fg shadow-[var(--stage-shadow)]"
           style:font-size="{frame.height * 0.035}px">{title.label}</span
         >
       {/each}
 
       {#if key}
         <span
-          class="absolute bottom-[6%] left-1/2 -translate-x-1/2 rounded-[0.5em] bg-scrim px-[0.8em] py-[0.35em] font-semibold text-fg-on-stage"
+          class="absolute bottom-[6%] left-1/2 -translate-x-1/2 rounded-[0.5em] bg-[var(--stage-scrim)] px-[0.8em] py-[0.35em] leading-[1.25] font-semibold whitespace-nowrap text-fg-on-stage"
           style:font-size="{frame.height * 0.035}px">{key.label}</span
         >
       {/if}

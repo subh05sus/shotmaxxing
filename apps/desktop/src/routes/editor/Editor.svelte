@@ -16,6 +16,7 @@
     Sparkles,
     Undo2,
     Video,
+    X,
     ZoomIn,
   } from '@lucide/svelte';
   import {
@@ -38,14 +39,21 @@
   import { go, route } from '../../lib/router.svelte';
   import { registerCommands, ui } from '../../lib/commands.svelte';
   import { settings } from '../../lib/settings.svelte';
-  import { handOff, openWindow, revealInFolder } from '../../lib/native';
+  import {
+    cancelExport,
+    exportProject,
+    handOff,
+    onExportProgress,
+    openWindow,
+    revealInFolder,
+  } from '../../lib/native';
   import { relativeTime } from '../../lib/format';
   import { EditorState, type ToolId } from './store.svelte';
   import Canvas from './Canvas.svelte';
   import Transport from './Transport.svelte';
   import Timeline from './Timeline.svelte';
   import ToolPanel from './ToolPanel.svelte';
-  import ExportSheet from './ExportSheet.svelte';
+  import ExportSheet, { type ExportChoice } from './ExportSheet.svelte';
   import HistorySheet from './HistorySheet.svelte';
 
   const ed = new EditorState();
@@ -159,30 +167,61 @@
     return () => clearTimeout(id);
   });
 
-  function runExport(name: string) {
-    const job = ed.startExport(name);
-    const started = performance.now();
-    const duration = 3600;
-    const timer = setInterval(() => {
-      job.progress = Math.min(1, (performance.now() - started) / duration);
-      if (job.progress >= 1) {
-        clearInterval(timer);
-        job.done = true;
-        toast(`Exported “${name}”`, {
-          tone: 'success',
-          action: {
-            label: env.os === 'mac' ? 'Show in Finder' : 'Show in folder',
-            run: () => revealInFolder(name),
-          },
-        });
-        if (!settings.firstExportDone) {
-          settings.firstExportDone = true;
-          const button = document.querySelector('[data-tour="export"]')?.getBoundingClientRect();
-          confetti(button ? { x: button.left + button.width / 2, y: button.bottom } : undefined);
-        }
-        setTimeout(() => (ed.exports = ed.exports.filter((x) => x.id !== job.id)), 4000);
+  // Progress for this window's exports arrives as events; each job picks out its own.
+  let stopListening: (() => void) | undefined;
+  void onExportProgress((id, progress) => {
+    const job = ed.exports.find((x) => x.id === id);
+    if (job && !job.done) job.progress = Math.max(job.progress, progress);
+  }).then((stop) => (stopListening = stop));
+  onDestroy(() => stopListening?.());
+
+  const forget = (id: string) => (ed.exports = ed.exports.filter((x) => x.id !== id));
+
+  async function runExport(choice: ExportChoice) {
+    const job = ed.startExport(ed.project.title);
+    try {
+      // Whatever is still waiting to be saved goes into this export too.
+      await ed.flush();
+      const outcome = await exportProject({
+        id: job.id,
+        project: ed.path ?? '',
+        name: ed.project.title,
+        ...choice,
+        folder: settings.exportFolder || undefined,
+      });
+      if (outcome.status === 'cancelled') {
+        forget(job.id);
+        toast('Export stopped. Nothing was saved.');
+        return;
       }
-    }, 100);
+      job.progress = 1;
+      job.done = true;
+      job.name = outcome.file;
+      toast(`Exported “${outcome.file}”`, {
+        tone: 'success',
+        action: {
+          label: env.os === 'mac' ? 'Show in Finder' : 'Show in folder',
+          run: () => revealInFolder(outcome.path),
+        },
+      });
+      if (!settings.firstExportDone) {
+        settings.firstExportDone = true;
+        const button = document.querySelector('[data-tour="export"]')?.getBoundingClientRect();
+        confetti(button ? { x: button.left + button.width / 2, y: button.bottom } : undefined);
+      }
+      setTimeout(() => forget(job.id), 4000);
+    } catch (error) {
+      forget(job.id);
+      const reason = error instanceof Error ? error.message : String(error);
+      toast(`Couldn’t export: ${reason}`, { tone: 'danger', timeout: 10000 });
+    }
+  }
+
+  /** Seconds left, once there's enough progress to tell. */
+  function timeLeft(startedAt: number, progress: number): string {
+    if (progress < 0.04) return '';
+    const left = ((Date.now() - startedAt) / 1000 / progress) * (1 - progress);
+    return left < 60 ? ` · ${Math.max(1, Math.round(left))} s left` : ` · ${Math.round(left / 60)} min left`;
   }
 
   $effect(() =>
@@ -420,7 +459,17 @@
           {:else}
             <ProgressRing value={activeExport.progress} size={14} label="Export progress" /> Exporting {Math.round(
               activeExport.progress * 100,
-            )}%
+            )}%{timeLeft(activeExport.startedAt, activeExport.progress)}
+            <Tooltip label="Stop export">
+              <button
+                type="button"
+                class="press-icon -mr-1 grid size-5 place-items-center rounded-full text-fg-muted hover:bg-fill-strong hover:text-fg"
+                aria-label="Stop export"
+                onclick={() => void cancelExport(activeExport.id)}
+              >
+                <X size={12} aria-hidden="true" />
+              </button>
+            </Tooltip>
           {/if}
         </span>
       {/if}

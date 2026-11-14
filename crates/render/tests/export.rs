@@ -1,7 +1,7 @@
 //! Exports a small project end to end. A test pattern from ffmpeg stands in for a screen recording, so nothing on
 //! this machine's screen is captured. Skipped when ffmpeg isn't installed.
 //!
-//! Set `SHOTMAXXING_KEEP_EXPORT` to a folder to keep the exported video for a look.
+//! Set `SHOTMAXXING_KEEP_EXPORT` to a folder to keep the exported video and its project for a look.
 #![cfg(target_os = "macos")]
 
 use std::path::{Path, PathBuf};
@@ -151,6 +151,9 @@ fn exports_every_frame_at_the_right_size() {
     assert_eq!(probe(&output), Some((1280, 720, 108)));
     if let Ok(keep) = std::env::var("SHOTMAXXING_KEEP_EXPORT") {
         std::fs::copy(&output, Path::new(&keep).join("export-test.mp4")).unwrap();
+        // The project too, for trying other sizes with `shotmaxxing export`.
+        let copied = Command::new("cp").arg("-R").arg(&root).arg(&keep).status().unwrap();
+        assert!(copied.success());
     }
 }
 

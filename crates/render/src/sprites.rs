@@ -33,6 +33,8 @@ pub fn oklch(l: f64, c: f64, h: f64, alpha: f64) -> Color {
 pub struct Palette {
     pub cursor_light: Color,
     pub cursor_dark: Color,
+    /// The soft dark edge around the click ring.
+    pub cursor_shadow: Color,
     pub accent: Color,
     pub accent_ink: Color,
     pub scrim: Color,
@@ -45,6 +47,7 @@ impl Palette {
         Self {
             cursor_light: oklch(1.0, 0.0, 0.0, 1.0),
             cursor_dark: oklch(0.16, 0.0, 0.0, 1.0),
+            cursor_shadow: oklch(0.0, 0.0, 0.0, 0.45),
             accent: oklch(0.87, 0.21, 128.0, 1.0),
             accent_ink: oklch(0.22, 0.05, 130.0, 1.0),
             scrim: oklch(0.0, 0.0, 0.0, 0.5),
@@ -215,15 +218,32 @@ pub fn cursor(look: CursorLook, cursor_px: f64, res: f64, palette: &Palette) -> 
     }
 }
 
-/// The ring a click leaves: `2 × cursor_px` across at full size, centred on the hotspot.
+/// The ring a click leaves: `2 × cursor_px` across at full size, centred on the hotspot, with a soft dark edge
+/// (CSS `drop-shadow(0 0 0.6 × ring)`) so it shows on light pages too.
 pub fn ring(cursor_px: f64, res: f64, palette: &Palette) -> Option<Sprite> {
     let d = (cursor_px * 2.0 * res) as f32;
     let border = (cursor_px / 11.0 * res) as f32;
-    let side = (d + 4.0).ceil() as u32;
-    let mut pixmap = Pixmap::new(side, side)?;
+    // A drop-shadow's blur radius is twice the Gaussian's standard deviation.
+    let sigma = f64::from(border) * 0.3;
+    let margin = (sigma * 3.0).ceil() as f32 + 2.0;
+    let side = (d + margin * 2.0).ceil() as u32;
     let c = side as f32 / 2.0;
     let path = PathBuilder::from_circle(c, c, d / 2.0 - border / 2.0)?;
     let stroke = Stroke { width: border, ..Stroke::default() };
+
+    let mut mask = Pixmap::new(side, side)?;
+    mask.stroke_path(&path, &paint(Color::WHITE), &stroke, Transform::identity(), None);
+    let mut alpha: Vec<f32> = mask.data().as_chunks::<4>().0.iter().map(|p| f32::from(p[3]) / 255.0).collect();
+    blur_alpha(&mut alpha, side as usize, side as usize, sigma);
+    let mut pixmap = Pixmap::new(side, side)?;
+    let shadow = palette.cursor_shadow;
+    for (px, a) in pixmap.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(alpha) {
+        let a = (a * shadow.alpha()).clamp(0.0, 1.0);
+        let premultiplied = [shadow.red() * a, shadow.green() * a, shadow.blue() * a, a];
+        for (out, v) in px.iter_mut().zip(premultiplied) {
+            *out = (v * 255.0).round() as u8;
+        }
+    }
     pixmap.stroke_path(&path, &paint(palette.cursor_light), &stroke, Transform::identity(), None);
     Some(Sprite { pixmap, x: -f64::from(c) / res, y: -f64::from(c) / res, scale: res })
 }
