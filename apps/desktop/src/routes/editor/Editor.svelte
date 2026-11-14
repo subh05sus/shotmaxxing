@@ -286,7 +286,7 @@
         group: 'Edit',
         icon: ZoomIn,
         keywords: 'auto zoom again replan',
-        run: () => ed.redoAutoZoom(),
+        run: () => void (ed.project.zoom.auto ? ed.redoAutoZoom() : ed.setAutoZoom(true)),
       },
       {
         id: 'ed-captions',

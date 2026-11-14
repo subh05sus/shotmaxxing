@@ -18,6 +18,7 @@
     Button,
     CheckDraw,
     InfoTip,
+    Keycap,
     ProgressRing,
     Segmented,
     Slider,
@@ -250,27 +251,29 @@
     {:else if ed.tool === 'zoom'}
       <label class="flex h-10 items-center justify-between text-callout font-medium">
         Auto zoom
-        <Switch
-          checked={p.zoom.auto}
-          label="Auto zoom"
-          onchange={(v) => ed.change('Auto zoom', () => (p.zoom.auto = v))}
-        />
+        <Switch checked={p.zoom.auto} label="Auto zoom" onchange={(v) => void ed.setAutoZoom(v)} />
       </label>
-      <p class="eyebrow mt-1">How far</p>
-      <Segmented
-        label="Zoom depth"
-        size="sm"
-        value={p.zoom.depth}
-        onchange={(v) => {
-          ed.change('Zoom depth', () => (p.zoom.depth = v));
-          ed.redoAutoZoom();
-        }}
-        options={[
-          { value: 'subtle', label: 'Subtle' },
-          { value: 'standard', label: 'Standard' },
-          { value: 'bold', label: 'Bold' },
-        ]}
-      />
+      {#if !p.zoom.auto}
+        <p class="text-footnote text-fg-muted">
+          Only zooms you add play. Press <Keycap chord="z" /> to add one at the playhead.
+        </p>
+      {:else}
+        <p class="eyebrow mt-1">How far</p>
+        <Segmented
+          label="Zoom depth"
+          size="sm"
+          value={p.zoom.depth}
+          onchange={(v) => {
+            ed.change('Zoom depth', () => (p.zoom.depth = v));
+            void ed.redoAutoZoom('Zoom depth');
+          }}
+          options={[
+            { value: 'subtle', label: 'Subtle' },
+            { value: 'standard', label: 'Standard' },
+            { value: 'bold', label: 'Bold' },
+          ]}
+        />
+      {/if}
       <p class="eyebrow mt-3">Motion</p>
       <Segmented
         label="Zoom motion"
@@ -294,8 +297,10 @@
           onchange={(v) => ed.change('Follow', () => (p.zoom.follow = v))}
         />
       </label>
-      <Button size="sm" icon={RefreshCw} onclick={() => ed.redoAutoZoom()}>Redo auto zoom</Button>
-      <p class="mt-1 text-footnote text-fg-muted">Keeps zooms you added or changed by hand.</p>
+      {#if p.zoom.auto}
+        <Button size="sm" icon={RefreshCw} onclick={() => ed.redoAutoZoom()}>Redo auto zoom</Button>
+        <p class="mt-1 text-footnote text-fg-muted">Keeps zooms you added or changed by hand.</p>
+      {/if}
 
       <p class="eyebrow mt-4">In this video <span class="tabular">· {p.zooms.length}</span></p>
       <ul class="flex flex-col gap-1 py-1">
@@ -321,47 +326,61 @@
           </li>
         {/each}
       </ul>
-      <Advanced id="zoom">
-        <Slider
-          label="Hold after a click"
-          value={p.zoom.hold}
-          min={0.4}
-          max={3}
-          step={0.1}
-          format={(v) => `${v.toFixed(1)} s`}
-          onchange={(v) => ed.change('Hold', () => (p.zoom.hold = v))}
-        />
-        <Slider
-          label="Merge moments closer than"
-          value={p.zoom.mergeGap}
-          min={0}
-          max={4}
-          step={0.1}
-          format={(v) => `${v.toFixed(1)} s`}
-          info="Nearby zooms glide into each other instead of zooming out and back in."
-          onchange={(v) => ed.change('Merge gap', () => (p.zoom.mergeGap = v))}
-        />
-        <label class="flex h-9 items-center justify-between text-callout">
-          Zoom while typing
-          <Switch
-            checked={p.zoom.typing}
-            label="Zoom while typing"
-            onchange={(v) => ed.change('Typing zooms', () => (p.zoom.typing = v))}
+      {#if p.zoom.auto}
+        <Advanced id="zoom">
+          <Slider
+            label="Hold after a click"
+            value={p.zoom.hold}
+            min={0.4}
+            max={3}
+            step={0.1}
+            format={(v) => `${v.toFixed(1)} s`}
+            onchange={(v) => {
+              ed.change('Hold', () => (p.zoom.hold = v));
+              ed.replanSoon('Hold');
+            }}
           />
-        </label>
-        <label class="flex h-9 items-center justify-between text-callout">
-          <span class="flex items-center gap-1"
-            >Zoom on a pause <InfoTip
-              text="When the cursor rests on something for a second, it is probably worth a closer look."
-            /></span
-          >
-          <Switch
-            checked={p.zoom.dwell}
-            label="Zoom on a pause"
-            onchange={(v) => ed.change('Dwell zooms', () => (p.zoom.dwell = v))}
+          <Slider
+            label="Merge moments closer than"
+            value={p.zoom.mergeGap}
+            min={0}
+            max={4}
+            step={0.1}
+            format={(v) => `${v.toFixed(1)} s`}
+            info="Nearby zooms glide into each other instead of zooming out and back in."
+            onchange={(v) => {
+              ed.change('Merge gap', () => (p.zoom.mergeGap = v));
+              ed.replanSoon('Merge gap');
+            }}
           />
-        </label>
-      </Advanced>
+          <label class="flex h-9 items-center justify-between text-callout">
+            Zoom while typing
+            <Switch
+              checked={p.zoom.typing}
+              label="Zoom while typing"
+              onchange={(v) => {
+                ed.change('Typing zooms', () => (p.zoom.typing = v));
+                ed.replanSoon('Typing zooms');
+              }}
+            />
+          </label>
+          <label class="flex h-9 items-center justify-between text-callout">
+            <span class="flex items-center gap-1"
+              >Zoom on a pause <InfoTip
+                text="When the cursor rests on something for a second, it is probably worth a closer look."
+              /></span
+            >
+            <Switch
+              checked={p.zoom.dwell}
+              label="Zoom on a pause"
+              onchange={(v) => {
+                ed.change('Dwell zooms', () => (p.zoom.dwell = v));
+                ed.replanSoon('Dwell zooms');
+              }}
+            />
+          </label>
+        </Advanced>
+      {/if}
     {:else if ed.tool === 'annotate'}
       <p class="text-footnote text-fg-muted">
         Adds at the playhead. Drag the block on the timeline to change when it shows.

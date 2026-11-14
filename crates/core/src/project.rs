@@ -382,6 +382,8 @@ pub struct ZoomTuning {
     /// Zoom on a pause of the pointer over something, without a click.
     pub dwell: bool,
     pub dwell_ms: u32,
+    /// Zoom on bursts of typing, framing the field being typed into.
+    pub typing: bool,
     /// Typing with gaps shorter than this counts as one burst.
     pub typing_gap_ms: u32,
     /// Include screen changes that follow a click, so the result is framed too.
@@ -400,6 +402,7 @@ impl Default for ZoomTuning {
             margin: 0.6,
             dwell: true,
             dwell_ms: 1_000,
+            typing: true,
             typing_gap_ms: 900,
             frame_results: true,
         }

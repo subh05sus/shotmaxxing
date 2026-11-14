@@ -72,7 +72,13 @@ export interface CoreProject {
     motion: string | { custom: number };
     follow_mouse: boolean;
     keystrokes: boolean;
-    tuning: { hold_ms: number; merge_gap_ms: number; dwell: boolean; [key: string]: unknown };
+    tuning: {
+      hold_ms: number;
+      merge_gap_ms: number;
+      dwell: boolean;
+      typing?: boolean;
+      [key: string]: unknown;
+    };
     [key: string]: unknown;
   };
   zooms: CoreZoom[];
@@ -237,7 +243,7 @@ export function fromCore(core: CoreProject, os: Os): Project {
       follow: core.zoom.follow_mouse,
       hold: core.zoom.tuning.hold_ms / 1000,
       mergeGap: core.zoom.tuning.merge_gap_ms / 1000,
-      typing: true,
+      typing: core.zoom.tuning.typing ?? true,
       dwell: core.zoom.tuning.dwell,
     },
     clips: clipsOf(core, duration),
@@ -315,6 +321,7 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
     hold_ms: Math.round(p.zoom.hold * 1000),
     merge_gap_ms: Math.round(p.zoom.mergeGap * 1000),
     dwell: p.zoom.dwell,
+    typing: p.zoom.typing,
   };
   const previous = new Map(base.zooms.map((z) => [z.id, z]));
   core.zooms = p.zooms.map((z) => ({

@@ -23,8 +23,8 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 
 - [x] Compositor: background, padding, corners, shadows, aspect ratios (Core Image on macOS)
 - [x] Rendered cursor: size, smoothing, styles, click effects, snap, spotlight
-- [ ] Cursor motion blur
-- [x] Auto zoom (multi-signal, explainable) and manual zooms
+- [x] Cursor motion blur and click sounds
+- [x] Auto zoom (multi-signal, explainable) and manual zooms, replanned as its settings change
 - [x] Timeline: trim, split, speed, text, arrows, blur
 - [ ] Extra audio tracks (music, voice-over)
 - [x] Webcam bubble

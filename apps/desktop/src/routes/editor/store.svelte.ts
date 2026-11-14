@@ -23,6 +23,7 @@ import {
 } from '../../lib/native';
 import { dropRanges, keepRanges } from './clips';
 import { fromCore, toCore, zoomFromCore, type CoreProject } from '../../lib/project';
+import { clickSamples } from './click';
 
 export interface TimedPoint {
   t: number;
@@ -465,6 +466,29 @@ export class EditorState {
     });
   }
 
+  #audio: AudioContext | null = null;
+  #clickSound: AudioBuffer | null = null;
+
+  /** Plays the click sound now, as the export lays it under each press. */
+  #playClick(): void {
+    try {
+      this.#audio ??= new AudioContext();
+      const audio = this.#audio;
+      if (audio.state === 'suspended') void audio.resume();
+      if (!this.#clickSound) {
+        const samples = clickSamples(audio.sampleRate);
+        this.#clickSound = audio.createBuffer(1, samples.length, audio.sampleRate);
+        this.#clickSound.copyToChannel(samples, 0);
+      }
+      const source = audio.createBufferSource();
+      source.buffer = this.#clickSound;
+      source.connect(audio.destination);
+      source.start();
+    } catch {
+      // No sound output here: the preview stays quiet, and the export is unaffected.
+    }
+  }
+
   // Playback runs a frame loop only while playing. Low power caps it at 30 fps.
   play(): void {
     if (this.playing) return;
@@ -508,6 +532,10 @@ export class EditorState {
         this.pause();
         return;
       }
+      // Presses crossed since the last frame click, as they will in the export. Jumps over cuts stay quiet.
+      if (this.project.cursor.sounds && t > this.time && t - this.time < 0.25) {
+        for (const c of this.clicks) if (c.t > this.time && c.t <= t && this.clipAt(c.t)) this.#playClick();
+      }
       this.time = t;
       this.#syncMedia(t);
       this.#raf = requestAnimationFrame(frame);
@@ -518,6 +546,8 @@ export class EditorState {
   pause(): void {
     this.playing = false;
     cancelAnimationFrame(this.#raf);
+    // A running audio context keeps the sound hardware awake, so it rests between plays.
+    if (this.#audio?.state === 'running') void this.#audio.suspend();
     this.#video?.pause();
     this.#syncMedia(this.time);
   }
@@ -594,11 +624,38 @@ export class EditorState {
     return label;
   }
 
-  /** Re-plans auto zooms at the chosen depth, keeping zooms added by hand. */
-  async redoAutoZoom(): Promise<void> {
+  #replanTimer: ReturnType<typeof setTimeout> | undefined;
+  #replanRequest = 0;
+
+  /** Turns auto zoom on (planning zooms again) or off (keeping only zooms added or changed by hand). */
+  async setAutoZoom(on: boolean): Promise<void> {
+    if (on) {
+      this.change('Auto zoom', () => (this.project.zoom.auto = true));
+      await this.redoAutoZoom('Auto zoom');
+      return;
+    }
+    this.#replanRequest++;
+    this.change('Auto zoom off', () => {
+      this.project.zoom.auto = false;
+      this.project.zooms = this.project.zooms.filter((z) => z.source === 'manual');
+    });
+  }
+
+  /** Plans auto zooms again once a zoom setting stops changing, in the same undo step as the setting. */
+  replanSoon(label: string): void {
+    clearTimeout(this.#replanTimer);
+    this.#replanTimer = setTimeout(() => void this.redoAutoZoom(label), 250);
+  }
+
+  /** Re-plans auto zooms with the current settings, keeping zooms added by hand. Does nothing while it's off. */
+  async redoAutoZoom(label = 'Redo auto zoom'): Promise<void> {
+    if (!this.project.zoom.auto) return;
+    const request = ++this.#replanRequest;
     if (this.path) {
       let planned: Awaited<ReturnType<typeof planAutoZooms>>;
       try {
+        // The planner reads the settings from the project file, so changes still waiting to be saved go first.
+        await this.flush();
         planned = await planAutoZooms(this.path, this.project.zoom.depth);
       } catch (error) {
         toast(`Couldn’t plan auto zoom again: ${error instanceof Error ? error.message : String(error)}`, {
@@ -606,14 +663,16 @@ export class EditorState {
         });
         return;
       }
-      this.change('Redo auto zoom', () => {
+      // A newer change started another plan, or turned auto zoom off.
+      if (request !== this.#replanRequest || !this.project.zoom.auto) return;
+      this.change(label, () => {
         const manual = this.project.zooms.filter((z) => z.source === 'manual');
         this.project.zooms = [...planned.map(zoomFromCore), ...manual];
       });
       return;
     }
     const scale = DEPTH_SCALE[this.project.zoom.depth];
-    this.change('Redo auto zoom', () => {
+    this.change(label, () => {
       const manual = this.project.zooms.filter((z) => z.source === 'manual');
       const auto = SAMPLE_PROJECT.zooms
         .filter((z) => z.source === 'auto')
@@ -685,7 +744,11 @@ export class EditorState {
   destroy(): void {
     this.pause();
     this.#releaseSounds();
+    clearTimeout(this.#replanTimer);
     clearTimeout(this.#saveTimer);
+    void this.#audio?.close();
+    this.#audio = null;
+    this.#clickSound = null;
     clearTimeout(this.#versionTimer);
   }
 }

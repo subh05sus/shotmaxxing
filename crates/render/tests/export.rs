@@ -257,6 +257,65 @@ fn exports_every_frame_at_the_right_size() {
 }
 
 #[test]
+fn click_sounds_play_under_presses_even_without_a_recorded_sound() {
+    if !has_ffmpeg() {
+        eprintln!("skipped: ffmpeg isn't installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = make_project(dir.path());
+    let (bundle, mut project) = ProjectBundle::open(&root).unwrap();
+    for track in &mut project.tracks {
+        if matches!(track.kind, TrackKind::Microphone | TrackKind::SystemAudio) {
+            track.muted = true;
+        }
+    }
+    project.cursor.click_sound = true;
+    bundle.save(&mut project).unwrap();
+
+    let output = dir.path().join("Clicks.mp4");
+    let options = ExportOptions {
+        width: 640,
+        height: 360,
+        fps: 30,
+        format: Format::H264,
+        bitrate: 4e6,
+        output: output.clone(),
+    };
+    export(&root, &options, &mut |_| true).unwrap();
+    // The click needs a sound track, which runs the whole video.
+    let (codec, channels, seconds) = probe_sound(&output).expect("the export has no sound");
+    assert_eq!((codec.as_str(), channels), ("aac", 2));
+    assert!((seconds - 3.6).abs() < 0.08, "the sound lasts {seconds} s");
+    // One click at about -9 dB, when the press happened, and quiet around it.
+    let (peak, mean) = loudness(&output);
+    assert!(peak > -13.0 && peak < -5.0, "peak {peak} dB");
+    assert!(mean < -30.0, "mean {mean} dB");
+    let at = loudest_at(&output);
+    assert!((at - 1.5).abs() < 0.03, "the click sounds at {at} s");
+}
+
+/// When the exported sound is loudest, in seconds.
+fn loudest_at(path: &Path) -> f64 {
+    let out = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args(["-map", "0:a:0", "-ac", "1", "-ar", "48000", "-f", "f32le", "-"])
+        .output()
+        .unwrap();
+    let loudest = out
+        .stdout
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b).abs())
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map_or(0, |(i, _)| i);
+    loudest as f64 / 48_000.0
+}
+
+#[test]
 fn exports_a_looping_gif() {
     if !has_ffmpeg() {
         eprintln!("skipped: ffmpeg isn't installed");

@@ -87,10 +87,11 @@ pub fn find_moments(input: &ZoomInput<'_>, tuning: &ZoomTuning) -> Vec<Moment> {
         }
     }
 
-    // Typing bursts.
+    // Typing bursts, unless the project turned them off.
     let keys: Vec<(u64, bool)> = input
         .events
         .iter()
+        .filter(|_| tuning.typing)
         .filter_map(|e| match e {
             InputEvent::KeyDown { t_us, modifiers_only, .. } if !modifiers_only => Some((*t_us, true)),
             _ => None,
@@ -363,6 +364,15 @@ mod tests {
         assert_eq!(zooms.len(), 1);
         assert!(zooms[0].reason.as_deref().unwrap().contains("Click"));
         assert!(zooms[0].end_us - zooms[0].start_us >= 1_400_000);
+    }
+
+    #[test]
+    fn typing_zooms_can_be_turned_off() {
+        let events: Vec<InputEvent> = (0..12).map(|i| key(5_000 + i * 120)).collect();
+        let input = ZoomInput { duration_us: 60_000_000, capture: CAPTURE, events: &events, cursor: &[] };
+        let tuning = ZoomTuning { dwell: false, typing: false, ..Default::default() };
+        assert!(plan_zooms(&input, &tuning, ZoomDepth::Standard, 700).is_empty());
+        assert_eq!(plan(&events).len(), 1, "on by default");
     }
 
     #[test]

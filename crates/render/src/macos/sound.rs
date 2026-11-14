@@ -1,19 +1,24 @@
 //! The exported video's sound. Every recorded track is cut and sped up like the picture, then mixed. AVFoundation
 //! does the work: a composition lays each track out on the export's timeline (keeping the pitch through speed
-//! changes), and an audio mix sets the levels and fades each cut edge so it never clicks.
+//! changes), and an audio mix sets the levels and fades each cut edge so it never clicks. Click sounds, when the
+//! project has them, are one more track with the click laid under each press. A quiet bed runs under everything,
+//! because a mix ends at its last sound and the picture may go on after it.
+
+use std::path::{Path, PathBuf};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_av_foundation::{
     AVAssetReader, AVAssetReaderAudioMixOutput, AVAssetReaderStatus, AVAssetTrack, AVAudioMixInputParameters,
-    AVAudioTimePitchAlgorithmSpectral, AVMediaTypeAudio, AVMutableAudioMix, AVMutableAudioMixInputParameters,
-    AVMutableComposition, AVURLAsset,
+    AVAudioTimePitchAlgorithmSpectral, AVMediaType, AVMediaTypeAudio, AVMutableAudioMix,
+    AVMutableAudioMixInputParameters, AVMutableComposition, AVURLAsset,
 };
 use objc2_core_media::{CMSampleBuffer, CMTime, CMTimeRange};
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL, ns_string};
 
 use super::decode::system;
 use crate::RenderError;
+use crate::click::{CLICK_SECONDS, click_samples, wav};
 use crate::model::RenderProject;
 use crate::voice::soft_limit;
 
@@ -31,6 +36,108 @@ fn span(start: f64, duration: f64) -> CMTimeRange {
     CMTimeRange { start: time(start), duration: time(duration) }
 }
 
+/// A file that is removed when dropped.
+struct TempFile(PathBuf);
+
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// How much quiet follows the click in the sound file.
+const QUIET_SECONDS: f64 = 4.0;
+
+/// The click followed by quiet, as a file in the temporary folder for the composition to read.
+fn sound_file() -> std::io::Result<TempFile> {
+    let mut samples = click_samples(RATE);
+    samples.resize(samples.len() + (QUIET_SECONDS * f64::from(RATE)) as usize, 0.0);
+    let nanos =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let path = std::env::temp_dir().join(format!("shotmaxxing-sound-{}-{nanos}.wav", std::process::id()));
+    std::fs::write(&path, wav(&samples, RATE))?;
+    Ok(TempFile(path))
+}
+
+/// The first audio track of the file at `path`.
+fn source_track(path: &Path, audio: &AVMediaType) -> Option<Retained<AVAssetTrack>> {
+    let url = NSURL::from_file_path(path)?;
+    // SAFETY: AVFoundation objects built and used on this thread only, with valid arguments.
+    unsafe {
+        let asset = AVURLAsset::URLAssetWithURL_options(&url, None);
+        #[allow(deprecated)]
+        asset.tracksWithMediaType(audio).firstObject()
+    }
+}
+
+/// A track of `composition` that is quiet for the whole `length`, made of the quiet part of `file`.
+fn quiet_track(
+    composition: &AVMutableComposition,
+    audio: &AVMediaType,
+    file: &Path,
+    length: f64,
+) -> Result<Option<Retained<AVAssetTrack>>, RenderError> {
+    let Some(source) = source_track(file, audio) else { return Ok(None) };
+    // SAFETY: AVFoundation objects built and used on this thread only, with valid arguments.
+    unsafe {
+        let Some(track) = composition.addMutableTrackWithMediaType_preferredTrackID(audio, 0) else {
+            return Ok(None);
+        };
+        let mut at = 0.0;
+        while length - at > 0.001 {
+            let piece = QUIET_SECONDS.min(length - at);
+            track
+                .insertTimeRange_ofTrack_atTime_error(span(CLICK_SECONDS, piece), &source, time(at))
+                .map_err(|e| system(format!("couldn't lay out the sound: {}", e.localizedDescription())))?;
+            at += piece;
+        }
+        Ok(Some(Retained::into_super(Retained::into_super(track))))
+    }
+}
+
+type MixTrack = (Retained<AVAssetTrack>, Retained<AVAudioMixInputParameters>);
+
+/// A track of `composition` with the click from `file` at each of `times` (seconds of the export, in order), cut
+/// short at `length`, at `level`. A click still sounding when the next press comes stands for both.
+fn click_track(
+    composition: &AVMutableComposition,
+    audio: &AVMediaType,
+    file: &Path,
+    times: &[f64],
+    length: f64,
+    level: f32,
+) -> Result<Option<MixTrack>, RenderError> {
+    let Some(source) = source_track(file, audio) else { return Ok(None) };
+    // SAFETY: AVFoundation objects built and used on this thread only, with valid arguments.
+    unsafe {
+        let click = source.timeRange().duration.seconds().min(CLICK_SECONDS);
+        let Some(track) = composition.addMutableTrackWithMediaType_preferredTrackID(audio, 0) else {
+            return Ok(None);
+        };
+        let mut end = 0.0;
+        for &at in times {
+            let room = click.min(length - at);
+            if at < end || room < 0.002 {
+                continue;
+            }
+            if at > end + 1e-6 {
+                track.insertEmptyTimeRange(span(end, at - end));
+            }
+            track.insertTimeRange_ofTrack_atTime_error(span(0.0, room), &source, time(at)).map_err(|e| {
+                system(format!("couldn't lay out the click sounds: {}", e.localizedDescription()))
+            })?;
+            end = at + room;
+        }
+        if end <= 0.0 {
+            composition.removeTrack(&track);
+            return Ok(None);
+        }
+        let params = AVMutableAudioMixInputParameters::audioMixInputParametersWithTrack(Some(&track));
+        params.setVolume_atTime(level, time(0.0));
+        Ok(Some((Retained::into_super(Retained::into_super(track)), Retained::into_super(params))))
+    }
+}
+
 pub struct Sound {
     reader: Retained<AVAssetReader>,
     output: Retained<AVAssetReaderAudioMixOutput>,
@@ -40,12 +147,15 @@ pub struct Sound {
     gain: f32,
     pending: Option<Retained<CMSampleBuffer>>,
     done: bool,
+    /// The click and quiet file, removed once the mix is finished with it.
+    _file: Option<TempFile>,
 }
 
 impl Sound {
     /// The project's sound, ready to read in order; `None` when there's nothing to hear.
     pub fn open(project: &RenderProject) -> Result<Option<Self>, RenderError> {
-        if project.sounds.is_empty() {
+        let clicks = project.click_times();
+        if project.sounds.is_empty() && clicks.is_empty() {
             return Ok(None);
         }
         let loudest = project.sounds.iter().map(|s| s.volume).fold(1.0, f64::max);
@@ -115,8 +225,24 @@ impl Sound {
                 tracks.push(Retained::into_super(Retained::into_super(track)));
                 inputs.push(Retained::into_super(params));
             }
+            let length = project.output_duration();
+            let file = sound_file().inspect_err(|e| tracing::warn!("no click sound or quiet bed: {e}")).ok();
+            // Click sounds sit at their own level: the overall gain below brings them back to it.
+            if let Some(file) = &file
+                && !clicks.is_empty()
+                && let Some((track, params)) =
+                    click_track(&composition, audio, &file.0, &clicks, length, (1.0 / loudest) as f32)?
+            {
+                tracks.push(track);
+                inputs.push(params);
+            }
             if tracks.is_empty() {
                 return Ok(None);
+            }
+            if let Some(file) = &file
+                && let Some(track) = quiet_track(&composition, audio, &file.0, length)?
+            {
+                tracks.push(track);
             }
 
             let mix = AVMutableAudioMix::audioMix();
@@ -173,6 +299,7 @@ impl Sound {
                 gain: loudest as f32,
                 pending: None,
                 done: false,
+                _file: file,
             }))
         }
     }

@@ -131,6 +131,8 @@ pub struct RenderProject {
     pub hide_idle: bool,
     /// Motion blur strength, 0 (off) to 1: the cursor smears over `MOTION_BLUR_S` times this.
     pub motion_blur: f64,
+    /// A soft click under every press, as the editor plays it.
+    pub click_sounds: bool,
     /// The drawn cursor path, in seconds and capture points.
     pub path: Vec<CursorSample>,
     pub clicks: Vec<(f64, Point)>,
@@ -329,6 +331,7 @@ impl RenderProject {
             spotlight: style.spotlight.enabled,
             hide_idle: style.auto_hide_ms.unwrap_or(0) > 0,
             motion_blur: if style.motion_blur.is_finite() { style.motion_blur.clamp(0.0, 1.0) } else { 0.0 },
+            click_sounds: style.click_sound,
             path,
             clicks,
             keys,
@@ -396,6 +399,28 @@ impl RenderProject {
         None
     }
 
+    /// When the moment `source` of the recording shows in the exported video; `None` when it was cut.
+    pub fn export_time(&self, source: f64) -> Option<f64> {
+        let mut at = 0.0;
+        for clip in &self.clips {
+            if source >= clip.start && source < clip.end {
+                return Some(at + (source - clip.start) / clip.speed);
+            }
+            at += (clip.end - clip.start) / clip.speed;
+        }
+        None
+    }
+
+    /// When each click sounds in the exported video, in order: every press that wasn't cut, if click sounds are on.
+    pub fn click_times(&self) -> Vec<f64> {
+        if !self.click_sounds {
+            return Vec::new();
+        }
+        let mut times: Vec<f64> = self.clicks.iter().filter_map(|(t, _)| self.export_time(*t)).collect();
+        times.sort_by(f64::total_cmp);
+        times
+    }
+
     /// The largest zoom, so sprites can be drawn sharp enough for it.
     pub fn max_zoom(&self) -> f64 {
         self.zooms.iter().map(|z| z.scale).fold(1.0, f64::max)
@@ -441,5 +466,26 @@ mod tests {
         // Just after the cut, the recording continues at 3 s, twice as fast.
         assert_eq!(render.source_time(2.5), Some(4.0));
         assert_eq!(render.source_time(6.0), None);
+    }
+
+    #[test]
+    fn clicks_sound_where_they_land_in_the_export() {
+        let project = project_with(
+            vec![range(2_000, 3_000)],
+            vec![SpeedRegion { range: range(3_000, 10_000), factor: 2.0 }],
+        );
+        let mut render = RenderProject::from_parts(Path::new("/tmp"), &project, &[], &[]);
+        render.clips = clips_of(&project, 10.0);
+        for t in [0.5, 1.9, 4.0, 9.5] {
+            assert_eq!(render.source_time(render.export_time(t).unwrap()), Some(t));
+        }
+        assert_eq!(render.export_time(2.5), None, "inside the cut");
+        assert_eq!(render.export_time(4.0), Some(2.5));
+
+        // Out of order, and one inside the cut.
+        render.clicks = [5.0, 1.0, 2.5].iter().map(|&t| (t, Point::new(0.0, 0.0))).collect();
+        assert!(render.click_times().is_empty(), "off unless the project asks");
+        render.click_sounds = true;
+        assert_eq!(render.click_times(), vec![1.0, 3.0]);
     }
 }
