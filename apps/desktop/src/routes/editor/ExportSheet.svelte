@@ -14,6 +14,7 @@
 </script>
 
 <script lang="ts">
+  import { tick } from 'svelte';
   import { FolderOpen, Info } from '@shotmaxxing/ui/icons';
   import { Advanced, Button, Icon, Keycap, Segmented, Sheet } from '@shotmaxxing/ui';
   import { fileSize, timecode } from '../../lib/format';
@@ -119,6 +120,34 @@
     if (item.format !== 'gif' && item.format !== 'png') fps = item.fps === 30 ? '30' : '60';
   }
 
+  let presetList: HTMLDivElement | undefined = $state();
+
+  /** Keyboard focus goes to the chosen destination, e.g. after the button that had it goes away. */
+  async function focusChosen() {
+    await tick();
+    presetList?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+  }
+
+  /** Arrow keys move the choice, as in any radio group; Tab moves on to the next control. */
+  function onpresetkey(e: KeyboardEvent) {
+    const step =
+      e.key === 'ArrowDown' || e.key === 'ArrowRight'
+        ? 1
+        : e.key === 'ArrowUp' || e.key === 'ArrowLeft'
+          ? -1
+          : 0;
+    if (!step) return;
+    e.preventDefault();
+    const at = PRESETS.findIndex((x) => x.id === preset);
+    pick(PRESETS[(at + step + PRESETS.length) % PRESETS.length]);
+    focusChosen();
+  }
+
+  function useShape(shape: Aspect) {
+    ed.change('Aspect ratio', () => (ed.project.canvas.aspect = shape));
+    focusChosen();
+  }
+
   async function chooseFolder() {
     const picked = await chooseExportFolder(settings.exportFolder);
     if (picked) settings.exportFolder = picked;
@@ -144,13 +173,21 @@
   width={560}
   origin="calc(100% - 60px) 0px"
 >
-  <div class="flex flex-col gap-1.5" role="radiogroup" aria-label="Where is it going?">
+  <div
+    bind:this={presetList}
+    class="flex flex-col gap-1.5"
+    role="radiogroup"
+    aria-label="Where is it going?"
+    tabindex="-1"
+    onkeydown={onpresetkey}
+  >
     {#each PRESETS as item (item.id)}
       {@const s = sizeFor(item)}
       <button
         type="button"
         role="radio"
         aria-checked={preset === item.id}
+        tabindex={preset === item.id ? 0 : -1}
         class={[
           'ring-inside press-card flex items-center gap-3 rounded-[10px] border px-3 py-2.5 text-left',
           preset === item.id ? 'border-transparent bg-fill-strong' : 'border-border hover:bg-fill',
@@ -189,9 +226,7 @@
           ? 'the recording’s shape'
           : p.canvas.aspect}, and that’s the shape that exports.</span
       >
-      <Button size="sm" onclick={() => ed.change('Aspect ratio', () => (ed.project.canvas.aspect = mismatch))}
-        >Use {mismatch}</Button
-      >
+      <Button size="sm" onclick={() => mismatch && useShape(mismatch)}>Use {mismatch}</Button>
     </div>
   {/if}
 

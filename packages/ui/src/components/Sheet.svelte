@@ -37,13 +37,21 @@
     onclose?.();
   }
 
+  /** The controls Tab reaches, in order. */
+  function tabbable(): HTMLElement[] {
+    if (!panel) return [];
+    return [
+      ...panel.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]'),
+    ].filter((el) => el.tabIndex >= 0 && !el.hasAttribute('disabled'));
+  }
+
   $effect(() => {
     if (!open) return;
     returnFocus = document.activeElement;
     queueMicrotask(() => {
-      const first = panel?.querySelector<HTMLElement>(
-        '[autofocus], input, button:not([aria-label="Close"]), [tabindex="0"]',
-      );
+      const first =
+        panel?.querySelector<HTMLElement>('[autofocus]') ??
+        tabbable().find((el) => el.getAttribute('aria-label') !== 'Close');
       (first ?? panel)?.focus();
     });
     return () => (returnFocus as HTMLElement | null)?.focus?.();
@@ -55,18 +63,32 @@
       close();
       return;
     }
-    if (e.key !== 'Tab' || !panel) return;
+    if (e.key !== 'Tab') return;
     // Keep focus inside the sheet.
-    const focusable = [
-      ...panel.querySelectorAll<HTMLElement>('button, input, select, textarea, [tabindex="0"]'),
-    ].filter((el) => !el.hasAttribute('disabled'));
+    const focusable = tabbable();
     if (!focusable.length) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     if (e.shiftKey && document.activeElement === first) (e.preventDefault(), last.focus());
     else if (!e.shiftKey && document.activeElement === last) (e.preventDefault(), first.focus());
   }
+
+  // A control that goes away when used (a "Use 9:16" button) drops focus onto the page behind. The sheet still owns
+  // the keyboard then: Escape closes it and Tab goes back in.
+  function onwindowkeydown(e: KeyboardEvent) {
+    if (!open || !panel || (e.target !== document.body && e.target !== document.documentElement)) return;
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      close();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      const focusable = tabbable();
+      (focusable[e.shiftKey ? focusable.length - 1 : 0] ?? panel).focus();
+    }
+  }
 </script>
+
+<svelte:window onkeydowncapture={onwindowkeydown} />
 
 {#if open}
   <div use:portal class="fixed inset-0 z-[800] grid place-items-center p-6">
