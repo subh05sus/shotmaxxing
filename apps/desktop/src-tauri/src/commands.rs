@@ -270,6 +270,13 @@ pub fn open_window<R: Runtime>(
     result.map_err(|e| e.to_string())
 }
 
+/// Says what went wrong in a native alert, for a window too small to show it (the recording pill).
+#[tauri::command]
+pub fn show_error<R: Runtime>(app: AppHandle<R>, text: String) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    app.dialog().message(text).title("Shotmaxxing").kind(MessageDialogKind::Error).show(|_| {});
+}
+
 #[tauri::command]
 pub fn reveal_in_folder<R: Runtime>(app: AppHandle<R>, path: String) -> Result<(), String> {
     app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())

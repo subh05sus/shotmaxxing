@@ -174,7 +174,8 @@ pub fn open_pill<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("pill") {
         return window.show();
     }
-    let (width, height) = (360.0, 76.0);
+    // Room for the pill and its shadow: 16 pt above it and 24 pt below.
+    let (width, height) = (360.0, 84.0);
     let builder = floating(app, "pill", "index.html#/pill", width, height)?;
     let x = monitor_width(app).map_or(400.0, |w| (w - width) / 2.0);
     let window = builder.position(x, 28.0).build()?;

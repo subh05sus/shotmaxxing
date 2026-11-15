@@ -68,6 +68,7 @@ pub fn run() {
             agents::detect_agents,
             commands::open_window,
             commands::reveal_in_folder,
+            commands::show_error,
             commands::open_link,
             agents::connect_agent,
             agents::disconnect_agent,

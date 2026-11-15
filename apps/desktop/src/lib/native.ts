@@ -785,6 +785,11 @@ export function revealInFolder(path: string): Promise<void> {
   return call('reveal_in_folder', { path }, () => undefined);
 }
 
+/** Says what went wrong in a native alert, for a window too small for a toast (the recording pill). */
+export function showError(text: string): Promise<void> {
+  return call('show_error', { text }, () => undefined);
+}
+
 export async function platform(): Promise<'mac' | 'windows'> {
   if (!isTauri) return document.documentElement.dataset.os === 'windows' ? 'windows' : 'mac';
   const { platform } = await import('@tauri-apps/plugin-os');

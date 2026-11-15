@@ -237,7 +237,7 @@
 
 <div class="flex h-full items-end justify-end p-6">
   <section
-    class="w-[360px] overflow-hidden rounded-[14px] border border-border bg-elevated text-fg shadow-[var(--elev-3)]"
+    class="w-[360px] overflow-hidden rounded-[14px] border border-border bg-elevated text-fg shadow-[var(--elev-float)]"
     aria-label="Agent take"
     in:rise={{ y: 16 }}
   >
