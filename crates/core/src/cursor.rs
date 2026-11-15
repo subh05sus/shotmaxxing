@@ -139,7 +139,7 @@ pub fn snap_to_clicks(samples: &mut [CursorSample], events: &[InputEvent]) {
         if dt >= SNAP_WINDOW_US {
             continue;
         }
-        let w = crate::camera::smootherstep(1.0 - dt / SNAP_WINDOW_US);
+        let w = smootherstep(1.0 - dt / SNAP_WINDOW_US);
         let p = s.point().lerp(*cp, w);
         s.x = p.x;
         s.y = p.y;
@@ -179,6 +179,12 @@ pub fn idle_spans(samples: &[CursorSample], idle_ms: u64) -> Vec<(u64, u64)> {
         i = j + 1;
     }
     spans
+}
+
+/// Ken Perlin's smootherstep: zero velocity and acceleration at both ends.
+fn smootherstep(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 }
 
 #[cfg(test)]
