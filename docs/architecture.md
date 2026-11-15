@@ -44,11 +44,14 @@ how it fits together and why. Design rules for the interface live in [design/pri
 ```
 apps/desktop/          Tauri 2 app: Svelte 5 UI + the Tauri shell (src-tauri)
 crates/
-  core/                project model, timeline, take scripts, telemetry, auto zoom, shared types
+  core/                project model, timeline, take scripts, telemetry, auto zoom, caption rows and subtitle
+                       files, shared types
   capture/             recording and input telemetry: macos/ (ScreenCaptureKit, AVAssetWriter),
                        win/ (Windows.Graphics.Capture, Media Foundation, low-level input hooks)
   render/              export: the scene and sprites, Core Image on macOS, the portable CPU compositor and
                        Media Foundation on Windows, the sound mix and voice tools
+  captions/            on-device speech to text with whisper.cpp: the speech model's one-time download, and words
+                       timed and grouped into captions
   control/             the control API between the command and the app (private socket or named pipe)
   agent/               the take performer: refs, human-paced pointer and typing, hand-off
   cli/                 the `shotmaxxing` binary: CLI subcommands and `shotmaxxing mcp`
@@ -211,8 +214,9 @@ No plugin gets unrestricted access to the system.
 
 ## Privacy
 
-Nothing leaves the machine. There is no telemetry, analytics or account. Crash logs stay local; "Report a problem"
-pre-fills a GitHub issue that the user reviews before sending.
+Nothing leaves the machine. There is no telemetry, analytics or account. The app's one network request downloads the
+speech model, once, the first time someone asks for captions; the sound is transcribed on the computer and never
+sent. Crash logs stay local; "Report a problem" pre-fills a GitHub issue that the user reviews before sending.
 
 ## Platform support
 

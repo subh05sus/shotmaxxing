@@ -1,5 +1,13 @@
 [env]
-# whisper.cpp (captions) is built for every x86-64 processor with AVX2, not only the build machine's own, so a release
-# built on a CI runner runs on any computer from about 2013 on; the app checks for AVX2 before it transcribes. Apple
-# silicon builds for every M-series chip either way.
+# whisper.cpp (captions) is built for every x86-64 processor with AVX2, FMA, F16C and BMI2 (most from 2013 on), not
+# only the build machine's own, so a release built on a CI runner runs on all of them; the app checks for these before
+# it transcribes. They're named one by one because ggml leaves every one out of a cross-compiled build, such as the
+# Intel Mac release made on an Apple silicon runner. Apple silicon builds ignore them and suit every M-series chip.
+# Cargo doesn't rebuild whisper.cpp when these change: after editing them, run `cargo clean -p whisper-rs-sys`.
 GGML_NATIVE = "OFF"
+GGML_SSE42 = "ON"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"
+GGML_BMI2 = "ON"
