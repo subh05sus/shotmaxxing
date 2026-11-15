@@ -428,6 +428,12 @@ mod imp {
         (ok != 0).then(|| String::from_utf16_lossy(&buffer[..len as usize]))
     }
 
+    /// Every running program that can be read, with its full path.
+    #[cfg(test)]
+    pub(super) fn running_programs() -> Vec<(u32, String)> {
+        snapshot().into_keys().filter_map(|pid| Some((pid, full_path(pid)?))).collect()
+    }
+
     pub(super) fn process(pid: u32) -> Option<Process> {
         let processes = snapshot();
         let (parent, name) = processes.get(&pid)?.clone();
@@ -728,10 +734,9 @@ mod imp {
         found
     }
 
-    /// Whether the process runs from a package: an app from the Store, or one installed with MSIX.
     /// Where the package the process `pid` runs from came from (a `PackageOrigin`), and the publisher it names.
     /// `None` when the process isn't in a package.
-    fn package(pid: u32) -> Option<(PackageOrigin, Option<String>)> {
+    pub(super) fn package(pid: u32) -> Option<(PackageOrigin, Option<String>)> {
         let process = open(pid)?;
         let handle = process.as_raw_handle() as HANDLE;
         let mut len = 0u32;
@@ -921,6 +926,46 @@ mod tests {
         assert!(listed > 0, "none of Windows's programs was found in its catalogs");
         // This test isn't signed, by itself or in any catalog, and doesn't run from a package.
         assert_eq!(imp::signature(std::process::id()), Signature::Nobody);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn packaged_apps_are_told_by_their_package() {
+        // Windows's own packaged apps (the Start menu, the shell, text input) run from SystemApps once someone is
+        // signed in, and apps from the Store from WindowsApps.
+        let running: Vec<(u32, String)> = imp::running_programs()
+            .into_iter()
+            .filter(|(_, path)| {
+                let path = path.to_ascii_lowercase();
+                path.contains(r"\systemapps\") || path.contains(r"\windowsapps\")
+            })
+            .collect();
+        if running.is_empty() {
+            eprintln!("skipped: no packaged app is running");
+            return;
+        }
+        let packaged: Vec<_> =
+            running.iter().filter_map(|(pid, path)| Some((path.as_str(), imp::package(*pid)?))).collect();
+        assert!(!packaged.is_empty(), "none of these runs from a package: {running:?}");
+        for (path, (origin, publisher)) in &packaged {
+            let signature = package_signature(*origin, publisher.as_deref());
+            eprintln!("{path}: origin {origin}, publisher {publisher:?}, {signature:?}");
+            if *origin == 2 {
+                assert_eq!(signature, Signature::By("Microsoft".into()), "{path}");
+            }
+        }
+        // The package's name leads to where it came from, and its identity to the publisher that signed it.
+        assert!(
+            packaged.iter().any(|(_, (origin, _))| *origin != 0),
+            "no package's origin could be read: {packaged:?}"
+        );
+        assert!(
+            packaged.iter().any(|(_, (_, publisher))| publisher
+                .as_deref()
+                .and_then(common_name)
+                .is_some_and(|name| name.starts_with("Microsoft"))),
+            "no package named Microsoft as its publisher: {packaged:?}"
+        );
     }
 
     #[cfg(target_os = "macos")]
