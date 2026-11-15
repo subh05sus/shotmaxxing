@@ -30,6 +30,7 @@ use windows::core::{BOOL, PCWSTR, PWSTR};
 
 use crate::{CaptureError, Device, DisplayInfo, Sources, Target, WindowInfo};
 
+mod audio;
 mod clock;
 mod input;
 mod record;
@@ -304,7 +305,7 @@ pub fn thumbnails(targets: &[Target], _max_width: u32) -> Result<Vec<Option<Vec<
 }
 
 pub fn microphones() -> Vec<Device> {
-    Vec::new()
+    audio::microphones()
 }
 
 pub fn cameras() -> Vec<Device> {
@@ -330,6 +331,14 @@ mod tests {
         assert!(sources.windows.iter().all(|w| w.width >= 80.0 && !w.title.trim().is_empty()));
     }
 
+    #[test]
+    fn lists_microphones_with_the_default_first() {
+        let microphones = microphones();
+        // A computer may have none; any it has are named, and only the first can be the default.
+        assert!(microphones.iter().all(|m| !m.id.is_empty() && !m.name.is_empty()));
+        assert!(microphones.iter().skip(1).all(|m| !m.is_default));
+    }
+
     /// Records the main display for a moment. It needs a desktop session that can be captured and Media Foundation's
     /// H.264 encoder, so CI runs it on its own: `cargo test -p shotmaxxing-capture -- --ignored`.
     #[test]
@@ -337,11 +346,18 @@ mod tests {
     fn records_the_main_display() {
         let dir = tempfile::tempdir().unwrap();
         let output = dir.path().join("screen.mp4");
-        let recorder = Recorder::start(crate::RecordOptions::new(Target::Display(None), &output)).unwrap();
+        let mut options = crate::RecordOptions::new(Target::Display(None), &output);
+        options.system_audio = Some(dir.path().join("system.m4a"));
+        let recorder = Recorder::start(options).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1500));
         assert!(recorder.elapsed() >= 1.4);
         let recording = recorder.stop().unwrap();
         eprintln!("{} frames, {} µs, {:?}", recording.frames, recording.duration_us, recording.warnings);
+        // The computer's sound is recorded, or the recording says why not (a server may have no sound output).
+        match &recording.system_audio {
+            Some(track) => eprintln!("sound: {} µs from {} µs", track.duration_us, track.offset_us),
+            None => eprintln!("no sound recorded"),
+        }
         assert!(recording.frames >= 1, "no frames arrived");
         assert!(recording.duration_us >= 1_000_000, "{} µs", recording.duration_us);
         assert!(recording.width > 0.0 && recording.scale >= 1.0);
