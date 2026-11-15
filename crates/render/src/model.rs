@@ -85,9 +85,11 @@ pub struct Sound {
     pub offset: f64,
     /// 1 is as recorded.
     pub volume: f64,
-    /// Music: it plays on the finished video's timeline from `offset`, untouched by cuts and speed changes, and
-    /// fades out with the video.
+    /// Music and voice-overs: it plays on the finished video's timeline from `offset`, untouched by cuts and speed
+    /// changes.
     pub continuous: bool,
+    /// Music running past the end fades out with the video; a voice-over is just cut there.
+    pub fades_out: bool,
 }
 
 /// The camera bubble, drawn in a corner above everything else.
@@ -273,8 +275,10 @@ impl RenderProject {
             .tracks
             .iter()
             .filter(|t| {
-                matches!(t.kind, TrackKind::Microphone | TrackKind::SystemAudio | TrackKind::Music)
-                    && !t.muted
+                matches!(
+                    t.kind,
+                    TrackKind::Microphone | TrackKind::SystemAudio | TrackKind::Music | TrackKind::VoiceOver
+                ) && !t.muted
                     && t.volume > 0.0
             })
             .map(|t| {
@@ -292,7 +296,8 @@ impl RenderProject {
                 path,
                 offset: t.offset_us as f64 / 1e6,
                 volume: t.volume.clamp(0.0, 2.0),
-                continuous: t.kind == TrackKind::Music,
+                continuous: matches!(t.kind, TrackKind::Music | TrackKind::VoiceOver),
+                fades_out: t.kind == TrackKind::Music,
             })
             .collect();
         let webcam = &project.webcam;

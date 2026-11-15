@@ -28,6 +28,18 @@ pub fn cameras() -> Vec<Device> {
     Vec::new()
 }
 
+pub struct Voice;
+
+impl Voice {
+    pub fn start(_device: Option<String>, _output: &std::path::Path) -> Result<Self, CaptureError> {
+        Err(CaptureError::Unsupported)
+    }
+
+    pub fn stop(self) -> Result<f64, CaptureError> {
+        Err(CaptureError::Unsupported)
+    }
+}
+
 pub struct Recorder;
 
 impl Recorder {

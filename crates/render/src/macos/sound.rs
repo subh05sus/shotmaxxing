@@ -199,7 +199,7 @@ impl Sound {
                             system(format!("couldn't lay out the music: {}", e.localizedDescription()))
                         })?;
                     // In without a click, and out with the video when it runs past the end.
-                    let fade = if start + (to - from) > total + 1e-3 {
+                    let fade = if sound.fades_out && start + (to - from) > total + 1e-3 {
                         MUSIC_FADE_OUT.min(length / 2.0)
                     } else {
                         FADE

@@ -5,6 +5,7 @@
  */
 
 import { env, toast } from '@shotmaxxing/ui';
+import { timecode } from '../../lib/format';
 import {
   SAMPLE_CURSOR,
   SAMPLE_KEYS,
@@ -17,14 +18,26 @@ import {
   chooseMusic,
   cleanVoice,
   cursorPath,
+  discardVoiceOver,
   findPauses,
+  isTauri,
   loadProject,
   mediaUrl,
+  openPermissionSettings,
   planAutoZooms,
   saveProject,
+  startVoiceOver,
+  stopVoiceOver,
 } from '../../lib/native';
 import { dropRanges, keepRanges } from './clips';
-import { effectDefaults, fromCore, toCore, zoomFromCore, type CoreProject } from '../../lib/project';
+import {
+  effectDefaults,
+  fromCore,
+  toCore,
+  voiceOverName,
+  zoomFromCore,
+  type CoreProject,
+} from '../../lib/project';
 import { clickSamples } from './click';
 
 export interface TimedPoint {
@@ -41,6 +54,19 @@ export interface Clip {
   start: number;
   end: number;
   speed: number;
+}
+
+/** Narration recorded in the editor, laid on the finished video's timeline. */
+export interface VoiceOver {
+  id: string;
+  /** The file, in the project folder. */
+  path: string;
+  name: string;
+  /** 1 is as recorded. */
+  volume: number;
+  /** Where it starts on the finished video, in seconds. */
+  start: number;
+  seconds: number;
 }
 
 export interface Project {
@@ -100,6 +126,11 @@ export interface Project {
      * and speed changes, and fades out with the video when it runs past the end. `path` is in the project folder.
      */
     music: { path: string; name: string; volume: number; start: number; seconds: number } | null;
+    /**
+     * Narration recorded in the editor. Each plays on the finished video's timeline from `start` (seconds), like
+     * music, so cuts and speed changes made later don't move it. `path` is in the project folder.
+     */
+    voiceOvers: VoiceOver[];
   };
   captions: { state: 'none' | 'busy' | 'ready'; style: 'bar' | 'bold'; show: boolean };
   keystrokes: boolean;
@@ -161,7 +192,15 @@ function sampleProject(): Project {
     zooms: SAMPLE_PROJECT.zooms.map((z) => ({ ...z, focus: { ...z.focus } })),
     effects: SAMPLE_PROJECT.effects.map((e) => ({ ...e })),
     webcam: { on: false, shape: 'circle', size: 0.2, corner: 'br', shrink: true, mirror: true, shadow: true },
-    audio: { mic: 0.9, system: 0.6, cleanup: true, silence: false, silences: [], music: null },
+    audio: {
+      mic: 0.9,
+      system: 0.6,
+      cleanup: true,
+      silence: false,
+      silences: [],
+      music: null,
+      voiceOvers: [],
+    },
     captions: { state: 'none', style: 'bar', show: true },
     keystrokes: true,
     has: { mic: true, system: true, camera: true },
@@ -195,6 +234,12 @@ export class EditorState {
   camera = $state<{ url: string; offset: number } | null>(null);
   /** A voice tool at work: making the cleaned-up voice, or finding pauses. */
   voiceBusy = $state<'cleanup' | 'silence' | null>(null);
+  /** A voice-over being recorded: where on the finished video it starts. Everything else is muted meanwhile. */
+  voiceOver = $state<{ start: number } | null>(null);
+  /** A voice-over is starting or finishing. */
+  voiceOverBusy = $state(false);
+  /** Players for the voice-overs, by id, and the file each is for. */
+  #voices = new Map<string, { el: HTMLAudioElement; file: string }>();
   /** What was recorded besides the video, in seconds and capture points. */
   cursorPath = $state.raw<TimedPoint[]>(SAMPLE_CURSOR);
   clicks = $state.raw<TimedPoint[]>(SAMPLE_PROJECT.clicks);
@@ -314,8 +359,8 @@ export class EditorState {
         const offset = track.offset_us / 1e6;
         if (track.kind === 'camera') {
           this.camera = { url, offset };
-        } else if (track.kind === 'music') {
-          // Music follows the project's audio settings instead; see #syncMusic.
+        } else if (track.kind === 'music' || track.kind === 'voice_over') {
+          // Music and voice-overs follow the project's audio settings instead; see #syncMusic and #syncVoices.
           continue;
         } else {
           const el = new Audio();
@@ -386,6 +431,8 @@ export class EditorState {
 
   #syncMedia(t: number): void {
     const speed = this.rate * (this.clipAt(t)?.speed ?? 1);
+    // While a voice-over records, the video plays silently so nothing echoes into the microphone.
+    const monitor = this.voiceOver ? 0 : 1;
     for (const sound of this.#sounds) {
       // The microphone plays from its cleaned-up copy while cleanup is on, as the export will.
       const source =
@@ -397,15 +444,141 @@ export class EditorState {
           : sound.kind === 'system_audio'
             ? this.project.audio.system
             : 1;
-      this.#setLevel(sound, Math.max(0, level));
+      this.#setLevel(sound, Math.max(0, level) * monitor);
       this.#follow(sound.el, sound.offset, t, speed);
     }
     if (this.#cameraVideo && this.camera) this.#follow(this.#cameraVideo, this.camera.offset, t, speed);
-    this.#syncMusic(t);
+    this.#syncMusic(t, monitor);
+    this.#syncVoices(t, monitor);
+  }
+
+  /** Voice-overs play on the finished video's timeline, like music: through cuts, ignoring speed changes. */
+  #syncVoices(t: number, monitor: number): void {
+    const voices = this.path ? this.project.audio.voiceOvers : [];
+    for (const [id, player] of this.#voices) {
+      const voice = voices.find((v) => v.id === id);
+      if (!voice || `${this.path}/${voice.path}` !== player.file) {
+        this.#voices.delete(id);
+        player.el.pause();
+        player.el.removeAttribute('src');
+        player.el.load();
+      }
+    }
+    const out = this.outputTimeAt(t);
+    for (const voice of voices) {
+      const file = `${this.path}/${voice.path}`;
+      const player = this.#voices.get(voice.id);
+      if (!player) {
+        const el = new Audio();
+        el.preload = 'auto';
+        this.#voices.set(voice.id, { el, file });
+        void mediaUrl(file).then((url) => {
+          if (this.#voices.get(voice.id)?.el !== el) return;
+          el.src = url;
+          this.#syncMedia(this.time);
+        });
+        continue;
+      }
+      if (!player.el.getAttribute('src')) continue;
+      // An element plays at most at full volume; above 100% is for the export.
+      player.el.volume = Math.min(1, Math.max(0, voice.volume)) * monitor;
+      if (out < voice.start - 0.01 || out > voice.start + voice.seconds) {
+        if (!player.el.paused) player.el.pause();
+        continue;
+      }
+      this.#follow(player.el, voice.start, out, this.rate);
+    }
+  }
+
+  #releaseVoices(): void {
+    for (const { el } of this.#voices.values()) {
+      el.pause();
+      el.removeAttribute('src');
+      el.load();
+    }
+    this.#voices.clear();
+  }
+
+  /**
+   * Records a voice-over from the playhead: the video plays, silently, while the person talks, and the take lands
+   * on the finished video's timeline where it started. Pausing, the end of the video or Stop finishes it.
+   */
+  async recordVoiceOver(microphone?: string): Promise<void> {
+    if (this.voiceOver || this.voiceOverBusy || this.still) return;
+    if (isTauri && !this.path) {
+      toast('Open one of your recordings to add a voice-over to it.');
+      return;
+    }
+    this.voiceOverBusy = true;
+    try {
+      this.pause();
+      if (this.time >= this.project.duration - 0.05) this.seek(0);
+      this.rate = 1;
+      await startVoiceOver(this.path ?? '', microphone);
+      this.voiceOver = { start: this.outputTimeAt(this.time) };
+      this.voiceOverBusy = false;
+      this.play();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast(`Couldn’t record a voice-over: ${message}`, {
+        tone: 'danger',
+        timeout: 10000,
+        action: /› Microphone|Privacy/.test(message)
+          ? { label: 'Open settings', run: () => openPermissionSettings('microphone') }
+          : undefined,
+      });
+    } finally {
+      this.voiceOverBusy = false;
+    }
+  }
+
+  /** Finishes the voice-over being recorded and adds it, or with `keep` false throws it away. */
+  async finishVoiceOver(keep = true): Promise<void> {
+    const recording = this.voiceOver;
+    if (!recording || this.voiceOverBusy) return;
+    this.voiceOverBusy = true;
+    this.voiceOver = null;
+    if (this.playing) this.pause();
+    try {
+      if (!keep) {
+        await discardVoiceOver();
+        toast('Voice-over thrown away.');
+        return;
+      }
+      const file = await stopVoiceOver();
+      const p = this.project;
+      const voice: VoiceOver = {
+        id: `voice-over-${Date.now()}`,
+        path: file.path,
+        name: voiceOverName(file.path),
+        volume: 1,
+        start: recording.start,
+        seconds: file.seconds,
+      };
+      this.change('Record voice-over', () => p.audio.voiceOvers.push(voice));
+      this.#syncMedia(this.time);
+      toast(`${voice.name} added: ${Math.max(1, Math.round(file.seconds))} s from ${timecode(voice.start)}`, {
+        tone: 'success',
+        action: { label: 'Undo', run: () => this.undo() },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast(`Couldn’t save the voice-over: ${message}`, { tone: 'danger', timeout: 10000 });
+    } finally {
+      this.voiceOverBusy = false;
+    }
+  }
+
+  removeVoiceOver(id: string): void {
+    const voices = this.project.audio.voiceOvers;
+    const voice = voices.find((v) => v.id === id);
+    if (!voice) return;
+    this.change(`Remove ${voice.name}`, () => voices.splice(voices.indexOf(voice), 1));
+    this.#syncMedia(this.time);
   }
 
   /** Music plays on the finished video's timeline: it keeps going across cuts and ignores speed changes. */
-  #syncMusic(t: number): void {
+  #syncMusic(t: number, monitor = 1): void {
     const music = this.project.audio.music;
     const file = music && this.path ? `${this.path}/${music.path}` : null;
     if (file !== this.#musicFile) {
@@ -430,7 +603,7 @@ export class EditorState {
     // Music longer than the video fades out over its end, as the export does.
     const fade = music.start + music.seconds > total + 1e-3 ? Math.min(2, (total - music.start) / 2) : 0;
     const level = fade > 0 ? Math.min(1, Math.max(0, (total - out) / fade)) : 1;
-    el.volume = Math.min(1, Math.max(0, music.volume * level));
+    el.volume = Math.min(1, Math.max(0, music.volume * level)) * monitor;
     this.#follow(el, music.start, out, this.rate);
   }
 
@@ -462,7 +635,7 @@ export class EditorState {
     const music = {
       path: file.path,
       name: file.name,
-      volume: p.has.mic ? 0.3 : 0.8,
+      volume: p.has.mic || p.audio.voiceOvers.length ? 0.3 : 0.8,
       start: 0,
       seconds: file.seconds,
     };
@@ -662,6 +835,7 @@ export class EditorState {
 
   /** Plays the click sound now, as the export lays it under each press. */
   #playClick(): void {
+    if (this.voiceOver) return;
     try {
       this.#audio ??= new AudioContext();
       const audio = this.#audio;
@@ -743,6 +917,8 @@ export class EditorState {
     if (this.#audio?.state === 'running') void this.#audio.suspend();
     this.#video?.pause();
     this.#syncMedia(this.time);
+    // A voice-over ends when playback does: paused, or at the end of the video.
+    if (this.voiceOver) void this.finishVoiceOver();
   }
 
   toggle(): void {
@@ -752,6 +928,8 @@ export class EditorState {
 
   seek(t: number): void {
     if (this.still) return;
+    // A voice-over follows the video as it plays; jumping elsewhere finishes it first.
+    if (this.voiceOver) void this.finishVoiceOver();
     this.time = Math.min(this.project.duration, Math.max(0, t));
     const video = this.#video;
     if (video && Math.abs(video.currentTime - this.time) > 0.02) video.currentTime = this.time;
@@ -944,8 +1122,14 @@ export class EditorState {
   }
 
   destroy(): void {
+    // Closing mid-voice-over throws it away; the app does too, if this doesn't get the chance.
+    if (this.voiceOver) {
+      this.voiceOver = null;
+      void discardVoiceOver();
+    }
     this.pause();
     this.#releaseSounds();
+    this.#releaseVoices();
     clearTimeout(this.#replanTimer);
     clearTimeout(this.#saveTimer);
     void this.#audio?.close();

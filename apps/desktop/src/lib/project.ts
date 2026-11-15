@@ -279,6 +279,16 @@ export function fromCore(core: CoreProject, os: Os): Project {
             seconds: sec(music.duration_us),
           }
         : null,
+      voiceOvers: core.tracks
+        .filter((t) => t.kind === 'voice_over')
+        .map((t) => ({
+          id: t.id,
+          path: t.path,
+          name: t.name || voiceOverName(t.path),
+          volume: t.volume,
+          start: Math.max(0, sec(t.offset_us)),
+          seconds: sec(t.duration_us),
+        })),
     },
     captions: { state: core.captions.length ? 'ready' : 'none', style: 'bar', show: true },
     keystrokes: core.zoom.keystrokes,
@@ -297,6 +307,12 @@ export function effectDefaults(capture: { width: number; height: number }) {
     from: { x: w * 0.75, y: h * 0.3 },
     to: { x: w * 0.6, y: h * 0.18 },
   };
+}
+
+/** A voice-over's name from its file: `media/voice-over 3.m4a` is “Voice-over 3”. */
+export function voiceOverName(path: string): string {
+  const n = /voice-over (\d+)\.m4a$/.exec(path)?.[1];
+  return n ? `Voice-over ${n}` : 'Voice-over';
 }
 
 /** The editor's shadow strength (0 to 1) as the project's shadow opacity. */
@@ -409,8 +425,20 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
     if (track.kind === 'microphone') track.volume = p.audio.mic;
     if (track.kind === 'system_audio') track.volume = p.audio.system;
   }
-  // Music plays on the finished video's timeline, from `start`.
-  core.tracks = core.tracks.filter((t) => t.kind !== 'music');
+  // Music and voice-overs play on the finished video's timeline, from `start`.
+  core.tracks = core.tracks.filter((t) => t.kind !== 'music' && t.kind !== 'voice_over');
+  for (const voice of p.audio.voiceOvers) {
+    core.tracks.push({
+      id: voice.id,
+      kind: 'voice_over',
+      path: voice.path,
+      duration_us: us(voice.seconds),
+      offset_us: us(voice.start),
+      volume: voice.volume,
+      muted: false,
+      name: voice.name,
+    });
+  }
   const music = p.audio.music;
   if (music) {
     core.tracks.push({

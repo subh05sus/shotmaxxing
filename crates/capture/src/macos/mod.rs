@@ -7,6 +7,7 @@ mod input;
 mod preview;
 mod writer;
 
+pub use devices::Voice;
 pub use preview::{cameras, microphones, screenshot, thumbnails};
 
 use std::sync::mpsc::sync_channel;

@@ -15,6 +15,7 @@ mod shortcuts;
 mod system;
 mod takes;
 mod tray;
+mod voice_over;
 mod windows;
 
 use tauri::{Manager, RunEvent, WindowEvent};
@@ -44,6 +45,7 @@ pub fn run() {
         .manage(system::MenuBarIcon::default())
         .manage(export::Exports::default())
         .manage(takes::Takes::default())
+        .manage(voice_over::VoiceOvers::default())
         .setup(|app| {
             let handle = app.handle();
             tray::create(handle)?;
@@ -70,6 +72,9 @@ pub fn run() {
             recording::start_recording,
             screenshots::take_screenshot,
             screenshots::copy_screenshot,
+            voice_over::start_voice_over,
+            voice_over::stop_voice_over,
+            voice_over::discard_voice_over,
             recording::stop_recording,
             recording::discard_recording,
             recording::restart_recording,
@@ -105,13 +110,24 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Shotmaxxing could not start");
 
-    app.run(|app, event| match event {
+    app.run(|app, event| {
+        // A voice-over its editor can't finish any more is thrown away, whatever else the event means.
+        if let RunEvent::WindowEvent { label, event: WindowEvent::Destroyed, .. } = &event {
+            app.state::<voice_over::VoiceOvers>().abandon(Some(label));
+        }
+        on_event(app, event);
+    });
+}
+
+fn on_event(app: &tauri::AppHandle, event: RunEvent) {
+    match event {
         // Closing the last window keeps the app running in the menu bar. Quit from the menu ends it.
         RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
         // Quitting mid-recording keeps the take.
         RunEvent::Exit => {
             app.state::<recording::Recordings>().finish_on_quit();
             app.state::<export::Exports>().cancel_all();
+            app.state::<voice_over::VoiceOvers>().abandon(None);
         }
         // The take card can't be closed while it asks or a take plays: it comes straight back.
         RunEvent::WindowEvent { label, event: WindowEvent::Destroyed, .. }
@@ -138,5 +154,5 @@ pub fn run() {
             }
         }
         _ => {}
-    });
+    }
 }

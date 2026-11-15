@@ -211,7 +211,7 @@ export type CoreEvent =
   | { type: string; t_us: number };
 
 export interface TrackMedia {
-  kind: 'camera' | 'microphone' | 'system_audio' | 'music';
+  kind: 'camera' | 'microphone' | 'system_audio' | 'music' | 'voice_over';
   path: string;
   /** Where it starts on the screen's timeline; negative when it started first. */
   offset_us: number;
@@ -545,6 +545,42 @@ export function planAutoZooms(path: string, depth: string): Promise<CoreZoom[]> 
 /** A URL the web view can stream a local file from. */
 export async function mediaUrl(path: string): Promise<string> {
   return convertFileSrc(path);
+}
+
+// Voice-overs ----------------------------------------------------------------------------------------------------
+
+/** A finished voice-over: its file in the project folder and how long it plays. */
+export interface VoiceOverFile {
+  path: string;
+  seconds: number;
+}
+
+// The browser preview pretends to record, so the flow can be tried without a microphone.
+let previewVoiceStarted = 0;
+let previewVoiceCount = 0;
+
+/**
+ * Starts recording a voice-over into `project` from `microphone` (the default when empty). Resolves once the
+ * microphone is sending sound, so playback can start in step with it.
+ */
+export function startVoiceOver(project: string, microphone?: string): Promise<void> {
+  return call('start_voice_over', { project, microphone: microphone || null }, async () => {
+    await new Promise((r) => setTimeout(r, 300));
+    previewVoiceStarted = performance.now();
+  });
+}
+
+/** Stops the voice-over and finishes its file. */
+export function stopVoiceOver(): Promise<VoiceOverFile> {
+  return call('stop_voice_over', undefined, () => ({
+    path: `media/voice-over ${++previewVoiceCount}.m4a`,
+    seconds: (performance.now() - previewVoiceStarted) / 1000,
+  }));
+}
+
+/** Stops the voice-over and throws it away. */
+export function discardVoiceOver(): Promise<void> {
+  return call('discard_voice_over', undefined, () => undefined);
 }
 
 /** Music the person picked, copied into the project. */

@@ -26,8 +26,8 @@ const PROJECT_FILE: &str = "project.json";
 const SUBDIRS: [&str; 4] = ["media", "telemetry", "cache", "history"];
 /// Version history keeps this many snapshots; older ones are pruned.
 const MAX_SNAPSHOTS: usize = 100;
-/// A music copy this new may belong to an import that hasn't been saved into the project yet.
-const MUSIC_GRACE: Duration = Duration::from_secs(10 * 60);
+/// A music copy or voice-over this new may not be saved into the project yet.
+const SOUND_GRACE: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Error)]
 pub enum BundleError {
@@ -192,13 +192,28 @@ impl ProjectBundle {
         Ok(())
     }
 
-    /// Deletes the music copies (`media/music.mp3`, `media/music 2.m4a`…) that neither the project nor any version in
-    /// its history plays, and returns their names. Copies are kept while undo may need them: replacing music keeps
-    /// the old copy, and the open editor's undo history isn't on disk. So this runs when a project is opened, skips
-    /// copies made in the last few minutes, and deletes nothing if any version can't be read.
-    pub fn forget_unused_music(&self) -> Result<Vec<String>, BundleError> {
+    /// Where the next voice-over recorded in the editor goes: `media/voice-over 1.m4a`, then 2, and so on, skipping
+    /// files that exist. Relative to the project, as tracks name their files.
+    pub fn next_voice_over(&self) -> String {
+        (1u32..)
+            .map(|n| format!("media/voice-over {n}.m4a"))
+            .find(|path| !self.root.join(path).exists())
+            .unwrap_or_else(|| "media/voice-over.m4a".into())
+    }
+
+    /// Deletes the music copies (`media/music.mp3`, `media/music 2.m4a`…) and voice-overs (`media/voice-over 1.m4a`…)
+    /// that neither the project nor any version in its history plays, and returns their names. They are kept while
+    /// undo may need them: replacing music keeps the old copy, a removed voice-over can come back, and the open
+    /// editor's undo history isn't on disk. So this runs when a project is opened, skips files made in the last few
+    /// minutes, and deletes nothing if any version can't be read.
+    pub fn forget_unused_sounds(&self) -> Result<Vec<String>, BundleError> {
         let music = |project: &Project| -> Vec<String> {
-            project.tracks.iter().filter(|t| t.kind == TrackKind::Music).map(|t| t.path.clone()).collect()
+            project
+                .tracks
+                .iter()
+                .filter(|t| matches!(t.kind, TrackKind::Music | TrackKind::VoiceOver))
+                .map(|t| t.path.clone())
+                .collect()
         };
         let (_, current) = Self::open(&self.root)?;
         let mut used: HashSet<String> = music(&current).into_iter().collect();
@@ -216,13 +231,13 @@ impl ProjectBundle {
         let Ok(entries) = fs::read_dir(self.media_dir()) else { return Ok(removed) };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !is_music_copy(&name) || used.contains(&format!("media/{name}")) {
+            if !(is_music_copy(&name) || is_voice_over(&name)) || used.contains(&format!("media/{name}")) {
                 continue;
             }
             let recent = entry
                 .metadata()
                 .and_then(|m| m.modified())
-                .map(|at| at.elapsed().map_or(true, |age| age < MUSIC_GRACE))
+                .map(|at| at.elapsed().map_or(true, |age| age < SOUND_GRACE))
                 .unwrap_or(true);
             if !recent && fs::remove_file(entry.path()).is_ok() {
                 removed.push(name);
@@ -241,6 +256,13 @@ impl ProjectBundle {
         fs::create_dir_all(cache)?;
         Ok(())
     }
+}
+
+/// Whether `name` is a voice-over the editor recorded: `voice-over <n>.m4a`.
+fn is_voice_over(name: &str) -> bool {
+    name.strip_prefix("voice-over ")
+        .and_then(|rest| rest.strip_suffix(".m4a"))
+        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Whether `name` is one of the copies `import_music` makes: `music.<ext>` or `music <n>.<ext>`.
@@ -338,6 +360,38 @@ mod tests {
     }
 
     #[test]
+    fn voice_overs_take_the_next_free_number_and_are_forgotten_when_nothing_plays_them() {
+        use crate::project::MediaTrack;
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project { name: "Narrated".into(), ..Default::default() };
+        let bundle = ProjectBundle::create(dir.path(), &mut project).unwrap();
+        assert_eq!(bundle.next_voice_over(), "media/voice-over 1.m4a");
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        for name in ["voice-over 1.m4a", "voice-over 2.m4a", "voice-over x.m4a", "voice-over 3.wav"] {
+            let path = bundle.media_dir().join(name);
+            fs::write(&path, b"x").unwrap();
+            File::options().write(true).open(&path).unwrap().set_modified(old).unwrap();
+        }
+        assert_eq!(bundle.next_voice_over(), "media/voice-over 3.m4a");
+        project.tracks.push(MediaTrack {
+            id: "voice-1".into(),
+            kind: TrackKind::VoiceOver,
+            path: "media/voice-over 2.m4a".into(),
+            duration_us: 1_000_000,
+            offset_us: 2_000_000,
+            volume: 1.0,
+            muted: false,
+            name: Some("Voice-over 2".into()),
+        });
+        bundle.save(&mut project).unwrap();
+        // Only the voice-over nothing plays goes; files that only look like one stay.
+        assert_eq!(bundle.forget_unused_sounds().unwrap(), ["voice-over 1.m4a"]);
+        for kept in ["voice-over 2.m4a", "voice-over x.m4a", "voice-over 3.wav"] {
+            assert!(bundle.media_dir().join(kept).exists(), "{kept} should stay");
+        }
+    }
+
+    #[test]
     fn only_music_copies_nothing_plays_are_forgotten() {
         use crate::project::MediaTrack;
         let dir = tempfile::tempdir().unwrap();
@@ -368,7 +422,7 @@ mod tests {
         project.tracks = vec![track("media/music 2.m4a")];
         bundle.save(&mut project).unwrap();
 
-        assert_eq!(bundle.forget_unused_music().unwrap(), ["music 3.wav", "music 4.mp3"]);
+        assert_eq!(bundle.forget_unused_sounds().unwrap(), ["music 3.wav", "music 4.mp3"]);
         for kept in ["music.mp3", "music 2.m4a", "music 5.mp3", "screen.mp4", "musicbox.mp3"] {
             assert!(bundle.media_dir().join(kept).exists(), "{kept} should stay");
         }
@@ -382,7 +436,7 @@ mod tests {
             .set_modified(old)
             .unwrap();
         fs::write(bundle.history_dir().join("1-damaged.json"), b"{ not json").unwrap();
-        assert!(bundle.forget_unused_music().unwrap().is_empty());
+        assert!(bundle.forget_unused_sounds().unwrap().is_empty());
         assert!(bundle.media_dir().join("music 6.mp3").exists());
     }
 

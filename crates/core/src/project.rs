@@ -138,6 +138,9 @@ pub enum TrackKind {
     Microphone,
     SystemAudio,
     Music,
+    /// Narration recorded in the editor. Like music it plays on the finished video's timeline, from its offset,
+    /// untouched by cuts and speed changes.
+    VoiceOver,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]

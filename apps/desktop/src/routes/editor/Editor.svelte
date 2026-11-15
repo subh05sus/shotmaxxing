@@ -17,6 +17,7 @@
     Redo2,
     Scissors,
     Search,
+    Stop,
     Undo2,
     Video,
     X,
@@ -32,6 +33,7 @@
     Keycap,
     ProgressRing,
     Spinner,
+    StatusDot,
     Tooltip,
     confetti,
     env,
@@ -55,7 +57,7 @@
     revealInFolder,
     takeRecordingNotices,
   } from '../../lib/native';
-  import { relativeTime } from '../../lib/format';
+  import { relativeTime, timecode } from '../../lib/format';
   import { shadowOpacity } from '../../lib/project';
   import { EditorState, type ToolId } from './store.svelte';
   import { ASPECTS, sizeForShort } from './camera';
@@ -191,7 +193,7 @@
       'Add a title, an arrow or a blur at the playhead. Blur hides emails, tokens and names before you share.',
     camera: 'Move and shape your camera bubble. It can shrink during zooms so it never covers the action.',
     audio:
-      'Set levels for your voice and the computer’s sound. Cleanup and silence cutting run on this computer.',
+      'Set levels for your voice and the computer’s sound, record a voice-over or add music. Cleanup and silence cutting run on this computer.',
     ai: 'Captions, voice cleanup and silence cutting run locally with open models. Nothing leaves this computer.',
   };
 
@@ -501,6 +503,8 @@
     else if (e.key === ' ') (e.preventDefault(), ed.toggle());
     else if (e.key === 'k' || e.key === 'K') ed.pause();
     else if (e.key === 'l' || e.key === 'L') {
+      // A voice-over records in real time, so it keeps the normal speed.
+      if (ed.voiceOver) return;
       ed.rate = ed.playing && ed.rate > 0 ? Math.min(4, ed.rate * 2) : 1;
       ed.play();
     } else if (e.key === 'j' || e.key === 'J') (ed.pause(), ed.seek(ed.time - 5));
@@ -513,8 +517,10 @@
     else if (e.key === 'Backspace' || e.key === 'Delete') {
       const label = ed.deleteSelection();
       if (label) toast(label, { action: { label: 'Undo', run: () => ed.undo() } });
-    } else if (e.key === 'Escape') ed.selection = null;
-    else if (/^[1-7]$/.test(e.key)) ed.tool = TOOLS[Number(e.key) - 1].id;
+    } else if (e.key === 'Escape') {
+      if (ed.voiceOver) void ed.finishVoiceOver();
+      else ed.selection = null;
+    } else if (/^[1-7]$/.test(e.key)) ed.tool = TOOLS[Number(e.key) - 1].id;
   }
 
   /** A screenshot's keys: nothing plays, so the arrows move the selected title, arrow or blur. */
@@ -661,6 +667,28 @@
           onclick={() => (ui.palette = true)}
         /></span
       >
+      {#if ed.voiceOver}
+        {@const recording = ed.voiceOver}
+        <span
+          class="ml-1 flex h-7 items-center gap-1.5 rounded-full bg-fill px-2.5 text-footnote font-medium tabular"
+          in:fade={{ duration: 140 }}
+          aria-live="polite"
+        >
+          <StatusDot tone="record" /> Voice-over {timecode(
+            Math.max(0, ed.outputTimeAt(ed.time) - recording.start),
+          )}
+          <Tooltip label="Stop and keep it" chord="space">
+            <button
+              type="button"
+              class="press-icon -mr-1 grid size-5 place-items-center rounded-full text-fg-muted hover:bg-fill-strong hover:text-fg"
+              aria-label="Stop the voice-over"
+              onclick={() => void ed.finishVoiceOver()}
+            >
+              <Icon icon={Stop} size={10} aria-hidden="true" />
+            </button>
+          </Tooltip>
+        </span>
+      {/if}
       {#if activeExport}
         <span
           class="ml-1 flex h-7 items-center gap-1.5 rounded-full bg-fill px-2.5 text-footnote font-medium tabular"

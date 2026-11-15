@@ -30,7 +30,9 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [x] Auto zoom (multi-signal, explainable) and manual zooms, replanned as its settings change
 - [x] Timeline: trim, split, speed, text, arrows, blur
 - [x] Music under the whole video: through cuts, fading out at the end, in the editor, the export and MCP
-- [ ] Voice-over recorded in the editor
+- [x] Voice-over recorded in the editor: the video plays silently from the playhead while the microphone records
+      (AVCaptureSession on macOS, WASAPI on Windows); each take plays on the finished timeline like music, so later
+      cuts don't shift it, with its own volume (to try live with a microphone)
 - [x] Webcam bubble
 - [x] Export: MP4 (H.264, HEVC) and GIF, with the sound mixed
 - [ ] Windows export: MP4 (with the sound mixed), GIF and PNG through Media Foundation, the portable compositor

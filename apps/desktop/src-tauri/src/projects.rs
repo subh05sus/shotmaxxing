@@ -161,13 +161,14 @@ pub async fn cursor_path(
 pub async fn load_project<R: Runtime>(app: AppHandle<R>, path: String) -> Result<LoadedProject, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let (bundle, project) = ProjectBundle::open(&path).map_err(text)?;
-        // Music replaced in an earlier session: once the project is reopened, no undo can bring those copies back.
-        match bundle.forget_unused_music() {
+        // Music replaced and voice-overs removed in an earlier session: once the project is reopened, no undo can
+        // bring those files back.
+        match bundle.forget_unused_sounds() {
             Ok(removed) if !removed.is_empty() => {
-                tracing::info!(?removed, "removed music copies nothing plays")
+                tracing::info!(?removed, "removed music and voice-overs nothing plays")
             }
             Ok(_) => {}
-            Err(error) => tracing::warn!(%error, "could not look for unused music copies"),
+            Err(error) => tracing::warn!(%error, "could not look for unused music and voice-overs"),
         }
         let root = bundle.root().to_path_buf();
         allow_media(&app, &root);

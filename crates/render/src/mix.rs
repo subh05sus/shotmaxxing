@@ -66,7 +66,11 @@ fn plan(project: &RenderProject, sound: &Sound, seconds: f64, level: f32) -> Vec
         if length <= 0.002 {
             return Vec::new();
         }
-        let fade = if start + seconds > total + 1e-3 { MUSIC_FADE_OUT.min(length / 2.0) } else { FADE };
+        let fade = if sound.fades_out && start + seconds > total + 1e-3 {
+            MUSIC_FADE_OUT.min(length / 2.0)
+        } else {
+            FADE
+        };
         return vec![Segment {
             at: frames(start),
             length: frames(length),
@@ -504,7 +508,7 @@ mod tests {
     }
 
     fn sound(path: &str, offset: f64, volume: f64, continuous: bool) -> Sound {
-        Sound { path: PathBuf::from(path), offset, volume, continuous }
+        Sound { path: PathBuf::from(path), offset, volume, continuous, fades_out: continuous }
     }
 
     fn clip(start: f64, end: f64, speed: f64) -> Clip {
@@ -582,6 +586,33 @@ mod tests {
         assert!((rms(&pcm, 0.95, 1.05) - full).abs() < 0.03);
         assert!(rms(&pcm, 1.7, 1.8) < full * 0.35);
         assert!(pcm[pcm.len() - 2].abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_voice_over_plays_where_it_was_recorded_and_stops_with_the_video() {
+        // Recorded from 0.5 s into the finished video, for 4 s: the video, after its cut, is 2 s long.
+        let voice = Sound { fades_out: false, ..sound("voice-over", 0.5, 1.0, true) };
+        let p = project(vec![clip(0.0, 1.0, 1.0), clip(2.0, 3.0, 1.0)], vec![voice]);
+        let segments = plan(&p, &p.sounds[0], 4.0, 1.0);
+        // One stretch from where it started, through the cut, cut short at the end without music's long fade.
+        assert_eq!(
+            segments,
+            vec![Segment {
+                at: frames(0.5),
+                length: frames(1.5),
+                from: 0,
+                speed: 1.0,
+                level: 1.0,
+                fade_in: frames(FADE),
+                fade_out: frames(FADE)
+            }]
+        );
+        let mut open = |_: &Path| -> Opened { Ok(Some(Box::new(Tone::new(330.0, 0.5, 4.0)))) };
+        let mut mixer = Mixer::new(&p, &mut open).unwrap().unwrap();
+        let pcm = mix_all(&mut mixer);
+        let tone = 0.5 / 2f32.sqrt();
+        assert!(rms(&pcm, 0.0, 0.45) < 1e-4, "silent before it starts");
+        assert!((rms(&pcm, 1.6, 1.95) - tone).abs() < 0.01, "full level up to the end");
     }
 
     #[test]

@@ -9,6 +9,7 @@
     BookOpen,
     Captions,
     Lock,
+    Mic,
     Music,
     RefreshCw,
     Type,
@@ -27,10 +28,12 @@
     Segmented,
     Slider,
     Spinner,
+    StatusDot,
     Switch,
     toast,
   } from '@shotmaxxing/ui';
   import { timecode } from '../../lib/format';
+  import { settings } from '../../lib/settings.svelte';
   import { WALLPAPERS } from '../../lib/wallpapers';
   import { go } from '../../lib/router.svelte';
   import type { EditorState, ToolId } from './store.svelte';
@@ -45,7 +48,7 @@
     zoom: { title: 'Zoom', blurb: 'Push in where the action is.', guide: 'auto-zoom' },
     annotate: { title: 'Annotate', blurb: 'Titles, arrows and blur.', guide: 'blur' },
     camera: { title: 'Camera', blurb: 'You, in a bubble.', guide: 'record-camera' },
-    audio: { title: 'Audio', blurb: 'Voice, system sound and music.' },
+    audio: { title: 'Audio', blurb: 'Voice, system sound, voice-overs and music.', guide: 'voice-over' },
     ai: { title: 'AI helpers', blurb: 'Captions, cleanup and cuts, made on this computer.' },
   };
 
@@ -570,6 +573,71 @@
             disabled={ed.voiceBusy !== null}
           />
         </label>{/if}
+      <section class="mt-3 rounded-[10px] border border-border p-3" aria-label="Voice-over">
+        <h3 class="flex items-center gap-2 text-callout font-semibold">
+          <Icon icon={Mic} size={15} aria-hidden="true" /> Voice-over
+        </h3>
+        {#if ed.voiceOver}
+          {@const recording = ed.voiceOver}
+          <p class="mt-1.5 flex items-center gap-2 text-callout font-medium tabular" aria-live="polite">
+            <StatusDot tone="record" /> Recording · {timecode(
+              Math.max(0, ed.outputTimeAt(ed.time) - recording.start),
+            )}
+          </p>
+          <p class="mt-1 text-footnote text-fg-muted">
+            The video plays without sound, so nothing echoes into your microphone.
+          </p>
+          <div class="mt-2.5 flex items-center gap-2">
+            <Button size="sm" variant="primary" onclick={() => void ed.finishVoiceOver()}
+              >Stop <Keycap chord="space" tone="on-accent" /></Button
+            >
+            <Button size="sm" variant="ghost" onclick={() => void ed.finishVoiceOver(false)}>Discard</Button>
+          </div>
+        {:else}
+          {#each p.audio.voiceOvers as voice (voice.id)}
+            <div class="mt-2.5 flex items-center gap-2.5">
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-callout font-semibold">{voice.name}</span>
+                <span class="block text-footnote text-fg-muted tabular"
+                  >Starts at {timecode(voice.start)} · {timecode(voice.seconds)} long</span
+                >
+              </span>
+              <IconButton
+                icon={X}
+                label="Remove {voice.name}"
+                size="sm"
+                onclick={() => ed.removeVoiceOver(voice.id)}
+              />
+            </div>
+            <Slider
+              label="Volume"
+              value={voice.volume}
+              min={0}
+              max={1.5}
+              step={0.05}
+              format={pct}
+              onchange={(v) => ed.change('Voice-over volume', () => (voice.volume = v))}
+            />
+          {:else}
+            <p class="mt-1 text-footnote text-fg-muted">
+              Talk over the video as it plays from the playhead. It stays in step when you cut or speed things
+              up later.
+            </p>
+          {/each}
+          <Button
+            class="mt-2.5"
+            size="sm"
+            icon={Mic}
+            disabled={ed.voiceOverBusy}
+            onclick={() => void ed.recordVoiceOver(settings.microphoneId)}
+            >{ed.voiceOverBusy
+              ? 'Starting…'
+              : p.audio.voiceOvers.length
+                ? 'Record another'
+                : 'Record a voice-over'}</Button
+          >
+        {/if}
+      </section>
       <section class="mt-3 rounded-[10px] border border-border p-3" aria-label="Music">
         {#if p.audio.music}
           {@const music = p.audio.music}

@@ -93,6 +93,30 @@ impl AudioRecorder {
     }
 }
 
+/// A microphone recorded on its own, for a voice-over.
+pub struct Voice {
+    recorder: AudioRecorder,
+}
+
+impl Voice {
+    /// Starts recording `device` (the default microphone when `None`) into `output`, and returns once it runs.
+    pub fn start(device: Option<String>, output: &Path) -> Result<Self, crate::CaptureError> {
+        AudioRecorder::start(Source::Microphone(device), output)
+            .map(|recorder| Self { recorder })
+            .map_err(crate::CaptureError::Device)
+    }
+
+    /// Stops and finishes the file. Returns how long it plays, in seconds; fails (and leaves no file) when the
+    /// microphone sent nothing.
+    pub fn stop(self) -> Result<f64, crate::CaptureError> {
+        match self.recorder.stop() {
+            Ok(Some((first, end))) if end > first => Ok(end - first),
+            Ok(_) => Err(crate::CaptureError::Device("The microphone didn't send any sound.".into())),
+            Err(error) => Err(crate::CaptureError::Device(error)),
+        }
+    }
+}
+
 impl Drop for AudioRecorder {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);

@@ -37,6 +37,7 @@ mod input;
 mod preview;
 mod record;
 
+pub use audio::Voice;
 pub use record::Recorder;
 
 /// Classes of the shell's own windows: the desktop, the taskbars and the shell's pop-ups.

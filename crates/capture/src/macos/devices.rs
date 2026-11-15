@@ -1,9 +1,10 @@
 //! The microphone and the camera, recorded by one capture session alongside the screen. Their sample buffers carry
 //! host-clock times like the screen's, so every track lines up afterwards.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dispatch2::{DispatchQueue, DispatchRetained};
 use objc2::rc::Retained;
@@ -36,6 +37,8 @@ enum CameraWriter {
 struct Shared {
     mic: Mutex<Option<AudioWriter>>,
     camera: Mutex<Option<CameraWriter>>,
+    /// The microphone has sent its first sound.
+    heard: AtomicBool,
 }
 
 struct Ivars {
@@ -85,6 +88,7 @@ define_class!(
                         && let Some(writer) = guard.as_mut()
                     {
                         writer.append(sample);
+                        shared.heard.store(true, Ordering::Release);
                     }
                 }
             }
@@ -171,7 +175,11 @@ impl DeviceCapture {
             return Ok(None);
         }
         let mut warnings = Vec::new();
-        let shared = Arc::new(Shared { mic: Mutex::new(None), camera: Mutex::new(None) });
+        let shared = Arc::new(Shared {
+            mic: Mutex::new(None),
+            camera: Mutex::new(None),
+            heard: AtomicBool::new(false),
+        });
         let delegate = DeviceOutput::new(shared.clone());
         let queue = DispatchQueue::new("dev.shotmaxxing.devices", None);
         let (audio_type, video_type) = (
@@ -321,6 +329,50 @@ impl DeviceCapture {
             _ => None,
         };
         Stopped { microphone: mic, camera, warnings: std::mem::take(&mut self.warnings) }
+    }
+}
+
+/// A microphone recorded on its own, for a voice-over: the same session as beside a screen recording, without one.
+pub struct Voice {
+    capture: DeviceCapture,
+}
+
+impl Voice {
+    /// Starts recording `device` (the default microphone when `None`) into `output`, and returns once it sends sound
+    /// (or after two seconds), so whatever starts next lines up with the file's beginning.
+    pub fn start(device: Option<String>, output: &Path) -> Result<Self, CaptureError> {
+        let choice = DeviceRecording { device, output: output.to_path_buf() };
+        let capture = DeviceCapture::start(Some(&choice), None)?
+            .ok_or_else(|| CaptureError::Device("No microphone was chosen.".into()))?;
+        let recording = capture.shared.mic.lock().is_ok_and(|mic| mic.is_some());
+        if !recording {
+            // Why is in the warnings: not allowed, not found, or busy.
+            let why = capture.warnings.first().cloned();
+            return Err(CaptureError::Device(
+                why.unwrap_or_else(|| "The microphone couldn't be recorded.".into()),
+            ));
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !capture.shared.heard.load(Ordering::Acquire) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(Self { capture })
+    }
+
+    /// Stops and finishes the file. Returns how long it plays, in seconds; fails (and leaves no file) when the
+    /// microphone sent nothing.
+    pub fn stop(self) -> Result<f64, CaptureError> {
+        let stopped = self.capture.stop(0.0);
+        match stopped.microphone {
+            Some((first, end)) if end > first => Ok(end - first),
+            _ => Err(CaptureError::Device(
+                stopped
+                    .warnings
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| "The microphone didn't send any sound.".into()),
+            )),
+        }
     }
 }
 

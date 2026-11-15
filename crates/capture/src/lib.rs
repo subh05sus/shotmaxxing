@@ -58,6 +58,54 @@ pub enum CaptureError {
     System(String),
     #[error("Couldn't write the recording: {0}")]
     Io(#[from] std::io::Error),
+    /// A microphone or camera that can't be used, said as the person should read it.
+    #[error("{0}")]
+    Device(String),
+}
+
+/// A voice-over being recorded: a microphone on its own, for the editor to lay over a finished video.
+pub struct VoiceRecorder {
+    inner: imp::Voice,
+    output: PathBuf,
+    started: std::time::Instant,
+}
+
+/// A finished voice-over.
+#[derive(Clone, Debug)]
+pub struct VoiceTake {
+    pub output: PathBuf,
+    pub duration_us: u64,
+}
+
+impl VoiceRecorder {
+    /// Starts recording `microphone` (the system's default when `None`) into `output`, an `.m4a`, and returns once
+    /// the microphone is sending sound, so what starts playing next lines up with the file's beginning.
+    pub fn start(microphone: Option<String>, output: impl Into<PathBuf>) -> Result<Self, CaptureError> {
+        let output = output.into();
+        if let Some(folder) = output.parent() {
+            std::fs::create_dir_all(folder)?;
+        }
+        let inner = imp::Voice::start(microphone, &output)?;
+        Ok(Self { inner, output, started: std::time::Instant::now() })
+    }
+
+    /// Seconds since it started.
+    pub fn elapsed(&self) -> f64 {
+        self.started.elapsed().as_secs_f64()
+    }
+
+    /// Stops and finishes the file. Fails, leaving no file behind, when the microphone sent nothing.
+    pub fn stop(self) -> Result<VoiceTake, CaptureError> {
+        let seconds = self.inner.stop()?;
+        Ok(VoiceTake { output: self.output, duration_us: (seconds * 1e6).round() as u64 })
+    }
+
+    /// Stops and throws the recording away.
+    pub fn discard(self) {
+        let output = self.output.clone();
+        let _ = self.inner.stop();
+        let _ = std::fs::remove_file(output);
+    }
 }
 
 /// A display that can be recorded. Sizes and positions are in points, in global screen coordinates.

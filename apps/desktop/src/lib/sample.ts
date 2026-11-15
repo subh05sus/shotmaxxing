@@ -223,6 +223,20 @@ export const GUIDES: Guide[] = [
     tool: 'cursor',
   },
   {
+    id: 'voice-over',
+    title: 'Record a voice-over',
+    minutes: 1,
+    group: 'Edit',
+    summary: 'Talk people through the video after you’ve recorded it.',
+    steps: [
+      'Open Audio in the editor and put the playhead where you want to start talking.',
+      'Click Record a voice-over. The video plays without sound while you talk, so nothing echoes.',
+      'Press Space or Stop when you’re done. It starts where the playhead was and stays in step through later cuts.',
+      'Set its volume, record another, or remove it with the cross.',
+    ],
+    tool: 'audio',
+  },
+  {
     id: 'trim',
     title: 'Trim, split and speed up',
     minutes: 2,
