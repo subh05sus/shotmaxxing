@@ -84,6 +84,11 @@ pub(super) struct Crop {
     /// Which of `screens` the window is on.
     pub screen: usize,
     /// Where the window is, on the desktop.
+    pub window: CGRect,
+    /// For a full-screen app, how far its toolbars (windows of their own) reach above its window, in points; 0 for
+    /// every other window.
+    pub top: f64,
+    /// What's recorded, on the desktop: the window, with its toolbars when it's in full screen ([`window::reach`]).
     pub rect: CGRect,
 }
 
@@ -154,7 +159,7 @@ struct Following {
     crop: Crop,
     settings: StreamSettings,
     id: u32,
-    /// The window's real size, to tell a Stage Manager thumbnail from a resized window.
+    /// The take's size, the window's real size, to tell a Stage Manager thumbnail from a resized window.
     size: (f64, f64),
     stage_manager: bool,
     gate: Arc<Gate>,
@@ -218,7 +223,7 @@ fn run(mut f: Following, stop: &AtomicBool) {
         } else {
             (last, still) = (Some(rect), 0);
         }
-        if same(rect, f.crop.rect) {
+        if same(rect, f.crop.window) {
             // Under the crop: frames flow, from once it has been still there a moment.
             if f.gate.is_held() && still >= 1 {
                 tracing::debug!(id = f.id, "the window is back under the crop");
@@ -233,9 +238,12 @@ fn run(mut f: Following, stop: &AtomicBool) {
         if still < STILL {
             continue;
         }
-        // Still somewhere new. Partly off its display, or across two, it stays held.
-        let Some(screen) = screen_for(&f.crop.screens, rect) else { continue };
-        if move_crop(&f.stream, &mut f.crop, screen, rect, &f.settings) {
+        // Still somewhere new, or another size (shown in the take's size, as the window's whole picture). Partly off
+        // its display, or across two, it stays held.
+        let frames: Vec<CGRect> = f.crop.screens.iter().map(|screen| screen.frame).collect();
+        let area = window::reach(rect, f.crop.top, &frames);
+        let Some(screen) = screen_for(&f.crop.screens, area) else { continue };
+        if move_crop(&f.stream, &mut f.crop, screen, rect, area, &f.settings) {
             tracing::debug!(id = f.id, ?rect, "the crop moved to the window");
             f.gate.open_from(clock::now() + SETTLING);
         } else {
@@ -246,13 +254,14 @@ fn run(mut f: Following, stop: &AtomicBool) {
     }
 }
 
-/// Moves the crop to `rect` on `screens[screen]`, first changing the stream's display when it's another one, and
-/// waits for the stream to take each change. Whether it did.
+/// Moves the crop to `area` on `screens[screen]`, for the window now at `window`, first changing the stream's display
+/// when it's another one, and waits for the stream to take each change. Whether it did.
 fn move_crop(
     stream: &SCStream,
     crop: &mut Crop,
     screen: usize,
-    rect: CGRect,
+    window: CGRect,
+    area: CGRect,
     settings: &StreamSettings,
 ) -> bool {
     if screen != crop.screen {
@@ -265,13 +274,13 @@ fn move_crop(
         }
         crop.screen = screen;
     }
-    let config = settings.configuration(Some(source_rect(crop.screens[screen].frame, rect)));
+    let config = settings.configuration(Some(source_rect(crop.screens[screen].frame, area)));
     // SAFETY: as above, with a new configuration.
     if !applied(|done| unsafe { stream.updateConfiguration_completionHandler(&config, Some(done)) }) {
         tracing::debug!("the window take's crop couldn't follow the window");
         return false;
     }
-    crop.rect = rect;
+    (crop.window, crop.rect) = (window, area);
     true
 }
 

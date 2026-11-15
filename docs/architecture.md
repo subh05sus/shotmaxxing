@@ -81,7 +81,14 @@ These are the rules the code is reviewed against.
   pill. Analysis (auto zoom, silence detection) runs after stopping and takes about a second.
 - **Capture at the right size.** We capture at the display's native pixel size and never upscale. For window
   recordings, only the window's pixels are encoded: its app's windows on the display, cropped to the window (the
-  crop follows it), so a menu that opens over it shows at full size rather than shrinking the picture.
+  crop follows it), so a menu that opens over it shows at full size rather than shrinking the picture. A take
+  starts only once the window is at its own size: with Stage Manager on, macOS reports a window smaller than it is
+  while it's parked or coming back to the stage, so the take waits until the size the app gives (through
+  Accessibility, when allowed) is the one on screen. A full-screen app is recorded with its toolbars, which can be
+  windows of their own above its window.
+- **Full-screen apps.** Each has a Space of its own, and macOS only pictures the Space that's showing, so the
+  picker lists full-screen apps from other Spaces by their icon, and recording one takes the Mac to its Space first.
+  The record dialog opens over a full-screen app, and the recording pill and take card show there.
 
 ### Editing and preview
 

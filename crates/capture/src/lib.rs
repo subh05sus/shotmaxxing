@@ -57,6 +57,11 @@ pub enum CaptureError {
     /// A window Stage Manager has parked in its strip that couldn't be brought back to the stage.
     #[error("That window is parked in Stage Manager's strip. Click it to bring it back, then try again.")]
     Parked,
+    /// A window that's open but not on the Space showing (minimised, hidden or on another desktop), and didn't come.
+    #[error(
+        "That window isn't on this desktop: it may be minimised or on another desktop. Show it, then try again."
+    )]
+    Away,
     #[error("The capture system reported a problem: {0}")]
     System(String),
     #[error("Couldn't write the recording: {0}")]
@@ -133,6 +138,13 @@ pub struct WindowInfo {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    /// A full-screen app's window, filling a Space of its own (macOS).
+    #[serde(default)]
+    pub full_screen: bool,
+    /// On another Space, as a full-screen app is while another Space shows: it can't be pictured from here, and
+    /// recording it, or a screenshot of it, goes there first.
+    #[serde(default)]
+    pub away: bool,
 }
 
 /// A microphone or camera.
@@ -253,7 +265,7 @@ pub struct Recording {
     pub warnings: Vec<String>,
 }
 
-/// Lists displays and on-screen windows.
+/// Lists displays, the windows showing on this Space, and full-screen apps' windows on Spaces of their own.
 pub fn sources() -> Result<Sources, CaptureError> {
     imp::sources()
 }
@@ -266,6 +278,9 @@ pub enum Thumbnail {
     /// A window that Stage Manager has parked in its strip, which can't be pictured as it is there (it would come out
     /// small and tilted). It comes forward when it's recorded or pictured. Its app's icon, as a PNG, when it has one.
     Parked { icon: Option<Vec<u8>> },
+    /// A window on another Space (a full-screen app's), which can't be pictured from this one. The Mac goes there
+    /// when it's recorded or pictured. Its app's icon, as a PNG, when it has one.
+    Away { icon: Option<Vec<u8>> },
 }
 
 /// A picture of each target, at most `max_width` pixels wide, in the same order; `None` where none could be taken.

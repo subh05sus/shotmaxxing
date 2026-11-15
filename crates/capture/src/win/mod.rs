@@ -213,6 +213,8 @@ fn window_info(window: HWND, own: u32, apps: &mut HashMap<PathBuf, String>) -> O
             y: f64::from(bounds.top) / scale,
             width,
             height,
+            full_screen: false,
+            away: false,
         })
     }
 }

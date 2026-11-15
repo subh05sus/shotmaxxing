@@ -118,10 +118,16 @@ pub struct CaptureSource {
     app: Option<String>,
     width: u32,
     height: u32,
+    /// A full-screen app's window, filling a Space of its own.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    full_screen: bool,
+    /// On another Space: the Mac goes there when it's recorded or pictured.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    away: bool,
 }
 
-/// Screens and windows that can be recorded. Windows smaller than a thumbnail, and the app's own windows, are left
-/// out.
+/// Screens and windows that can be recorded: those showing, and full-screen apps on Spaces of their own. Windows
+/// smaller than a thumbnail, and the app's own windows, are left out.
 #[tauri::command]
 pub async fn list_sources<R: Runtime>(app: AppHandle<R>) -> Result<Vec<CaptureSource>, String> {
     let found = tauri::async_runtime::spawn_blocking(shotmaxxing_capture::sources)
@@ -141,6 +147,8 @@ pub async fn list_sources<R: Runtime>(app: AppHandle<R>) -> Result<Vec<CaptureSo
                 app: None,
                 width: m.size().width,
                 height: m.size().height,
+                full_screen: false,
+                away: false,
             })
             .collect());
     }
@@ -151,6 +159,8 @@ pub async fn list_sources<R: Runtime>(app: AppHandle<R>) -> Result<Vec<CaptureSo
         app: None,
         width: d.width.round() as u32,
         height: d.height.round() as u32,
+        full_screen: false,
+        away: false,
     });
     let windows = found.windows.into_iter().map(|w| CaptureSource {
         id: format!("window-{}", w.id),
@@ -159,6 +169,8 @@ pub async fn list_sources<R: Runtime>(app: AppHandle<R>) -> Result<Vec<CaptureSo
         app: Some(w.app),
         width: w.width.round() as u32,
         height: w.height.round() as u32,
+        full_screen: w.full_screen,
+        away: w.away,
     });
     Ok(displays.chain(windows).collect())
 }
@@ -171,6 +183,8 @@ pub struct SourcePicture {
     url: Option<String>,
     /// A window Stage Manager parked in its strip: it comes forward when it's recorded or pictured.
     parked: bool,
+    /// A window on another Space: the Mac goes there when it's recorded or pictured.
+    away: bool,
 }
 
 /// Small pictures of the given sources (ids from `list_sources`), keyed by id. Sources that can't be pictured are
@@ -204,10 +218,13 @@ pub async fn source_thumbnails(
             .filter_map(|((id, _), picture)| {
                 let picture = match picture? {
                     Thumbnail::Picture(bytes) => {
-                        SourcePicture { url: Some(url("jpeg", bytes)), parked: false }
+                        SourcePicture { url: Some(url("jpeg", bytes)), parked: false, away: false }
                     }
                     Thumbnail::Parked { icon } => {
-                        SourcePicture { url: icon.map(|bytes| url("png", bytes)), parked: true }
+                        SourcePicture { url: icon.map(|bytes| url("png", bytes)), parked: true, away: false }
+                    }
+                    Thumbnail::Away { icon } => {
+                        SourcePicture { url: icon.map(|bytes| url("png", bytes)), parked: false, away: true }
                     }
                 };
                 Some((id, picture))

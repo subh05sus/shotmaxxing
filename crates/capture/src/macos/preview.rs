@@ -15,7 +15,7 @@ use objc2_core_graphics::{CGImage, kCGColorSpaceSRGB};
 use objc2_foundation::{NSArray, NSError};
 use objc2_screen_capture_kit::{SCContentFilter, SCScreenshotManager, SCStreamConfiguration};
 
-use super::{display_frames, shareable_content, window};
+use super::{crop_for, display_frames, not_showing, shareable_content, window};
 use crate::{CaptureError, Device, Screenshot, Target, Thumbnail};
 
 #[link(name = "ImageIO", kind = "framework")]
@@ -74,59 +74,61 @@ fn app_icon(pid: i32, px: f64) -> Option<Vec<u8>> {
     encode(Retained::as_ptr(&image) as *const c_void, "public.png")
 }
 
-/// A JPEG of each target, at most `max_width` pixels wide, in the same order, or for a window parked in Stage
-/// Manager's strip its app's icon. Targets that can't be pictured (gone, or not on screen) get `None`. All pictures
-/// are taken at once and the whole call waits at most about two seconds.
+/// A JPEG of each target, at most `max_width` pixels wide, in the same order, or its app's icon for a window
+/// parked in Stage Manager's strip or on another Space (a full-screen app's, which can't be pictured from this one).
+/// Targets that can't be pictured (gone) get `None`. All pictures are taken at once and the whole call waits at
+/// most about two seconds.
 pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Thumbnail>>, CaptureError> {
-    let content = shareable_content()?;
+    // Every window, wherever it is, so one on another Space is found.
+    let content = shareable_content(false)?;
     let displays = display_frames(&content);
     let (stage_manager, strip_on_right) = (window::stage_manager_on(), window::strip_on_right());
-    // Each window's frame and owner, to tell a parked one.
+    // Each window's frame, owner, and whether it's showing here, to tell a parked or away one.
     // SAFETY: read-only property access on objects owned by `content`.
-    let windows: Vec<Option<(CGRect, i32)>> = unsafe {
+    let windows: Vec<Option<(CGRect, i32, bool)>> = unsafe {
         targets
             .iter()
             .map(|target| match *target {
                 Target::Display(_) => None,
                 Target::Window(id) => content.windows().iter().find(|w| w.windowID() == id).and_then(|w| {
                     let pid = w.owningApplication()?.processID();
-                    Some((w.frame(), pid))
+                    Some((w.frame(), pid, w.isOnScreen()))
                 }),
             })
             .collect()
     };
     // SAFETY: read-only use of `content`; each filter is made from one of its displays or windows.
-    let filters: Vec<Option<Retained<SCContentFilter>>> =
-        unsafe {
-            targets
-                .iter()
-                .map(|target| match *target {
-                    Target::Display(id) => {
-                        content.displays().iter().find(|d| id.is_none_or(|id| d.displayID() == id)).map(|d| {
-                            SCContentFilter::initWithDisplay_excludingWindows(
-                                SCContentFilter::alloc(),
-                                &d,
-                                &NSArray::new(),
-                            )
-                        })
-                    }
-                    Target::Window(id) => content.windows().iter().find(|w| w.windowID() == id).map(|w| {
+    let filters: Vec<Option<Retained<SCContentFilter>>> = unsafe {
+        targets
+            .iter()
+            .map(|target| match *target {
+                Target::Display(id) => {
+                    content.displays().iter().find(|d| id.is_none_or(|id| d.displayID() == id)).map(|d| {
+                        SCContentFilter::initWithDisplay_excludingWindows(
+                            SCContentFilter::alloc(),
+                            &d,
+                            &NSArray::new(),
+                        )
+                    })
+                }
+                Target::Window(id) => {
+                    content.windows().iter().find(|w| w.windowID() == id && w.isOnScreen()).map(|w| {
                         SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &w)
-                    }),
-                })
-                .collect()
-        };
-    // A window parked in Stage Manager's strip can only be pictured small and tilted, and a still one not at all: its
-    // card shows its app's icon instead.
+                    })
+                }
+            })
+            .collect()
+    };
+    // A window parked in Stage Manager's strip can only be pictured small and tilted, and a still one not at all, and
+    // one on another Space can't be pictured from this one: their cards show their app's icon instead.
     let mut out: Vec<Option<Thumbnail>> = vec![None; targets.len()];
     let mut icons: HashMap<i32, Option<Vec<u8>>> = HashMap::new();
-    if stage_manager {
-        for (index, found) in windows.iter().enumerate() {
-            let Some((frame, pid)) = *found else { continue };
-            if window::in_strip(frame, &displays, strip_on_right) {
-                let icon = icons.entry(pid).or_insert_with(|| app_icon(pid, 128.0)).clone();
-                out[index] = Some(Thumbnail::Parked { icon });
-            }
+    for (index, found) in windows.iter().enumerate() {
+        let Some((frame, pid, on_screen)) = *found else { continue };
+        let away = !on_screen;
+        if away || (stage_manager && window::in_strip(frame, &displays, strip_on_right)) {
+            let icon = icons.entry(pid).or_insert_with(|| app_icon(pid, 128.0)).clone();
+            out[index] = Some(if away { Thumbnail::Away { icon } } else { Thumbnail::Parked { icon } });
         }
     }
 
@@ -180,18 +182,23 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Thumb
 }
 
 /// A full-size PNG of `target` in sRGB, without the pointer. A window comes alone, its rounded corners clear, and
-/// whatever covers it doesn't show; one Stage Manager parked comes back to the stage first. Waits at most five
-/// seconds for the picture.
+/// whatever covers it doesn't show; one Stage Manager parked comes back to the stage first, and a full-screen app's
+/// on its own Space brings the Mac there, and is pictured with its toolbars. Waits at most five seconds for the
+/// picture.
 pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
-    if let Target::Window(id) = target {
-        window::bring_forward(id);
-    }
-    let content = shareable_content()?;
+    let target = match target {
+        Target::Window(id) => {
+            window::bring_forward(id);
+            Target::Window(window::stand_in(id))
+        }
+        display => display,
+    };
+    let content = shareable_content(true)?;
     let (tx, rx) = channel::<Option<Vec<u8>>>();
     // SAFETY: read-only use of `content`; the filter, configuration and handler live until the request is made,
     // and the framework keeps what it needs until it answers.
     let (scale, app_name, window_title) = unsafe {
-        let (filter, app_name, window_title) = match target {
+        let (filter, app_name, window_title, area) = match target {
             Target::Display(id) => {
                 let display = content
                     .displays()
@@ -203,14 +210,11 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
                     &display,
                     &NSArray::new(),
                 );
-                (filter, None, None)
+                (filter, None, None, None)
             }
             Target::Window(id) => {
-                let window = content
-                    .windows()
-                    .iter()
-                    .find(|w| w.windowID() == id)
-                    .ok_or_else(|| CaptureError::SourceNotFound("that window".into()))?;
+                let window =
+                    content.windows().iter().find(|w| w.windowID() == id).ok_or_else(|| not_showing(id))?;
                 // Still in Stage Manager's strip, it would come out small and tilted.
                 if window::stage_manager_on()
                     && window::in_strip(window.frame(), &display_frames(&content), window::strip_on_right())
@@ -219,12 +223,20 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
                 }
                 let app = window.owningApplication().map(|a| a.applicationName().to_string());
                 let title = window.title().map(|t| t.to_string()).filter(|t| !t.is_empty());
-                let filter =
-                    SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &window);
-                (filter, app, title)
+                // A full-screen app's toolbars are windows of their own: it's pictured from its display with them.
+                match crop_for(&content, &window).filter(|crop| crop.top > 0.0) {
+                    Some(crop) => (crop.filter(), app, title, Some((crop.rect, crop.source()))),
+                    None => {
+                        let filter = SCContentFilter::initWithDesktopIndependentWindow(
+                            SCContentFilter::alloc(),
+                            &window,
+                        );
+                        (filter, app, title, None)
+                    }
+                }
             }
         };
-        let rect = filter.contentRect();
+        let rect = area.map_or_else(|| filter.contentRect(), |(rect, _)| rect);
         let scale = f64::from(filter.pointPixelScale());
         let (width, height) = ((rect.size.width * scale).round(), (rect.size.height * scale).round());
         if width < 1.0 || height < 1.0 {
@@ -236,6 +248,9 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
         config.setWidth(width as usize);
         config.setHeight(height as usize);
         config.setShowsCursor(false);
+        if let Some((_, source)) = area {
+            config.setSourceRect(source);
+        }
         // The styled copy is drawn in sRGB, so the picture comes in it too.
         config.setColorSpaceName(kCGColorSpaceSRGB);
         let handler = RcBlock::new(move |image: *mut CGImage, _error: *mut NSError| {

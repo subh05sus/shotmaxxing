@@ -34,12 +34,17 @@ export interface CaptureSource {
   thumbnail?: string;
   /** A window Stage Manager parked in its strip: `thumbnail` is its app's icon, and it comes forward to be taken. */
   parked?: boolean;
+  /** A full-screen app's window, filling a Space of its own (macOS). */
+  full_screen?: boolean;
+  /** On another Space: `thumbnail` is its app's icon, and the Mac goes there to take it. */
+  away?: boolean;
 }
 
 export interface SourcePicture {
-  /** A data URL: a picture of the source, or a parked window's app icon. */
+  /** A data URL: a picture of the source, or the app icon of a parked window or one on another Space. */
   url: string | null;
   parked: boolean;
+  away: boolean;
 }
 
 /**
@@ -112,6 +117,17 @@ export function listSources(): Promise<CaptureSource[]> {
       title: 'shotmaxxing take run',
       width: 980,
       height: 620,
+    },
+    // Full screen on a Space of its own, so the preview shows that state too.
+    {
+      id: 'window-6',
+      kind: 'window',
+      app: 'Google Chrome',
+      title: 'Pricing · Northwind',
+      width: 1470,
+      height: 835,
+      full_screen: true,
+      away: true,
     },
     { id: 'window-5', kind: 'window', app: 'Xcode', title: 'Northwind.xcodeproj', width: 1680, height: 1050 },
   ]);

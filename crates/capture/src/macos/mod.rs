@@ -1,6 +1,7 @@
 //! macOS capture: ScreenCaptureKit for frames, AVAssetWriter for encoding, CoreGraphics for input telemetry.
 
 mod audio;
+mod ax;
 mod clock;
 mod devices;
 mod follow;
@@ -92,7 +93,9 @@ fn error_text(error: *mut NSError) -> String {
         .unwrap_or_else(|| "unknown error".into())
 }
 
-fn shareable_content() -> Result<Retained<SCShareableContent>, CaptureError> {
+/// What ScreenCaptureKit can record: the displays, and the windows showing on this Space or, unless
+/// `on_screen_only`, every window, wherever it is.
+fn shareable_content(on_screen_only: bool) -> Result<Retained<SCShareableContent>, CaptureError> {
     if !has_permission() {
         return Err(CaptureError::PermissionDenied);
     }
@@ -108,7 +111,9 @@ fn shareable_content() -> Result<Retained<SCShareableContent>, CaptureError> {
     // SAFETY: the handler is a valid block; ScreenCaptureKit copies it.
     unsafe {
         SCShareableContent::getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler(
-            true, true, &handler,
+            true,
+            on_screen_only,
+            &handler,
         );
     }
     match rx.recv_timeout(Duration::from_secs(10)) {
@@ -119,7 +124,9 @@ fn shareable_content() -> Result<Retained<SCShareableContent>, CaptureError> {
 }
 
 pub fn sources() -> Result<Sources, CaptureError> {
-    let content = shareable_content()?;
+    // Every window, wherever it is: a full-screen app's is on a Space of its own ([`window::listed`] says which go
+    // in the list).
+    let content = shareable_content(false)?;
     let own_pid = std::process::id() as i32;
     // SAFETY: read-only property access on objects owned by `content`.
     unsafe {
@@ -139,34 +146,59 @@ pub fn sources() -> Result<Sources, CaptureError> {
                 }
             })
             .collect();
-        let windows = content
+        // Apps' ordinary windows, big enough to pick: not Shotmaxxing's, nor parts of macOS.
+        let candidates: Vec<(Retained<SCWindow>, Retained<SCRunningApplication>)> = content
             .windows()
             .iter()
-            .filter(|w| w.windowLayer() == 0 && w.isOnScreen())
+            .filter(|w| w.windowLayer() == 0)
             .filter_map(|w| {
                 let app = w.owningApplication()?;
-                let bundle = app.bundleIdentifier().to_string();
-                if app.processID() == own_pid || is_system_ui(&bundle) {
-                    return None;
-                }
-                let title = w.title().map(|t| t.to_string()).unwrap_or_default();
                 let frame = w.frame();
-                if frame.size.width < 80.0 || frame.size.height < 60.0 {
-                    return None;
-                }
-                Some(WindowInfo {
+                let skip = app.processID() == own_pid
+                    || is_system_ui(&app.bundleIdentifier().to_string())
+                    || frame.size.width < 80.0
+                    || frame.size.height < 60.0;
+                (!skip).then_some((w, app))
+            })
+            .collect();
+        let seen: Vec<window::Seen> = candidates
+            .iter()
+            .map(|(w, app)| window::Seen {
+                pid: app.processID(),
+                frame: w.frame(),
+                on_screen: w.isOnScreen(),
+            })
+            .collect();
+        let windows = window::listed(&seen, &display_frames(&content))
+            .into_iter()
+            .map(|(index, full_screen)| {
+                let (w, app) = &candidates[index];
+                let frame = w.frame();
+                WindowInfo {
                     id: w.windowID(),
-                    title,
+                    title: w.title().map(|t| t.to_string()).unwrap_or_default(),
                     app: app.applicationName().to_string(),
-                    bundle_id: bundle,
+                    bundle_id: app.bundleIdentifier().to_string(),
                     x: frame.origin.x,
                     y: frame.origin.y,
                     width: frame.size.width,
                     height: frame.size.height,
-                })
+                    full_screen,
+                    away: !w.isOnScreen(),
+                }
             })
             .collect();
         Ok(Sources { displays, windows })
+    }
+}
+
+/// Why window `id` isn't among those showing: it's away (minimised, hidden or on another Space) when the window
+/// server still has it, and gone when it doesn't.
+fn not_showing(id: u32) -> CaptureError {
+    if window::placed(id).is_some() {
+        CaptureError::Away
+    } else {
+        CaptureError::SourceNotFound("that window".into())
     }
 }
 
@@ -197,22 +229,37 @@ unsafe fn crop_for(content: &SCShareableContent, window: &SCWindow) -> Option<fo
             .map(|display| follow::Screen { frame: display.frame(), display })
             .collect();
         let screen = follow::screen_for(&screens, placed.bounds)?;
-        // The app's other windows, as the picker lists them.
+        let display = screens[screen].frame;
         let pid = app.processID();
-        let excepted = content
+        let others: Vec<Retained<SCWindow>> = content
             .windows()
             .iter()
             .filter(|w| {
-                let frame = w.frame();
                 w.windowID() != id
                     && w.windowLayer() == 0
                     && w.isOnScreen()
-                    && frame.size.width >= 80.0
-                    && frame.size.height >= 60.0
                     && w.owningApplication().is_some_and(|a| a.processID() == pid)
             })
             .collect();
-        Some(follow::Crop { app, excepted, screens, screen, rect: placed.bounds })
+        // A full-screen app's toolbars can be windows of their own above its window (Chrome's tabs and address bar):
+        // they're recorded with it.
+        let full_screen = window::full_screen_shaped(placed.bounds, display);
+        let toolbar = |w: &SCWindow| full_screen && window::toolbar_of(w.frame(), placed.bounds, display);
+        let top = others
+            .iter()
+            .filter(|w| toolbar(w))
+            .map(|w| placed.bounds.origin.y - w.frame().origin.y)
+            .fold(0.0, f64::max);
+        // The app's other windows, as the picker lists them, are left out.
+        let excepted = others
+            .into_iter()
+            .filter(|w| {
+                let frame = w.frame();
+                frame.size.width >= 80.0 && frame.size.height >= 60.0 && !toolbar(w)
+            })
+            .collect();
+        let rect = window::reach(placed.bounds, top, &[display]);
+        Some(follow::Crop { app, excepted, screens, screen, window: placed.bounds, top, rect })
     }
 }
 
@@ -346,11 +393,17 @@ pub struct Recorder {
 impl Recorder {
     pub fn start(options: RecordOptions) -> Result<Self, CaptureError> {
         ensure_window_server();
-        // A window Stage Manager parked comes back to the stage first, to be recorded upright and at its place.
-        if let Target::Window(id) = options.target {
-            window::bring_forward(id);
-        }
-        let content = shareable_content()?;
+        // A window Stage Manager parked or shrank comes back to the stage first, to be recorded upright, at its size
+        // and in its place, and a full-screen app's on its own Space brings the Mac there. A tabbed window's tab in
+        // front is recorded, whichever tab was picked.
+        let target = match options.target {
+            Target::Window(id) => {
+                window::bring_forward(id);
+                Target::Window(window::stand_in(id))
+            }
+            display => display,
+        };
+        let content = shareable_content(true)?;
         let own_pid = std::process::id() as i32;
         // The microphone and camera start first: a camera takes a moment to wake, and the first words of a take
         // shouldn't be lost to it. If the screen then fails to start, dropping them stops them again.
@@ -359,7 +412,7 @@ impl Recorder {
         // SAFETY: ScreenCaptureKit objects are created and configured before the stream starts; all arguments are
         // valid objects from `content`.
         unsafe {
-            let (filter, origin, app_name, window_title, picked, crop) = match options.target {
+            let (filter, origin, app_name, window_title, picked, crop) = match target {
                 Target::Display(id) => {
                     let displays = content.displays();
                     let display = match id {
@@ -415,7 +468,7 @@ impl Recorder {
                         .windows()
                         .iter()
                         .find(|w| w.windowID() == id)
-                        .ok_or_else(|| CaptureError::SourceNotFound("that window".into()))?;
+                        .ok_or_else(|| not_showing(id))?;
                     // Still in Stage Manager's strip, it would come out as a small tilted picture.
                     if window::stage_manager_on()
                         && window::in_strip(
@@ -450,7 +503,7 @@ impl Recorder {
                 let rect = filter.contentRect();
                 (rect.size.width, rect.size.height, f64::from(filter.pointPixelScale()).max(1.0))
             });
-            let window_id = match options.target {
+            let window_id = match target {
                 Target::Window(id) => Some(id),
                 Target::Display(_) => None,
             };
@@ -514,6 +567,8 @@ impl Recorder {
             }
 
             let started = clock::now();
+            // How far a full-screen app's toolbars reach above its window, for the telemetry to follow the same area.
+            let top = crop.as_ref().map_or(0.0, |crop| crop.top);
             // A window take's crop follows the window.
             let follower = match (crop, window_id, gate) {
                 (Some(crop), Some(id), Some(gate)) => Some(follow::Follower::start(
@@ -528,9 +583,12 @@ impl Recorder {
             };
             let input = options.telemetry.then(|| {
                 let origin = match window_id {
-                    Some(id) => {
-                        input::Origin::Window { id, start: (origin.x, origin.y), size: (width_pt, height_pt) }
-                    }
+                    Some(id) => input::Origin::Window {
+                        id,
+                        start: (origin.x, origin.y),
+                        size: (width_pt, height_pt),
+                        top,
+                    },
                     None => input::Origin::Fixed(origin.x, origin.y),
                 };
                 input::Telemetry::start(origin, started)

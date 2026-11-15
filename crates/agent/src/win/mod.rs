@@ -655,6 +655,8 @@ mod tests {
             y: 0.0,
             width: 800.0,
             height: 600.0,
+            full_screen: false,
+            away: false,
         }
     }
 

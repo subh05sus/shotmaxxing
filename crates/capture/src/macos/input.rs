@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use objc2_core_foundation::{CFMachPort, CFRetained, CFRunLoop, CFString, kCFRunLoopCommonModes};
+use objc2_core_foundation::{CFMachPort, CFRetained, CFRunLoop, CGRect, kCFRunLoopCommonModes};
 use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventFlags, CGEventMask, CGEventTapLocation, CGEventTapOptions,
     CGEventTapPlacement, CGEventTapProxy, CGEventType,
@@ -27,6 +27,11 @@ use shotmaxxing_core::telemetry::{
     AGENT_EVENT_MARK, CursorSample, CursorShape, InputEvent, InputSource, MouseButton,
 };
 
+use super::ax::{
+    AX_VALUE_CGPOINT, AX_VALUE_CGSIZE, AXIsProcessTrusted, AXUIElementCopyElementAtPosition,
+    AXUIElementCreateSystemWide, AXUIElementSetMessagingTimeout, CFRelease, Pair, geometry_attribute,
+    string_attribute,
+};
 use super::{SendBox, clock, window};
 
 /// A raw observation, stamped with host seconds.
@@ -49,17 +54,59 @@ struct TapState {
 pub enum Origin {
     /// A screen's, which stays put.
     Fixed(f64, f64),
-    /// A window's, which moves with it. `start` is its frame's corner when the take began, and `size` its real size
-    /// in points: its place is followed through the take, and readings taken while it isn't at that size (a Stage
-    /// Manager thumbnail, or mid-animation) are skipped.
-    Window { id: u32, start: (f64, f64), size: (f64, f64) },
+    /// A window's, which moves with it. `start` is the recorded area's corner when the take began and `size` the
+    /// take's size in points: the window's real size, with a full-screen app's toolbars `top` points above it. The
+    /// window is followed through the take, readings taken while it's a Stage Manager thumbnail are skipped, and while
+    /// it's another size, positions are scaled as the video shows it then: the whole window, fitted into the take.
+    Window { id: u32, start: (f64, f64), size: (f64, f64), top: f64 },
+}
+
+/// How a point on the desktop lands in the take: measured from the recorded area's corner, and scaled when the area
+/// isn't the take's size (a window resized during it), as ScreenCaptureKit draws a source rect into a stream of
+/// another size: the whole area, fitted and centred.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Fit {
+    x: f64,
+    y: f64,
+    scale: f64,
+    dx: f64,
+    dy: f64,
+}
+
+impl Fit {
+    /// The take's own size, with its corner at `x`, `y`.
+    fn at((x, y): (f64, f64)) -> Self {
+        Self { x, y, scale: 1.0, dx: 0.0, dy: 0.0 }
+    }
+
+    /// An area shown in a take of `size`.
+    fn new(area: CGRect, size: (f64, f64)) -> Self {
+        let (w, h) = (area.size.width, area.size.height);
+        let corner = (area.origin.x, area.origin.y);
+        // The same size, to the window server's rounding, isn't scaled.
+        if w <= 0.0 || h <= 0.0 || window::at_real_size(area, size) {
+            return Self::at(corner);
+        }
+        let scale = (size.0 / w).min(size.1 / h);
+        Self {
+            x: corner.0,
+            y: corner.1,
+            scale,
+            dx: (size.0 - w * scale) / 2.0,
+            dy: (size.1 - h * scale) / 2.0,
+        }
+    }
+
+    fn point(&self, x: f64, y: f64) -> (f64, f64) {
+        (self.dx + (x - self.x) * self.scale, self.dy + (y - self.y) * self.scale)
+    }
 }
 
 pub struct Telemetry {
     stop: Arc<AtomicBool>,
     origin: Origin,
-    /// Where a recorded window's corner was, when it moved.
-    places: Option<JoinHandle<Vec<(f64, f64, f64)>>>,
+    /// Where a recorded window's area was, and how big, when it changed.
+    places: Option<JoinHandle<Vec<(f64, CGRect)>>>,
     cursor: Option<JoinHandle<Vec<(f64, f64, f64)>>>,
     tap_loop: Option<SendBox<CFRetained<CFRunLoop>>>,
     tap_thread: Option<JoinHandle<()>>,
@@ -72,11 +119,11 @@ impl Telemetry {
         let stop = Arc::new(AtomicBool::new(false));
 
         let places = match origin {
-            Origin::Window { id, size, .. } => {
+            Origin::Window { id, size, top, .. } => {
                 let follow_stop = stop.clone();
                 std::thread::Builder::new()
                     .name("smx-window".into())
-                    .spawn(move || follow_window(id, size, &follow_stop))
+                    .spawn(move || follow_window(id, size, top, &follow_stop))
                     .ok()
             }
             Origin::Fixed(..) => None,
@@ -122,15 +169,21 @@ impl Telemetry {
         let focus = self.focus_thread.take().and_then(|t| t.join().ok()).unwrap_or_default();
         let path = self.cursor.take().and_then(|t| t.join().ok()).unwrap_or_default();
         let places = self.places.take().and_then(|t| t.join().ok()).unwrap_or_default();
-        let start = match self.origin {
-            Origin::Fixed(x, y) => (x, y),
-            Origin::Window { start, .. } => start,
+        let (start, size) = match self.origin {
+            Origin::Fixed(x, y) => ((x, y), None),
+            Origin::Window { start, size, .. } => (start, Some(size)),
         };
-        // Where the corner was at `at`: the last place seen by then, or, before the window first showed at its real
-        // size, the first place it did.
-        let origin_at = |at: f64| match places.iter().rposition(|(t, _, _)| *t <= at) {
-            Some(i) => (places[i].1, places[i].2),
-            None => places.first().map_or(start, |&(_, x, y)| (x, y)),
+        // How points land in the take at `at`: by the last place seen by then, or, before the window first showed,
+        // the first place it did.
+        let fit_at = |at: f64| {
+            let place = match places.iter().rposition(|(t, _)| *t <= at) {
+                Some(i) => Some(places[i].1),
+                None => places.first().map(|&(_, area)| area),
+            };
+            match (place, size) {
+                (Some(area), Some(size)) => Fit::new(area, size),
+                _ => Fit::at(start),
+            }
         };
         let t_us = |at: f64| ((at - zero).max(0.0) * 1e6) as u64;
         // The pointer's resting place when the first frame arrived counts as its position at 0.
@@ -140,8 +193,8 @@ impl Telemetry {
             .enumerate()
             .filter(|(i, (at, _, _))| *at >= zero || Some(*i) == before)
             .map(|(_, (at, x, y))| {
-                let (ox, oy) = origin_at(at);
-                CursorSample { t_us: t_us(at), x: x - ox, y: y - oy, shape: CursorShape::Arrow }
+                let (x, y) = fit_at(at).point(x, y);
+                CursorSample { t_us: t_us(at), x, y, shape: CursorShape::Arrow }
             })
             .collect();
 
@@ -151,16 +204,19 @@ impl Telemetry {
         let events = raw
             .into_iter()
             .filter(|r| at_of(r) >= zero)
-            .map(|r| (origin_at(at_of(&r)), r))
-            .map(|((ox, oy), r)| match r {
+            .map(|r| (fit_at(at_of(&r)), r))
+            .map(|(fit, r)| match r {
                 Raw::Down { at, x, y, button, clicks, source } => {
-                    InputEvent::MouseDown { t_us: t_us(at), x: x - ox, y: y - oy, button, clicks, source }
+                    let (x, y) = fit.point(x, y);
+                    InputEvent::MouseDown { t_us: t_us(at), x, y, button, clicks, source }
                 }
                 Raw::Up { at, x, y, button, source } => {
-                    InputEvent::MouseUp { t_us: t_us(at), x: x - ox, y: y - oy, button, source }
+                    let (x, y) = fit.point(x, y);
+                    InputEvent::MouseUp { t_us: t_us(at), x, y, button, source }
                 }
                 Raw::Scroll { at, x, y, dx, dy } => {
-                    InputEvent::Scroll { t_us: t_us(at), x: x - ox, y: y - oy, dx, dy }
+                    let (x, y) = fit.point(x, y);
+                    InputEvent::Scroll { t_us: t_us(at), x, y, dx, dy }
                 }
                 Raw::Key { at, label, source } => InputEvent::KeyDown {
                     t_us: t_us(at),
@@ -169,35 +225,49 @@ impl Telemetry {
                     label,
                     source,
                 },
-                Raw::Focus { at, bounds, role, label } => InputEvent::Focus {
-                    t_us: t_us(at),
-                    bounds: Rect::new(bounds.x - ox, bounds.y - oy, bounds.width, bounds.height),
-                    role,
-                    label,
-                },
+                Raw::Focus { at, bounds, role, label } => {
+                    let (x, y) = fit.point(bounds.x, bounds.y);
+                    InputEvent::Focus {
+                        t_us: t_us(at),
+                        bounds: Rect::new(x, y, bounds.width * fit.scale, bounds.height * fit.scale),
+                        role,
+                        label,
+                    }
+                }
             })
             .collect();
         (cursor, events)
     }
 }
 
-/// A recorded window's corner whenever it moves while showing at its real `size`, read ten times a second until
-/// `stop`. The window server's frame for a window parked in Stage Manager is the thumbnail's, so those readings are
-/// skipped.
-fn follow_window(id: u32, size: (f64, f64), stop: &AtomicBool) -> Vec<(f64, f64, f64)> {
-    let mut places: Vec<(f64, f64, f64)> = Vec::new();
+/// Where a recorded window's area is whenever it changes, read ten times a second until `stop`: the window's frame,
+/// with a full-screen app's toolbars `top` points above it, while it's showing. The window server's frame for a
+/// window parked in Stage Manager is the thumbnail's (of a window of the take's `size`), so those readings are
+/// skipped, as the video skips them; one moved or resized is followed, as the video follows it.
+fn follow_window(id: u32, size: (f64, f64), top: f64, stop: &AtomicBool) -> Vec<(f64, CGRect)> {
+    let (stage_manager, displays) = (window::stage_manager_on(), window::displays());
+    let mut places: Vec<(f64, CGRect)> = Vec::new();
     while !stop.load(Ordering::Relaxed) {
-        if let Some(frame) = window::bounds(id)
-            && window::at_real_size(frame, size)
+        if let Some(placed) = window::placed(id)
+            && placed.on_screen
+            && !(stage_manager && window::thumbnail_of(placed.bounds, size))
         {
-            let (x, y) = (frame.origin.x, frame.origin.y);
-            if places.last().is_none_or(|&(_, px, py)| (px - x).abs() > 0.25 || (py - y).abs() > 0.25) {
-                places.push((clock::now(), x, y));
+            let area = window::reach(placed.bounds, top, &displays);
+            if places.last().is_none_or(|&(_, last)| changed(last, area)) {
+                places.push((clock::now(), area));
             }
         }
         std::thread::sleep(Duration::from_millis(100));
     }
     places
+}
+
+/// Whether an area has moved or changed size, by more than a quarter of a point.
+fn changed(a: CGRect, b: CGRect) -> bool {
+    (a.origin.x - b.origin.x).abs() > 0.25
+        || (a.origin.y - b.origin.y).abs() > 0.25
+        || (a.size.width - b.size.width).abs() > 0.25
+        || (a.size.height - b.size.height).abs() > 0.25
 }
 
 fn at_of(raw: &Raw) -> f64 {
@@ -415,78 +485,6 @@ fn run_tap(state: Arc<TapState>, ready: std::sync::mpsc::SyncSender<Option<SendB
     drop(state);
 }
 
-// Accessibility: which control is under a click.
-#[link(name = "ApplicationServices", kind = "framework")]
-unsafe extern "C" {
-    safe fn AXIsProcessTrusted() -> bool;
-    fn AXUIElementCreateSystemWide() -> *const c_void;
-    fn AXUIElementCopyElementAtPosition(
-        app: *const c_void,
-        x: f32,
-        y: f32,
-        element: *mut *const c_void,
-    ) -> i32;
-    fn AXUIElementCopyAttributeValue(
-        element: *const c_void,
-        attribute: *const c_void,
-        value: *mut *const c_void,
-    ) -> i32;
-    fn AXUIElementSetMessagingTimeout(element: *const c_void, seconds: f32) -> i32;
-    fn AXValueGetValue(value: *const c_void, kind: u32, out: *mut c_void) -> bool;
-}
-
-#[link(name = "CoreFoundation", kind = "framework")]
-unsafe extern "C" {
-    fn CFRelease(object: *const c_void);
-    fn CFGetTypeID(object: *const c_void) -> usize;
-    fn CFStringGetTypeID() -> usize;
-}
-
-const AX_VALUE_CGPOINT: u32 = 1;
-const AX_VALUE_CGSIZE: u32 = 2;
-
-/// Copies one attribute. The caller releases the result.
-fn copy_attribute(element: *const c_void, name: &str) -> Option<*const c_void> {
-    let attribute = CFString::from_str(name);
-    let mut value: *const c_void = std::ptr::null();
-    let attribute_ptr = CFRetained::as_ptr(&attribute).as_ptr() as *const c_void;
-    // SAFETY: valid element and attribute; the out pointer is ours.
-    let status = unsafe { AXUIElementCopyAttributeValue(element, attribute_ptr, &mut value) };
-    (status == 0 && !value.is_null()).then_some(value)
-}
-
-fn string_attribute(element: *const c_void, name: &str) -> Option<String> {
-    let value = copy_attribute(element, name)?;
-    // SAFETY: we own `value` (a Copy rule result) and release it after reading.
-    unsafe {
-        let text = if CFGetTypeID(value) == CFStringGetTypeID() {
-            let string: &CFString = &*(value as *const CFString);
-            Some(string.to_string())
-        } else {
-            None
-        };
-        CFRelease(value);
-        text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty() && t.len() < 120)
-    }
-}
-
-fn geometry_attribute<T: Default>(element: *const c_void, name: &str, kind: u32) -> Option<T> {
-    let value = copy_attribute(element, name)?;
-    let mut out = T::default();
-    // SAFETY: AXValueGetValue writes a CGPoint or CGSize (matching `kind` and `T`) into `out`.
-    let ok = unsafe { AXValueGetValue(value, kind, &mut out as *mut T as *mut c_void) };
-    // SAFETY: releasing the value we copied.
-    unsafe { CFRelease(value) };
-    ok.then_some(out)
-}
-
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct Pair {
-    a: f64,
-    b: f64,
-}
-
 fn friendly_role(role: &str) -> String {
     let plain = role.strip_prefix("AX").unwrap_or(role);
     match plain {
@@ -543,4 +541,38 @@ fn resolve_focus(clicks: Receiver<(f64, f64, f64)>) -> Vec<Raw> {
     // SAFETY: releasing the system-wide element.
     unsafe { CFRelease(system) };
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use objc2_core_foundation::{CGPoint, CGSize};
+
+    use super::*;
+
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    #[test]
+    fn points_are_measured_from_the_area_at_the_takes_size() {
+        let fit = Fit::new(rect(300.0, 200.0, 900.0, 450.0), (900.0, 450.0));
+        assert_eq!(fit.point(450.0, 300.0), (150.0, 100.0));
+        // The window server's rounding isn't a resize.
+        assert_eq!(Fit::new(rect(300.0, 200.0, 901.0, 450.5), (900.0, 450.0)).scale, 1.0);
+    }
+
+    #[test]
+    fn a_window_that_grew_is_scaled_into_the_take() {
+        // A take that started on a window still coming out of Stage Manager's strip, at 399 × 201 points, of a
+        // window of 895 × 450: its clicks land where the video shows them, not hundreds of points outside it.
+        let fit = Fit::new(rect(-300.0, 100.0, 798.0, 402.0), (399.0, 201.0));
+        assert_eq!(fit.scale, 0.5);
+        assert_eq!(fit.point(-300.0, 100.0), (0.0, 0.0));
+        assert_eq!(fit.point(498.0, 502.0), (399.0, 201.0));
+        // Another shape is fitted and centred: twice as wide, so it's shown with bands above and below.
+        let fit = Fit::new(rect(0.0, 0.0, 1600.0, 400.0), (800.0, 400.0));
+        assert_eq!(fit.scale, 0.5);
+        assert_eq!(fit.point(0.0, 0.0), (0.0, 100.0));
+        assert_eq!(fit.point(1600.0, 400.0), (800.0, 300.0));
+    }
 }

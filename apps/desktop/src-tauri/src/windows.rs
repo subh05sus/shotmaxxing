@@ -25,6 +25,34 @@ pub fn set_dock_visible<R: Runtime>(app: &AppHandle<R>, visible: bool) {
     let _ = (app, visible);
 }
 
+/// How a window joins macOS's Spaces, beyond what Tauri sets: `NSWindowCollectionBehavior` flags.
+#[cfg(target_os = "macos")]
+mod spaces {
+    /// Comes to the Space that's showing when it's brought forward, instead of taking the Mac back to its own.
+    pub const MOVE_TO_ACTIVE_SPACE: usize = 1 << 1;
+    /// Can show over a full-screen app, in that app's Space.
+    pub const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+}
+
+/// Adds `flags` ([`spaces`]) to how `window` joins Spaces. AppKit wants windows changed on the main thread.
+#[cfg(target_os = "macos")]
+fn join_spaces<R: Runtime>(window: &WebviewWindow<R>, flags: usize) {
+    let target = window.clone();
+    let changed = window.run_on_main_thread(move || {
+        let Ok(ns_window) = target.ns_window() else { return };
+        let ns_window = ns_window.cast::<objc2::runtime::AnyObject>();
+        // SAFETY: Tauri's NSWindow for this window, alive while the window is, changed on the main thread;
+        // collectionBehavior is an NSUInteger.
+        unsafe {
+            let behavior: usize = objc2::msg_send![&*ns_window, collectionBehavior];
+            let () = objc2::msg_send![&*ns_window, setCollectionBehavior: behavior | flags];
+        }
+    });
+    if let Err(error) = changed {
+        tracing::warn!(%error, "a window couldn't be set to show over full-screen apps");
+    }
+}
+
 /// Brings an existing window forward, optionally moving it to another route.
 fn focus<R: Runtime>(window: &WebviewWindow<R>, route: Option<&str>) -> tauri::Result<()> {
     if let Some(route) = route {
@@ -126,7 +154,13 @@ pub fn open_record<R: Runtime>(app: &AppHandle<R>, mode: Option<&str>) -> tauri:
         .inner_size(840.0, 600.0)
         .min_inner_size(640.0, 460.0)
         .center();
-    standard(builder).build()?;
+    let window = standard(builder).build()?;
+    // Opened from a full-screen app (with the shortcut, say), it shows there, over that app, rather than taking the
+    // Mac back to the desktop where the other Shotmaxxing windows are.
+    #[cfg(target_os = "macos")]
+    join_spaces(&window, spaces::MOVE_TO_ACTIVE_SPACE | spaces::FULL_SCREEN_AUXILIARY);
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
     Ok(())
 }
 
@@ -142,7 +176,8 @@ pub fn open_pill<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let (width, height) = (360.0, 76.0);
     let builder = floating(app, "pill", "index.html#/pill", width, height)?;
     let x = monitor_width(app).map_or(400.0, |w| (w - width) / 2.0);
-    builder.position(x, 28.0).build()?;
+    let window = builder.position(x, 28.0).build()?;
+    over_full_screen(&window);
     Ok(())
 }
 
@@ -154,8 +189,18 @@ pub fn open_take_card<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let (width, height) = (420.0, 540.0);
     let builder = floating(app, "take", "index.html#/take", width, height)?;
     let (x, y) = monitor_size(app).map_or((900.0, 300.0), |(w, h)| (w - width - 12.0, h - height - 12.0));
-    builder.position(x, y).build()?;
+    let window = builder.position(x, y).build()?;
+    over_full_screen(&window);
     Ok(())
+}
+
+/// A floating window (the pill, the take card) is on every Space already; this lets it show over a full-screen app
+/// too, which is where a take of one happens.
+fn over_full_screen<R: Runtime>(window: &WebviewWindow<R>) {
+    #[cfg(target_os = "macos")]
+    join_spaces(window, spaces::FULL_SCREEN_AUXILIARY);
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
 }
 
 fn floating<'a, R: Runtime>(

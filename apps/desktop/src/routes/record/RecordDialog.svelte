@@ -97,7 +97,7 @@
     sources = sources.map((s) => {
       const picture = pictures[s.id];
       if (!picture) return s;
-      return { ...s, thumbnail: picture.url ?? undefined, parked: picture.parked };
+      return { ...s, thumbnail: picture.url ?? undefined, parked: picture.parked, away: picture.away };
     });
   }
 
@@ -290,13 +290,18 @@
               ? wallpaper(i % 2 ? 'ocean' : 'aurora-lime').css
               : 'var(--fill-strong)'}
           >
-            {#if source.parked}
-              <!-- Stage Manager parked it in its strip, where it could only be pictured small and tilted. -->
+            {#if source.parked || source.away}
+              <!-- Parked in Stage Manager's strip, where it could only be pictured small and tilted, or full screen on
+                   a Space of its own, which can't be pictured from this one: its app's icon stands in. -->
               <span
                 class="absolute inset-0 grid place-items-center"
-                title={kind === 'screenshot'
-                  ? 'It comes forward for the picture.'
-                  : 'It comes forward when the recording starts.'}
+                title={source.away
+                  ? kind === 'screenshot'
+                    ? 'It’s full screen. Shotmaxxing goes to it for the picture.'
+                    : 'It’s full screen. Shotmaxxing goes to it when the recording starts.'
+                  : kind === 'screenshot'
+                    ? 'It comes forward for the picture.'
+                    : 'It comes forward when the recording starts.'}
               >
                 <span class="flex flex-col items-center gap-1.5">
                   {#if source.thumbnail}
@@ -304,7 +309,9 @@
                   {:else}
                     <Icon icon={AppWindow} size={28} class="text-fg-subtle" aria-hidden="true" />
                   {/if}
-                  <span class="text-caption text-fg-muted">Parked by Stage Manager</span>
+                  <span class="text-caption text-fg-muted"
+                    >{source.away ? 'Full screen' : 'Parked by Stage Manager'}</span
+                  >
                 </span>
               </span>
             {:else if source.thumbnail && source.kind === 'display'}

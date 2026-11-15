@@ -296,13 +296,14 @@ fn open_project<R: Runtime>(app: &AppHandle<R>, project: &Path) -> Result<FromAp
 fn prepare(target: Option<&str>, window: Option<&str>, picture: bool) -> Result<FromApp, String> {
     let prepared = shotmaxxing_agent::prepare(target, window).map_err(|e| e.to_string())?;
     let picture = match (&prepared.window, picture) {
-        // A window Stage Manager parked has no picture worth sending (it would be small and tilted).
+        // A window Stage Manager parked has no picture worth sending (it would be small and tilted), and one on
+        // another Space can't be pictured from this one.
         (Some(window), true) => shotmaxxing_capture::thumbnails(&[Target::Window(window.id)], PICTURE_WIDTH)
             .ok()
             .and_then(|pictures| pictures.into_iter().next().flatten())
             .and_then(|picture| match picture {
                 Thumbnail::Picture(jpeg) => Some(Picture::from_jpeg(&jpeg)),
-                Thumbnail::Parked { .. } => None,
+                Thumbnail::Parked { .. } | Thumbnail::Away { .. } => None,
             }),
         _ => None,
     };

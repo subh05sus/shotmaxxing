@@ -281,8 +281,8 @@ mod tests {
                     assert_eq!(bytes[..3], [0xFF, 0xD8, 0xFF], "{target:?} isn't a JPEG");
                     eprintln!("{target:?}: a {} byte JPEG", bytes.len());
                 }
-                Some(crate::Thumbnail::Parked { .. }) => {
-                    panic!("{target:?}: parked, but Windows has no Stage Manager")
+                Some(crate::Thumbnail::Parked { .. } | crate::Thumbnail::Away { .. }) => {
+                    panic!("{target:?}: parked or away, but Windows has no Stage Manager or Spaces")
                 }
                 None => eprintln!("{target:?}: no picture"),
             }
