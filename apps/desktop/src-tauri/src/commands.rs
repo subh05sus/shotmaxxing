@@ -26,9 +26,9 @@ impl PermissionKind {
 #[serde(rename_all = "snake_case")]
 pub enum PermissionState {
     Granted,
-    // Windows reports these once its microphone and camera privacy checks land.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
     Denied,
+    /// Only macOS asks before the first use.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     NotDetermined,
     /// The platform doesn't ask for this (screen capture on Windows, for example).

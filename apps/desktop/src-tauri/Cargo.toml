@@ -42,7 +42,7 @@ objc2-av-foundation = { version = "0.3", default-features = false, features = ["
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo", "NSDictionary", "NSString", "NSValue"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = ["Win32_System_Power"] }
+windows = { version = "0.62", features = ["Win32_System_Power", "Win32_System_Registry"] }
 
 [dev-dependencies]
 tempfile.workspace = true
