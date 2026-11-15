@@ -121,6 +121,10 @@ These are the rules the code is reviewed against.
 
 - With no windows open, only the tray process runs (target: under 30 MB RAM, ~0% CPU).
 - Windows are created on demand and destroyed when closed, not hidden.
+- The windows are the Home window (Library, Learn, Agents, Settings and onboarding), one editor window per project,
+  the record dialog, the recording pill and the take card. Each loads the same UI at its own hash route. `go()`
+  changes pages inside a window, and sends a Home page or a project to its own window instead of turning this one
+  into it. Opening a project whose window is open brings that window back to it.
 - The MCP server is a mode of the same binary (`shotmaxxing mcp`), not a separate Node runtime.
 
 ## The project format: `.smx`
