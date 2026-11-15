@@ -1,6 +1,6 @@
 /**
- * The command registry behind ⌘K. Screens register their commands while they're shown, so the palette always
- * offers what makes sense right now, plus the global ones.
+ * The command registry behind ⌘K: the Home window's search and the editor's palette. Screens register their
+ * commands while they're shown, so both always offer what makes sense right now, plus the global ones.
  */
 
 import type { Command } from '@shotmaxxing/ui';

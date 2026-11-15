@@ -9,6 +9,11 @@ can change how things work.
   Background tool, a look applies its settings in one click, and projects keep a copy of the wallpaper they use.
   `shotmaxxing pack check` and `pack list` check and list packs, and agents can choose pack wallpapers.
   [How to make one](docs/content-packs.md).
+- **One search in Home:** the top bar's field filters the Library as you type and lists the matching recordings and
+  actions under it, so Enter opens the first match or runs the highlighted action. ⌘K jumps into it; the Library's
+  own filter is gone, and the editor keeps ⌘K as its palette.
+- **Record and Screenshot float:** they sit in a pill at the bottom of the Home window, with their shortcuts, instead
+  of in the top bar.
 - **Fixed:** with the Light theme on a Mac in Dark Mode, the sidebar stayed dark and its labels were unreadable. The
   window material, menus and dialogs now follow the theme chosen in Settings, from the first frame of the next launch.
 

@@ -70,7 +70,7 @@
   const machine = env.os === 'mac' ? 'Mac' : 'PC';
 </script>
 
-<div class="scroll-room h-full overflow-y-auto px-5 pb-8">
+<div class="scroll-room h-full overflow-y-auto px-5 pb-28">
   <p class="measure text-callout text-fg-muted">
     Let Claude, Codex and other agents film demos for you. They plan the take, perform it in one smooth pass
     and hand you an editable project. Everything runs on this {machine}.

@@ -18,7 +18,6 @@
     Button,
     EmptyState,
     Menu,
-    SearchField,
     Segmented,
     Spinner,
     env,
@@ -46,6 +45,7 @@
   } from '../../lib/native';
   import { go, route } from '../../lib/router.svelte';
   import { registerCommands } from '../../lib/commands.svelte';
+  import { homeSearch } from '../../lib/search.svelte';
   import { settings } from '../../lib/settings.svelte';
 
   type Filter = 'all' | 'recording' | 'screenshot' | 'agent';
@@ -104,11 +104,12 @@
   });
   let filter = $state<Filter>('all');
   let sort = $state<Sort>('newest');
-  let query = $state('');
   let selected = $state<string | null>(null);
+  // The search lives in the window's top bar, shared with its actions.
+  const query = $derived(homeSearch.query.trim());
 
   const visible = $derived.by(() => {
-    const q = query.trim().toLowerCase();
+    const q = query.toLowerCase();
     const list = items.filter((item) => {
       if (filter === 'recording' && item.kind !== 'recording') return false;
       if (filter === 'screenshot' && item.kind !== 'screenshot') return false;
@@ -122,6 +123,22 @@
       name: (a, b) => a.title.localeCompare(b.title),
     };
     return list.sort(by[sort]);
+  });
+
+  // The search's list offers the first cards it leaves, so Enter opens the first one.
+  $effect(() => {
+    homeSearch.matches = query
+      ? visible.slice(0, 3).map((item) => ({
+          id: item.id,
+          title: item.title,
+          detail: item.app,
+          kind: item.kind,
+          open: () => open(item),
+        }))
+      : [];
+    return () => {
+      homeSearch.matches = [];
+    };
   });
 
   const reveal = env.os === 'mac' ? 'Show in Finder' : 'Show in File Explorer';
@@ -348,9 +365,6 @@
         />
       </div>
       <span class="flex-1"></span>
-      <div class="w-52">
-        <SearchField bind:value={query} placeholder="Filter by name or app" label="Filter recordings" />
-      </div>
       <Menu items={sortItems} label="Sort" align="end">
         {#snippet trigger({ props })}
           <Button size="sm" variant="ghost" icon={ArrowDownUp} {...props}>{sortLabel[sort]}</Button>
@@ -359,7 +373,7 @@
     </div>
   {/if}
 
-  <div class="scroll-room min-h-0 flex-1 overflow-y-auto px-5 pb-6">
+  <div class="scroll-room min-h-0 flex-1 overflow-y-auto px-5 pb-28">
     {#if loading}
       <div class="grid h-full place-items-center" role="status" aria-label="Loading your projects">
         <Spinner />
@@ -377,10 +391,10 @@
       {#if query}
         <EmptyState
           icon={SearchX}
-          title="Nothing matches “{query}”"
-          body="Try the app name, like Safari or Figma, or clear the filter."
+          title="Nothing in the Library matches “{query}”"
+          body="Try the app name, like Safari or Figma, or clear the search."
         >
-          <Button onclick={() => (query = '')}>Clear filter</Button>
+          <Button onclick={() => (homeSearch.query = '')}>Clear search</Button>
         </EmptyState>
       {:else if filter === 'agent'}
         <EmptyState

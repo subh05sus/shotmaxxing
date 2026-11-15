@@ -27,6 +27,7 @@
   import { go, route, startRouter } from './lib/router.svelte';
   import { persist, settings } from './lib/settings.svelte';
   import { allCommands, registerCommands, ui } from './lib/commands.svelte';
+  import { focusHomeSearch } from './lib/search.svelte';
   import { isTauri, openWindow, platform, powerStatus, setAppTheme, setMenuBarIcon } from './lib/native';
   import WindowChrome from './routes/WindowChrome.svelte';
   import Onboarding from './routes/onboarding/Onboarding.svelte';
@@ -172,7 +173,7 @@
     {
       title: 'Anywhere',
       items: [
-        { label: 'Command palette', chord: 'mod+k' },
+        { label: 'Search, or the command palette in the editor', chord: 'mod+k' },
         { label: 'New recording', chord: 'alt+shift+5' },
         { label: 'Styled screenshot', chord: 'alt+shift+4' },
         { label: 'Keyboard shortcuts', chord: 'mod+/' },
@@ -213,7 +214,9 @@
     const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     if (matchesChord(e, 'mod+k', env.os)) {
       e.preventDefault();
-      ui.palette = !ui.palette;
+      // Home has its search in the top bar; the other windows keep the palette.
+      if (screen === 'home') focusHomeSearch();
+      else ui.palette = !ui.palette;
     } else if (matchesChord(e, 'mod+/', env.os)) {
       e.preventDefault();
       ui.shortcuts = !ui.shortcuts;

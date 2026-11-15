@@ -1,19 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import {
-    BookOpen,
-    Bot,
-    Camera,
-    Film,
-    RecordDot,
-    Search,
-    Settings as SettingsIcon,
-  } from '@shotmaxxing/ui/icons';
-  import { Button, Icon, IconButton, Keycap, StatusDot, Tooltip, env, fade } from '@shotmaxxing/ui';
+  import { BookOpen, Bot, Camera, Film, RecordDot, Settings as SettingsIcon } from '@shotmaxxing/ui/icons';
+  import { Button, Icon, Keycap, StatusDot, env, fade } from '@shotmaxxing/ui';
   import { go, route } from '../../lib/router.svelte';
   import { openWindow } from '../../lib/native';
-  import { ui } from '../../lib/commands.svelte';
   import { settings } from '../../lib/settings.svelte';
+  import HomeSearch from './HomeSearch.svelte';
   import { counts } from '../../lib/counts.svelte';
   import Library from './Library.svelte';
   import Learn from './Learn.svelte';
@@ -83,36 +75,14 @@
     </div>
   </aside>
 
-  <main class="flex min-w-0 flex-1 flex-col bg-bg">
+  <main class="relative flex min-w-0 flex-1 flex-col bg-bg">
     <header
       data-tauri-drag-region
       class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center gap-3 px-5"
     >
       <h1 class="text-title-3">{titles[page] ?? 'Library'}</h1>
       <span class="flex-1"></span>
-      <Tooltip label="Search everything" chord="mod+k">
-        <button
-          type="button"
-          class="no-drag press flex h-7 w-56 items-center gap-2 rounded-control border border-border bg-fill px-2.5 text-callout text-fg-subtle hover:bg-fill-hover"
-          onclick={() => (ui.palette = true)}
-          data-tour="palette"
-        >
-          <Icon icon={Search} size={14} aria-hidden="true" />
-          <span class="flex-1 text-left">Search</span>
-          <Keycap chord="mod+k" />
-        </button>
-      </Tooltip>
-      <span class="no-drag flex items-center gap-1.5">
-        <IconButton
-          icon={Camera}
-          label="New screenshot"
-          chord="alt+shift+4"
-          onclick={() => openWindow('record', 'screenshot')}
-        />
-        <Tooltip label="New recording" chord="alt+shift+5">
-          <Button variant="primary" icon={RecordDot} onclick={() => openWindow('record')}>Record</Button>
-        </Tooltip>
-      </span>
+      <HomeSearch />
     </header>
 
     <div class="grid min-h-0 flex-1">
@@ -130,15 +100,42 @@
         </div>
       {/key}
     </div>
+
+    <!-- New recordings start here, floating over every page; the pages leave room for it at their bottom. -->
+    <div class="pointer-events-none absolute inset-x-0 bottom-5 z-[500] flex flex-col items-center gap-2.5">
+      {#if !settings.onboardingDone && page === 'library'}
+        <!-- Resumable setup: a quiet reminder, not a blocker. -->
+        <div
+          class="rise-in pointer-events-auto flex items-center gap-3 rounded-full border border-border bg-elevated py-1 pl-4 pr-1 text-callout shadow-[var(--elev-float)]"
+        >
+          Setup isn’t finished yet.
+          <Button size="sm" variant="secondary" onclick={() => go('onboarding')}>Continue setup</Button>
+        </div>
+      {/if}
+      <div
+        role="toolbar"
+        aria-label="New"
+        class="rise-in pointer-events-auto flex items-center gap-1 rounded-full border border-border bg-elevated p-1.5 shadow-[var(--elev-float)]"
+      >
+        <button
+          type="button"
+          class="press inline-flex h-9 items-center gap-2 rounded-full bg-accent pl-3.5 pr-2 text-callout font-semibold text-accent-fg shadow-[var(--top-light)] transition-colors duration-[var(--dur-fast)] hover:bg-accent-hover"
+          onclick={() => openWindow('record')}
+        >
+          <Icon icon={RecordDot} size={16} aria-hidden="true" />
+          Record
+          <Keycap chord="alt+shift+5" tone="on-accent" />
+        </button>
+        <button
+          type="button"
+          class="press inline-flex h-9 items-center gap-2 rounded-full pl-3 pr-2 text-callout font-medium text-fg-muted transition-colors duration-[var(--dur-fast)] hover:bg-fill hover:text-fg"
+          onclick={() => openWindow('record', 'screenshot')}
+        >
+          <Icon icon={Camera} size={16} aria-hidden="true" />
+          Screenshot
+          <Keycap chord="alt+shift+4" />
+        </button>
+      </div>
+    </div>
   </main>
 </div>
-
-{#if !settings.onboardingDone && page === 'library'}
-  <!-- Resumable setup: a quiet reminder, not a blocker. -->
-  <div
-    class="fixed bottom-5 left-[236px] z-[600] flex items-center gap-3 rounded-[10px] border border-border bg-elevated py-2 pl-3 pr-2 text-callout shadow-[var(--elev-2)]"
-  >
-    Setup isn’t finished yet.
-    <Button size="sm" variant="primary" onclick={() => go('onboarding')}>Continue setup</Button>
-  </div>
-{/if}

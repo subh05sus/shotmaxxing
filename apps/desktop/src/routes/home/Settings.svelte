@@ -128,7 +128,7 @@
   ];
 </script>
 
-<div class="scroll-room h-full overflow-y-auto px-5 pb-10">
+<div class="scroll-room h-full overflow-y-auto px-5 pb-28">
   <div class="mx-auto flex max-w-[680px] flex-col gap-6">
     <Group title="Appearance">
       <Row label="Theme" description="The canvas around your video stays dark in every theme.">

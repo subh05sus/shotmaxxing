@@ -35,7 +35,7 @@
   }
 </script>
 
-<div class="scroll-room h-full overflow-y-auto px-5 pb-8">
+<div class="scroll-room h-full overflow-y-auto px-5 pb-28">
   <section
     class="rise-in flex items-stretch gap-5 rounded-card border border-border bg-surface p-4 shadow-[var(--elev-1)]"
   >

@@ -39,6 +39,7 @@ export {
   type Theme,
   type ThemeSetting,
 } from './lib/env.svelte';
+export { fuzzyScore } from './lib/fuzzy';
 export { chordCaps, chordLabel, matchesChord, parseChord } from './lib/keys';
 export { bezier, easeExit, easeOut, fade, pop, rise, sink, slide, spring, unpop } from './lib/motion';
 export { portal } from './lib/portal';
