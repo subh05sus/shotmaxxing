@@ -282,7 +282,7 @@ export class EditorState {
     ),
   );
   /** Players for the voice-overs, by id, and the file each is for. */
-  #voices = new Map<string, { el: HTMLAudioElement; file: string }>();
+  #voices = new Map<string, { el: HTMLAudioElement; file: string; gain: Sound['gain'] }>();
   /** What was recorded besides the video, in seconds and capture points. */
   cursorPath = $state.raw<TimedPoint[]>(SAMPLE_CURSOR);
   clicks = $state.raw<TimedPoint[]>(SAMPLE_PROJECT.clicks);
@@ -505,6 +505,8 @@ export class EditorState {
         player.el.pause();
         player.el.removeAttribute('src');
         player.el.load();
+        player.gain?.source.disconnect();
+        player.gain?.node.disconnect();
       }
     }
     const out = this.outputTimeAt(t);
@@ -514,7 +516,9 @@ export class EditorState {
       if (!player) {
         const el = new Audio();
         el.preload = 'auto';
-        this.#voices.set(voice.id, { el, file });
+        // With CORS, like the recorded tracks, so Web Audio may raise it past 100% (it would play silence otherwise).
+        el.crossOrigin = 'anonymous';
+        this.#voices.set(voice.id, { el, file, gain: null });
         void mediaUrl(file).then((url) => {
           if (this.#voices.get(voice.id)?.el !== el) return;
           el.src = url;
@@ -523,8 +527,7 @@ export class EditorState {
         continue;
       }
       if (!player.el.getAttribute('src')) continue;
-      // An element plays at most at full volume; above 100% is for the export.
-      player.el.volume = Math.min(1, Math.max(0, voice.volume)) * monitor;
+      this.#setLevel(player, Math.max(0, voice.volume) * monitor);
       if (out < voice.start - 0.01 || out > voice.start + voice.seconds) {
         if (!player.el.paused) player.el.pause();
         continue;
@@ -534,10 +537,12 @@ export class EditorState {
   }
 
   #releaseVoices(): void {
-    for (const { el } of this.#voices.values()) {
+    for (const { el, gain } of this.#voices.values()) {
       el.pause();
       el.removeAttribute('src');
       el.load();
+      gain?.source.disconnect();
+      gain?.node.disconnect();
     }
     this.#voices.clear();
   }
@@ -924,7 +929,7 @@ export class EditorState {
    * Plays a sound at `level`, where 1 is as recorded. Media elements stop at 100%, so louder settings (the sliders
    * go to 150%, as the export does) pass through a gain node, made once for that sound and kept after.
    */
-  #setLevel(sound: Sound, level: number): void {
+  #setLevel(sound: Pick<Sound, 'el' | 'gain'>, level: number): void {
     if (level > 1 && !sound.gain) {
       try {
         this.#audio ??= new AudioContext();
@@ -1066,7 +1071,8 @@ export class EditorState {
     if (this.time >= this.project.duration - 0.05) this.time = 0;
     this.playing = true;
     // A suspended audio context mutes the sounds routed through it.
-    if (this.#audio?.state === 'suspended' && this.#sounds.some((s) => s.gain)) void this.#audio.resume();
+    const routed = this.#sounds.some((s) => s.gain) || [...this.#voices.values()].some((v) => v.gain);
+    if (this.#audio?.state === 'suspended' && routed) void this.#audio.resume();
     this.#last = performance.now();
     const video = this.#video;
     if (video) {
