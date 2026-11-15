@@ -126,8 +126,10 @@ Launch demo.smx/
 
 ### One API, many clients
 
-The Rust core exposes a **control API** over a Unix domain socket (macOS) or a named pipe (Windows), protected
-by a per-session token in the user's config folder. Every client uses it:
+The Rust core exposes a **control API** over a Unix domain socket (macOS) or a named pipe (Windows), and the system
+keeps it private: the socket file is this user's alone (mode 0600), and the pipe's access list admits only this user,
+from this computer, while the command checks that the pipe is served by this user before it says anything. Every
+client uses it:
 
 - the app's own UI (through Tauri commands that call the same functions),
 - `shotmaxxing mcp`: a stdio MCP server for Claude Code, Claude Desktop, Codex, Cursor, VS Code, Windsurf, OpenCode,

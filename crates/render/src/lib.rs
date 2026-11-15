@@ -9,10 +9,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+// The GIF writer and the CPU-drawn sprites serve the exporters, which only macOS has so far.
+#[cfg(target_os = "macos")]
 mod animated;
 pub mod click;
 mod model;
 pub mod scene;
+#[cfg(target_os = "macos")]
 mod sprites;
 pub mod voice;
 pub mod wallpaper;

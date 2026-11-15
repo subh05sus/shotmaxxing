@@ -1,6 +1,6 @@
 [package]
 name = "shotmaxxing-control"
-description = "The control API between the shotmaxxing command and the running Shotmaxxing app: JSON lines over a private local socket."
+description = "The control API between the shotmaxxing command and the running Shotmaxxing app: JSON lines over a private local socket, or a named pipe on Windows."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,17 @@ publish = false
 shotmaxxing-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tempfile.workspace = true

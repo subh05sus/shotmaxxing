@@ -143,9 +143,11 @@ Anything an agent does can be changed later in the editor: open the project from
 Long calls send `notifications/progress` when the request has a `progressToken`, and stop on
 `notifications/cancelled`.
 
-The command reaches the running app through a control socket that only you can open, at
-`~/Library/Application Support/dev.shotmaxxing.desktop/control.sock` (JSON, one message per line). It carries the
-take card today. Set `SHOTMAXXING_CONTROL_SOCKET` to point both ends somewhere else while developing.
+The command reaches the running app through a control socket that only you can open (JSON, one message per line):
+`~/Library/Application Support/dev.shotmaxxing.desktop/control.sock` on macOS, and on Windows the local named pipe
+`\\.\pipe\dev.shotmaxxing.desktop.control.<your SID>`, which the command only talks to when your own account serves
+it. It carries the take card today. Set `SHOTMAXXING_CONTROL_SOCKET` to point both ends somewhere else while
+developing (on Windows, another pipe name).
 
 The same work is available from the terminal:
 

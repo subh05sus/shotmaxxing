@@ -1,11 +1,14 @@
 //! The control API: how the `shotmaxxing` command, and through it every connected agent, reaches the running app.
 //!
-//! The app listens on a Unix socket in its own support folder, which only this user can open. The command connects
-//! when it has something to show the person, sends one JSON message per line, and carries on by itself when the app
-//! isn't open. Today it carries agent takes: the app asks the person before a take starts, then shows it live on the
-//! take card, where Stop and Hand back reach the take straight away.
+//! The app listens where only this user can reach it: a Unix socket in its own support folder on macOS and Linux, and
+//! a local named pipe on Windows. The command connects when it has something to show the person, sends one JSON
+//! message per line, and carries on by itself when the app isn't open. Today it carries agent takes: the app asks the
+//! person before a take starts, then shows it live on the take card, where Stop and Hand back reach the take straight
+//! away.
 
-#![forbid(unsafe_code)]
+// Only the Windows pipe needs system calls the standard library doesn't wrap.
+#![cfg_attr(not(windows), forbid(unsafe_code))]
+#![cfg_attr(windows, deny(unsafe_code))]
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::marker::PhantomData;
@@ -80,26 +83,54 @@ pub enum FromApp {
     HandBack,
 }
 
-/// Where the app listens: `~/Library/Application Support/<APP_ID>/control.sock` on macOS, and the runtime folder (or
-/// the data folder) on Linux. `None` on Windows for now, without a home folder, or when the path is too long for a
-/// socket. `SHOTMAXXING_CONTROL_SOCKET` points both ends somewhere else, for tests and development.
+/// Where the app listens: `~/Library/Application Support/<APP_ID>/control.sock` on macOS, the runtime folder (or the
+/// data folder) on Linux, and the pipe `\\.\pipe\<APP_ID>.control.<this user's SID>` on Windows. `None` without a
+/// home folder, or when the path is too long for a socket. `SHOTMAXXING_CONTROL_SOCKET` points both ends somewhere
+/// else, for tests and development (on Windows, another pipe name).
 pub fn socket_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("SHOTMAXXING_CONTROL_SOCKET").filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(path));
     }
+    default_path()
+}
+
+#[cfg(unix)]
+fn default_path() -> Option<PathBuf> {
     let path = if cfg!(target_os = "macos") {
         PathBuf::from(std::env::var_os("HOME")?).join("Library/Application Support").join(APP_ID)
-    } else if cfg!(unix) {
+    } else {
         match std::env::var_os("XDG_RUNTIME_DIR") {
             Some(runtime) => PathBuf::from(runtime).join(APP_ID),
             None => PathBuf::from(std::env::var_os("HOME")?).join(".local/share").join(APP_ID),
         }
-    } else {
-        return None;
     }
     .join("control.sock");
     // Socket paths are limited to 104 bytes on macOS, including the final zero.
     (path.as_os_str().len() < 104).then_some(path)
+}
+
+#[cfg(windows)]
+fn default_path() -> Option<PathBuf> {
+    pipe::name()
+}
+
+#[cfg(not(any(unix, windows)))]
+fn default_path() -> Option<PathBuf> {
+    None
+}
+
+/// A private address for tests: a socket in `dir` on Unix, and on Windows a pipe no other test or app uses.
+#[doc(hidden)]
+pub fn scratch_address(dir: &std::path::Path) -> PathBuf {
+    if cfg!(windows) {
+        use std::sync::atomic::AtomicU32;
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        PathBuf::from(format!(r"\\.\pipe\{APP_ID}.test.{}.{n}.{}", std::process::id(), nanos.subsec_nanos()))
+    } else {
+        dir.join("control.sock")
+    }
 }
 
 /// Writes one message as a line of JSON.
@@ -140,12 +171,14 @@ pub fn read_message<T: DeserializeOwned>(reader: &mut impl BufRead) -> io::Resul
 #[cfg(unix)]
 pub use unix::*;
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub use pipe::*;
+
+#[cfg(not(any(unix, windows)))]
 pub use elsewhere::*;
 
-/// Without Unix sockets (Windows, until named pipes are wired up) the app can't be reached, and the command carries
-/// on by itself.
-#[cfg(not(unix))]
+/// Elsewhere the app can't be reached, and the command carries on by itself.
+#[cfg(not(any(unix, windows)))]
 mod elsewhere {
     use std::path::Path;
 
@@ -255,13 +288,13 @@ mod unix {
 
         /// Waits for the next message; `None` once the other end has closed.
         pub fn receive(&mut self) -> io::Result<Option<In>> {
-            self.reader.get_ref().set_read_timeout(None)?;
+            self.wait_at_most(None)?;
             read_into(&mut self.reader, &mut self.pending)
         }
 
         /// Waits for the next message until `deadline`, or until `cancel` is set. Both count as a timeout.
         pub fn receive_until(&mut self, deadline: Instant, cancel: &AtomicBool) -> io::Result<Option<In>> {
-            self.reader.get_ref().set_read_timeout(Some(Duration::from_millis(200)))?;
+            self.wait_at_most(Some(Duration::from_millis(200)))?;
             loop {
                 if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
                     return Err(io::ErrorKind::TimedOut.into());
@@ -277,6 +310,15 @@ mod unix {
         /// A handle that sends from another thread while this one receives.
         pub fn sender(&self) -> io::Result<Sender<Out>> {
             Ok(Sender { writer: self.writer.try_clone()?, kind: PhantomData })
+        }
+
+        /// How long each read may wait.
+        fn wait_at_most(&self, timeout: Option<Duration>) -> io::Result<()> {
+            match self.reader.get_ref().set_read_timeout(timeout) {
+                // macOS refuses options on a socket whose other end has gone; the read then reports the end.
+                Err(e) if e.kind() == io::ErrorKind::InvalidInput => Ok(()),
+                other => other,
+            }
         }
     }
 
@@ -331,7 +373,462 @@ mod unix {
     }
 }
 
-#[cfg(all(test, unix))]
+/// Windows: a named pipe on this computer only, that only this user can open. The first instance claims the name, so
+/// no other process can listen in the app's place, and the command talks only to a pipe served by this user.
+///
+/// The pipe is synchronous, and Windows lets only one call at a time into a synchronous handle: a read waiting inside
+/// the pipe would hold up a send from another thread. So reads look first and only read what has arrived, napping
+/// between looks (at most 50 ms) while nothing comes. That only happens while a take is connected.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod pipe {
+    use std::fs::File;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+    use std::path::Path;
+    use std::ptr::null_mut;
+    use std::sync::Arc;
+
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_BROKEN_PIPE, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED,
+        ERROR_PIPE_NOT_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
+    };
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{
+        EqualSid, GetTokenInformation, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY,
+        TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION,
+    };
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeServerProcessId,
+        PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+        PeekNamedPipe, WaitNamedPipeW,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    use super::*;
+
+    /// The longest nap between looks at a pipe that has nothing to read.
+    const NAP: Duration = Duration::from_millis(50);
+    /// Each direction's buffer.
+    const BUFFER: u32 = 64 * 1024;
+
+    /// The app's pipe for this user.
+    pub(super) fn name() -> Option<PathBuf> {
+        let sid = user_sid().ok()?;
+        Some(PathBuf::from(format!(r"\\.\pipe\{APP_ID}.control.{sid}")))
+    }
+
+    /// One connected pipe, shared by a connection's reading and sending sides.
+    struct Pipe {
+        file: File,
+        /// Set by [`Sender::close`]: reads end as if the other side had closed.
+        closed: AtomicBool,
+        /// Whether this is the app's end, which can disconnect the other side outright.
+        server: bool,
+    }
+
+    impl Pipe {
+        fn new(file: File, server: bool) -> Arc<Self> {
+            Arc::new(Self { file, closed: AtomicBool::new(false), server })
+        }
+
+        fn handle(&self) -> HANDLE {
+            self.file.as_raw_handle() as HANDLE
+        }
+
+        /// How many bytes are waiting; `None` once the other side has gone.
+        fn waiting(&self) -> io::Result<Option<usize>> {
+            let mut waiting = 0u32;
+            // SAFETY: the handle is an open pipe; no buffer is passed, so nothing is copied out.
+            let ok =
+                unsafe { PeekNamedPipe(self.handle(), null_mut(), 0, null_mut(), &mut waiting, null_mut()) };
+            if ok != 0 {
+                return Ok(Some(waiting as usize));
+            }
+            let error = io::Error::last_os_error();
+            if gone(&error) { Ok(None) } else { Err(error) }
+        }
+    }
+
+    /// The other side closed or disconnected.
+    fn gone(error: &io::Error) -> bool {
+        matches!(
+            error.raw_os_error().map(|code| code as u32),
+            Some(ERROR_BROKEN_PIPE | ERROR_PIPE_NOT_CONNECTED | ERROR_NO_DATA)
+        )
+    }
+
+    /// Reads only what has arrived, waiting by napping; see the module notes.
+    struct PipeReader {
+        pipe: Arc<Pipe>,
+        /// How long one read may wait for something to arrive, like a socket's read timeout.
+        timeout: Option<Duration>,
+    }
+
+    impl Read for PipeReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let started = Instant::now();
+            let mut nap = Duration::from_millis(1);
+            loop {
+                if self.pipe.closed.load(Ordering::SeqCst) {
+                    return Ok(0);
+                }
+                match self.pipe.waiting()? {
+                    None => return Ok(0),
+                    Some(0) => {}
+                    Some(waiting) => {
+                        let len = waiting.min(buf.len());
+                        return match (&self.pipe.file).read(&mut buf[..len]) {
+                            Err(e) if gone(&e) => Ok(0),
+                            other => other,
+                        };
+                    }
+                }
+                if let Some(timeout) = self.timeout {
+                    let left = timeout.saturating_sub(started.elapsed());
+                    if left.is_zero() {
+                        return Err(io::ErrorKind::TimedOut.into());
+                    }
+                    nap = nap.min(left);
+                }
+                std::thread::sleep(nap);
+                nap = (nap * 2).min(NAP);
+            }
+        }
+    }
+
+    struct PipeWriter(Arc<Pipe>);
+
+    impl Write for PipeWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.0.closed.load(Ordering::SeqCst) {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            (&self.0.file).write(buf)
+        }
+
+        /// Written bytes are already in the pipe. (Flushing a pipe's file buffers would wait for the other side to
+        /// read everything.)
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// One end of a connection: it receives `In` and sends `Out`.
+    pub struct Connection<In, Out> {
+        reader: BufReader<PipeReader>,
+        writer: PipeWriter,
+        pending: String,
+        kinds: PhantomData<(In, Out)>,
+    }
+
+    /// The command's end.
+    pub type Client = Connection<FromApp, ToApp>;
+    /// The app's end.
+    pub type Peer = Connection<ToApp, FromApp>;
+
+    /// A second handle that only sends, for another thread.
+    pub struct Sender<Out> {
+        writer: PipeWriter,
+        kind: PhantomData<Out>,
+    }
+
+    impl<Out: Serialize> Sender<Out> {
+        pub fn send(&mut self, message: &Out) -> io::Result<()> {
+            write_message(&mut self.writer, message)
+        }
+
+        /// Closes the connection both ways, which also ends a receive waiting on another thread. The other side sees
+        /// the end once this side's last handle goes.
+        pub fn close(&self) {
+            let pipe = &self.writer.0;
+            pipe.closed.store(true, Ordering::SeqCst);
+            if pipe.server {
+                // SAFETY: disconnects a pipe instance this process created and still holds open.
+                unsafe { DisconnectNamedPipe(pipe.handle()) };
+            }
+        }
+    }
+
+    impl<In: DeserializeOwned, Out: Serialize> Connection<In, Out> {
+        fn new(pipe: Arc<Pipe>) -> Self {
+            Self {
+                reader: BufReader::new(PipeReader { pipe: pipe.clone(), timeout: None }),
+                writer: PipeWriter(pipe),
+                pending: String::new(),
+                kinds: PhantomData,
+            }
+        }
+
+        pub fn send(&mut self, message: &Out) -> io::Result<()> {
+            write_message(&mut self.writer, message)
+        }
+
+        /// Waits for the next message; `None` once the other end has closed.
+        pub fn receive(&mut self) -> io::Result<Option<In>> {
+            self.reader.get_mut().timeout = None;
+            read_into(&mut self.reader, &mut self.pending)
+        }
+
+        /// Waits for the next message until `deadline`, or until `cancel` is set. Both count as a timeout.
+        pub fn receive_until(&mut self, deadline: Instant, cancel: &AtomicBool) -> io::Result<Option<In>> {
+            self.reader.get_mut().timeout = Some(Duration::from_millis(200));
+            loop {
+                if cancel.load(Ordering::SeqCst) || Instant::now() >= deadline {
+                    return Err(io::ErrorKind::TimedOut.into());
+                }
+                match read_into(&mut self.reader, &mut self.pending) {
+                    Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    other => return other,
+                }
+            }
+        }
+
+        /// A handle that sends from another thread while this one receives.
+        pub fn sender(&self) -> io::Result<Sender<Out>> {
+            Ok(Sender { writer: PipeWriter(self.writer.0.clone()), kind: PhantomData })
+        }
+    }
+
+    impl Client {
+        /// Connects to the running app. `None` when it isn't open.
+        pub fn connect() -> Option<Self> {
+            Self::connect_to(&socket_path()?).ok()
+        }
+
+        /// Connects to the pipe at `path`, once it's clear this user's process is serving it.
+        pub fn connect_to(path: &Path) -> io::Result<Self> {
+            let open = || {
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    // The server may learn who connected, but never act as this user.
+                    .security_qos_flags(SECURITY_IDENTIFICATION)
+                    .open(path)
+            };
+            let file = match open() {
+                // Every instance is taken for a moment while the app makes the next one.
+                Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
+                    let name = wide(path);
+                    // SAFETY: a NUL-terminated pipe name; waits at most a second for a free instance.
+                    unsafe { WaitNamedPipeW(name.as_ptr(), 1000) };
+                    open()?
+                }
+                other => other?,
+            };
+            if !served_by_this_user(&file)? {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "something other than this user's Shotmaxxing is listening on its pipe",
+                ));
+            }
+            Ok(Self::new(Pipe::new(file, false)))
+        }
+    }
+
+    /// The app's pipe, with the next instance waiting for a connection.
+    pub struct Server {
+        name: Vec<u16>,
+        security: OnlyThisUser,
+        next: OwnedHandle,
+    }
+
+    impl Server {
+        /// Starts listening at `path`, which only this user can open. Fails when another copy of the app (or
+        /// anything else) already holds the name.
+        pub fn bind(path: &Path) -> io::Result<Self> {
+            let name = wide(path);
+            let security = OnlyThisUser::new()?;
+            let next = instance(&name, &security, true).map_err(|e| {
+                if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) {
+                    io::Error::new(io::ErrorKind::AddrInUse, "another Shotmaxxing is already listening")
+                } else {
+                    e
+                }
+            })?;
+            Ok(Self { name, security, next })
+        }
+
+        /// Accepts connections until the pipe fails, handing each to `handle` on its own thread.
+        pub fn run(mut self, handle: impl Fn(Peer) + Send + Sync + 'static) {
+            let handle = Arc::new(handle);
+            loop {
+                // SAFETY: waits for a client on an instance this server created and holds.
+                let connected = unsafe { ConnectNamedPipe(self.next.as_raw_handle() as HANDLE, null_mut()) }
+                    != 0
+                    || io::Error::last_os_error().raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32);
+                // The next instance exists before this one is handed off, so the name is never free to take.
+                let Ok(fresh) = instance(&self.name, &self.security, false) else { return };
+                let taken = std::mem::replace(&mut self.next, fresh);
+                if !connected {
+                    std::thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
+                let peer = Peer::new(Pipe::new(File::from(taken), true));
+                let handle = handle.clone();
+                std::thread::Builder::new().name("control peer".into()).spawn(move || handle(peer)).ok();
+            }
+        }
+    }
+
+    /// Makes one instance of the pipe; `first` claims the name and fails if anything already holds it.
+    fn instance(name: &[u16], security: &OnlyThisUser, first: bool) -> io::Result<OwnedHandle> {
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: security.0,
+            bInheritHandle: 0,
+        };
+        let open = PIPE_ACCESS_DUPLEX | if first { FILE_FLAG_FIRST_PIPE_INSTANCE } else { 0 };
+        let mode = PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS;
+        // SAFETY: a NUL-terminated name, and attributes whose descriptor outlives the call.
+        let pipe = unsafe {
+            CreateNamedPipeW(
+                name.as_ptr(),
+                open,
+                mode,
+                PIPE_UNLIMITED_INSTANCES,
+                BUFFER,
+                BUFFER,
+                0,
+                &attributes,
+            )
+        };
+        if pipe == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a new handle that nothing else owns.
+        Ok(unsafe { OwnedHandle::from_raw_handle(pipe as RawHandle) })
+    }
+
+    /// A security descriptor that lets this user, and no one else, open the pipe.
+    struct OnlyThisUser(PSECURITY_DESCRIPTOR);
+
+    // SAFETY: the descriptor is plain memory the system allocated for this value; nothing else refers to it.
+    unsafe impl Send for OnlyThisUser {}
+
+    impl OnlyThisUser {
+        fn new() -> io::Result<Self> {
+            // Protected, so nothing is inherited: full access for this user only.
+            let sddl = wide(Path::new(&format!("D:P(A;;GA;;;{})", user_sid()?)));
+            let mut descriptor: PSECURITY_DESCRIPTOR = null_mut();
+            // SAFETY: parses a NUL-terminated string into a descriptor the system allocates; freed on drop.
+            let ok = unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    sddl.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut descriptor,
+                    null_mut(),
+                )
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Self(descriptor))
+        }
+    }
+
+    impl Drop for OnlyThisUser {
+        fn drop(&mut self) {
+            // SAFETY: the descriptor came from ConvertStringSecurityDescriptorToSecurityDescriptorW.
+            unsafe { LocalFree(self.0) };
+        }
+    }
+
+    /// Whether the process serving the pipe runs as this user.
+    fn served_by_this_user(file: &File) -> io::Result<bool> {
+        let mut pid = 0u32;
+        // SAFETY: asks about a pipe this process holds open.
+        if unsafe { GetNamedPipeServerProcessId(file.as_raw_handle() as HANDLE, &mut pid) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: opens the server's process with the least access that can read its user.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if process.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a handle just opened, closed when this drops.
+        let process = unsafe { OwnedHandle::from_raw_handle(process as RawHandle) };
+        let theirs = User::of(process.as_raw_handle() as HANDLE)?;
+        // SAFETY: the pseudo handle for this process, which needs no closing.
+        let ours = User::of(unsafe { GetCurrentProcess() })?;
+        // SAFETY: both SIDs point into buffers that live until the end of this function.
+        Ok(unsafe { EqualSid(theirs.sid(), ours.sid()) } != 0)
+    }
+
+    /// This user's SID as text, like `S-1-5-21-…`.
+    fn user_sid() -> io::Result<String> {
+        // SAFETY: the pseudo handle for this process, which needs no closing.
+        let user = User::of(unsafe { GetCurrentProcess() })?;
+        let mut text = null_mut();
+        // SAFETY: converts a valid SID into a string the system allocates, freed below.
+        if unsafe { ConvertSidToStringSidW(user.sid(), &mut text) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut len = 0;
+        // SAFETY: the system's string ends with a zero.
+        while unsafe { *text.add(len) } != 0 {
+            len += 1;
+        }
+        // SAFETY: `len` characters were just counted in it.
+        let sid = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, len) });
+        // SAFETY: the string came from ConvertSidToStringSidW.
+        unsafe { LocalFree(text.cast()) };
+        Ok(sid)
+    }
+
+    /// A process's user: the TOKEN_USER the system wrote, with the SID it points into.
+    struct User(Vec<u64>);
+
+    impl User {
+        fn of(process: HANDLE) -> io::Result<Self> {
+            let mut token: HANDLE = null_mut();
+            // SAFETY: reads the token of a process handle the caller holds.
+            if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: a handle just opened, closed when this drops.
+            let token = unsafe { OwnedHandle::from_raw_handle(token as RawHandle) };
+            let token = token.as_raw_handle() as HANDLE;
+            let mut needed = 0u32;
+            // SAFETY: asks for the size only.
+            unsafe { GetTokenInformation(token, TokenUser, null_mut(), 0, &mut needed) };
+            if needed == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // Eight-byte cells keep the TOKEN_USER at its alignment.
+            let mut cells = vec![0u64; (needed as usize).div_ceil(8)];
+            // SAFETY: the buffer holds `needed` bytes.
+            let ok = unsafe {
+                GetTokenInformation(token, TokenUser, cells.as_mut_ptr().cast(), needed, &mut needed)
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Self(cells))
+        }
+
+        fn sid(&self) -> PSID {
+            // SAFETY: the buffer starts with the TOKEN_USER that GetTokenInformation wrote.
+            unsafe { (*self.0.as_ptr().cast::<TOKEN_USER>()).User.Sid }
+        }
+    }
+
+    /// A path as the NUL-terminated wide string Windows takes.
+    fn wide(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+    }
+}
+
+#[cfg(all(test, any(unix, windows)))]
 mod tests {
     use super::*;
 
@@ -359,11 +856,14 @@ mod tests {
     #[test]
     fn a_take_goes_back_and_forth_over_the_socket() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("control.sock");
+        let path = scratch_address(dir.path());
         let server = Server::bind(&path).unwrap();
         // Only this user may connect.
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
         // A second copy can't take over a live socket.
         assert_eq!(Server::bind(&path).err().map(|e| e.kind()), Some(io::ErrorKind::AddrInUse));
 
@@ -403,6 +903,7 @@ mod tests {
         assert_eq!(client.receive().unwrap(), Some(FromApp::Stop));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_socket_left_behind_is_replaced() {
         let dir = tempfile::tempdir().unwrap();
@@ -413,10 +914,50 @@ mod tests {
         drop(server);
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_socket_lives_in_the_apps_folder() {
         if let Some(path) = socket_path() {
             assert!(path.ends_with(format!("{APP_ID}/control.sock")), "{}", path.display());
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_pipe_is_named_for_the_app_and_this_user() {
+        let path = default_path().expect("this user has a SID");
+        let name = path.to_string_lossy();
+        assert!(name.starts_with(&format!(r"\\.\pipe\{APP_ID}.control.S-1-")), "{name}");
+    }
+
+    #[test]
+    fn a_closed_app_ends_the_take_and_a_quit_app_frees_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = scratch_address(dir.path());
+        let server = Server::bind(&path).unwrap();
+        std::thread::spawn(move || {
+            // The app answers, then goes away.
+            server.run(|mut peer| {
+                if let Ok(Some(ToApp::Ask { .. })) = peer.receive() {
+                    peer.send(&FromApp::Answer { allowed: true, reason: None }).unwrap();
+                }
+            })
+        });
+        let mut client = Client::connect_to(&path).unwrap();
+        client.send(&ToApp::Ask { take: TakeRequest::default() }).unwrap();
+        assert_eq!(client.receive().unwrap(), Some(FromApp::Answer { allowed: true, reason: None }));
+        assert_eq!(client.receive().unwrap(), None, "the app's end closed");
+
+        // Closing our own end ends a receive waiting on another thread.
+        let mut client = Client::connect_to(&path).unwrap();
+        let sender = client.sender().unwrap();
+        let waiting = std::thread::spawn(move || client.receive().map(|m| m.is_none()));
+        std::thread::sleep(Duration::from_millis(100));
+        sender.close();
+        assert!(waiting.join().unwrap().unwrap_or(true), "the waiting receive ended");
+
+        // Nobody listens at a fresh address.
+        let elsewhere = scratch_address(tempfile::tempdir().unwrap().path());
+        assert!(Client::connect_to(&elsewhere).is_err());
     }
 }

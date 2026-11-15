@@ -114,7 +114,7 @@ fn make_project(dir: &Path, media: bool) -> PathBuf {
 fn a_take_the_person_declines_in_the_app_never_starts() {
     use shotmaxxing_control::{FromApp, ToApp};
     let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("control.sock");
+    let socket = shotmaxxing_control::scratch_address(dir.path());
     let app = shotmaxxing_control::Server::bind(&socket).unwrap();
     let (asked, questions) = std::sync::mpsc::channel();
     std::thread::spawn(move || {

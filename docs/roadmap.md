@@ -38,7 +38,7 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 ## Milestone 3: Agents
 
 - [x] Control API for the running app (Unix socket on macOS and Linux)
-- [ ] Control API on Windows (named pipe)
+- [x] Control API on Windows (a named pipe only this user can open)
 - [x] `shotmaxxing mcp` and the CLI
 - [x] Take script schema and checks
 - [x] Beats compiler and performer (macOS)
