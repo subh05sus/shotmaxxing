@@ -31,7 +31,8 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [x] Export: MP4 (H.264, HEVC) and GIF, with the sound mixed
 - [x] Background export queue (exports wait in line and render one at a time)
 - [x] Autosave and version history
-- [ ] Styled screenshots
+- [x] Styled stills: any frame as a PNG, from the editor, the CLI and MCP
+- [ ] Screenshot mode in the record dialog (a styled still without recording first)
 
 ## Milestone 3: Agents
 

@@ -115,9 +115,12 @@ struct ExportArgs {
     /// The file to write. Without it, the video goes next to the project, named after it.
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
-    /// MP4 plays everywhere; HEVC is smaller; GIF loops in chats and docs.
+    /// MP4 plays everywhere; HEVC is smaller; GIF loops in chats and docs; PNG is one styled frame.
     #[arg(long, value_enum, default_value_t = OutFormat::Mp4)]
     format: OutFormat,
+    /// For a PNG: the moment to show, in seconds into the recording (like the editor's playhead).
+    #[arg(long, default_value_t = 0.0)]
+    at: f64,
     /// The shorter side in pixels, e.g. 720, 1080, 1440 or 2160. The other side follows the canvas shape.
     #[arg(long, default_value_t = 1080)]
     size: u32,
@@ -134,6 +137,7 @@ enum OutFormat {
     Mp4,
     Hevc,
     Gif,
+    Png,
 }
 
 #[derive(Subcommand)]
@@ -230,6 +234,7 @@ fn export(args: ExportArgs, json: bool) -> Result<()> {
         OutFormat::Mp4 => Format::H264,
         OutFormat::Hevc => Format::Hevc,
         OutFormat::Gif => Format::Gif,
+        OutFormat::Png => Format::Png,
     };
     let (width, height) = output_size(project.canvas_aspect(), args.size.clamp(240, 4320));
     let fps = args.fps.clamp(1, 120);
@@ -237,12 +242,12 @@ fn export(args: ExportArgs, json: bool) -> Result<()> {
         Some(out) => out,
         None => {
             let dir = args.project.parent().unwrap_or(Path::new("."));
-            let ext = if format == Format::Gif { "gif" } else { "mp4" };
-            unique_path(dir, &shotmaxxing_core::bundle::sanitize_file_name(&project.name), ext)
+            unique_path(dir, &shotmaxxing_core::bundle::sanitize_file_name(&project.name), format.extension())
         }
     };
     let bitrate = args.mbps.map_or_else(|| default_bitrate(width, height, fps, format), |mbps| mbps * 1e6);
-    let options = ExportOptions { width, height, fps, format, bitrate, output: output.clone() };
+    let at = (format == Format::Png).then_some(args.at);
+    let options = ExportOptions { width, height, fps, format, bitrate, output: output.clone(), at };
 
     let stop = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop);
@@ -595,6 +600,7 @@ fn run_take(
             size: if gif { 480 } else { 1080 },
             fps: if gif { 15 } else { 60 },
             mbps: None,
+            at: 0.0,
         };
         export(args, json)?;
     }

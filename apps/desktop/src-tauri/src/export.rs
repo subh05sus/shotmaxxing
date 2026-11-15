@@ -96,6 +96,9 @@ pub struct ExportRequest {
     /// Where to save; next to the project when empty.
     #[serde(default)]
     pub folder: Option<String>,
+    /// For a PNG: the moment of the recording to show, in seconds.
+    #[serde(default)]
+    pub at: Option<f64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -165,8 +168,7 @@ fn run<R: Runtime>(
     };
     std::fs::create_dir_all(&folder)
         .map_err(|e| format!("couldn't make the folder {}: {e}", folder.display()))?;
-    let ext = if request.format == Format::Gif { "gif" } else { "mp4" };
-    let output = unique_path(&folder, &sanitize_file_name(&request.name), ext);
+    let output = unique_path(&folder, &sanitize_file_name(&request.name), request.format.extension());
     let options = ExportOptions {
         width: request.width,
         height: request.height,
@@ -174,6 +176,7 @@ fn run<R: Runtime>(
         format: request.format,
         bitrate: request.bitrate,
         output: output.clone(),
+        at: request.at,
     };
     let target = EventTarget::webview_window(window);
     let mut last: Option<Instant> = None;

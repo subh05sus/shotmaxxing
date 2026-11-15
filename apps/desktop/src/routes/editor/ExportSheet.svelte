@@ -8,6 +8,8 @@
     fps: number;
     format: ExportFormat;
     bitrate: number;
+    /** For a still: the moment of the recording to show, in seconds. */
+    at?: number;
   }
 </script>
 
@@ -17,7 +19,7 @@
   import { fileSize, timecode } from '../../lib/format';
   import { chooseExportFolder, isTauri } from '../../lib/native';
   import { settings } from '../../lib/settings.svelte';
-  import { ASPECTS } from './camera';
+  import { ASPECTS, sizeForShort } from './camera';
   import type { Aspect, EditorState } from './store.svelte';
 
   let {
@@ -26,7 +28,7 @@
     onexport,
   }: { open: boolean; ed: EditorState; onexport: (choice: ExportChoice) => void } = $props();
 
-  type PresetId = 'youtube' | 'social' | 'vertical' | 'gif' | 'uhd';
+  type PresetId = 'youtube' | 'social' | 'vertical' | 'gif' | 'uhd' | 'still';
   interface Preset {
     id: PresetId;
     name: string;
@@ -51,6 +53,7 @@
     },
     { id: 'gif', name: 'GIF', long: 800, fps: 15, format: 'gif' },
     { id: 'uhd', name: '4K', short: 2160, fps: 60, format: 'hevc' },
+    { id: 'still', name: 'This frame as an image', short: 1440, fps: 1, format: 'png' },
   ];
   const SHAPES: Record<string, string> = { '1:1': 'Square', '9:16': 'Vertical (9:16)' };
 
@@ -70,14 +73,12 @@
         ? { width: even(item.long), height: even(item.long / aspect) }
         : { width: even(item.long * aspect), height: even(item.long) };
     }
-    const short = item.short ?? 1080;
-    return aspect >= 1
-      ? { width: even(short * aspect), height: even(short) }
-      : { width: even(short), height: even(short / aspect) };
+    return sizeForShort(aspect, item.short ?? 1080);
   }
 
   const size = $derived(sizeFor(chosen));
-  const rate = $derived(chosen.format === 'gif' ? 15 : Number(fps));
+  const still = $derived(chosen.format === 'png');
+  const rate = $derived(chosen.format === 'gif' ? 15 : still ? 1 : Number(fps));
   const qualityFactor = $derived(quality === 'small' ? 0.6 : quality === 'high' ? 1.6 : 1);
   // Matches the exporter's own default: about 0.1 bits per pixel per frame for H.264, less for HEVC.
   const bitrate = $derived(
@@ -87,8 +88,13 @@
     ) * qualityFactor,
   );
   const seconds = $derived(ed.outputDuration);
+  // A styled screenshot compresses to roughly a byte a pixel: gradients and text don't squeeze much.
   const bytes = $derived(
-    chosen.format === 'gif' ? (size.width * size.height * rate * seconds * 0.3) / 8 : (bitrate / 8) * seconds,
+    still
+      ? size.width * size.height
+      : chosen.format === 'gif'
+        ? (size.width * size.height * rate * seconds * 0.3) / 8
+        : (bitrate / 8) * seconds,
   );
   // Measured on Apple silicon: about 2 ms per megapixel per frame on the GPU, plus a moment to start.
   const eta = $derived(
@@ -98,9 +104,11 @@
         Math.max(0.0015, ((size.width * size.height) / 1e6) * 0.0019) *
         (chosen.format === 'gif' ? 3 : 1),
   );
-  const etaText = $derived(eta < 60 ? `${Math.max(1, Math.round(eta))} s` : `${Math.round(eta / 60)} min`);
+  const etaText = $derived(
+    still ? 'a moment' : eta < 60 ? `${Math.max(1, Math.round(eta))} s` : `${Math.round(eta / 60)} min`,
+  );
   const formatName = $derived(
-    chosen.format === 'gif' ? 'GIF' : chosen.format === 'hevc' ? 'MP4 (HEVC)' : 'MP4',
+    still ? 'PNG' : chosen.format === 'gif' ? 'GIF' : chosen.format === 'hevc' ? 'MP4 (HEVC)' : 'MP4',
   );
   const mismatch = $derived(chosen.aspect && chosen.aspect !== p.canvas.aspect ? chosen.aspect : null);
   const canExport = $derived(!isTauri || !!ed.path);
@@ -108,7 +116,7 @@
 
   function pick(item: Preset) {
     preset = item.id;
-    if (item.format !== 'gif') fps = item.fps === 30 ? '30' : '60';
+    if (item.format !== 'gif' && item.format !== 'png') fps = item.fps === 30 ? '30' : '60';
   }
 
   async function chooseFolder() {
@@ -119,7 +127,13 @@
   function submit() {
     if (!canExport) return;
     open = false;
-    onexport({ ...size, fps: rate, format: chosen.format, bitrate: Math.round(bitrate) });
+    onexport({
+      ...size,
+      fps: rate,
+      format: chosen.format,
+      bitrate: Math.round(bitrate),
+      at: still ? ed.time : undefined,
+    });
   }
 </script>
 
@@ -154,9 +168,11 @@
         <span class="min-w-0 flex-1">
           <span class="block text-callout font-semibold">{item.name}</span>
           <span class="block text-footnote text-fg-muted tabular"
-            >{s.width} × {s.height} · {item.format === 'gif'
-              ? '15 fps · loops'
-              : `${preset === item.id ? rate : item.fps} fps · ${item.format === 'hevc' ? 'MP4 (HEVC)' : 'MP4'}`}</span
+            >{s.width} × {s.height} · {item.format === 'png'
+              ? `PNG · the frame at ${timecode(ed.time)}`
+              : item.format === 'gif'
+                ? '15 fps · loops'
+                : `${preset === item.id ? rate : item.fps} fps · ${item.format === 'hevc' ? 'MP4 (HEVC)' : 'MP4'}`}</span
           >
         </span>
       </button>
@@ -181,22 +197,24 @@
 
   <div class="mt-3">
     <Advanced id="export">
-      <div class="flex items-center justify-between gap-3 py-1 text-callout">
-        Quality
-        <div class="w-56">
-          <Segmented
-            label="Quality"
-            size="sm"
-            bind:value={quality}
-            options={[
-              { value: 'small', label: 'Smaller' },
-              { value: 'balanced', label: 'Balanced' },
-              { value: 'high', label: 'Higher' },
-            ]}
-          />
+      {#if !still}
+        <div class="flex items-center justify-between gap-3 py-1 text-callout">
+          Quality
+          <div class="w-56">
+            <Segmented
+              label="Quality"
+              size="sm"
+              bind:value={quality}
+              options={[
+                { value: 'small', label: 'Smaller' },
+                { value: 'balanced', label: 'Balanced' },
+                { value: 'high', label: 'Higher' },
+              ]}
+            />
+          </div>
         </div>
-      </div>
-      {#if chosen.format !== 'gif'}
+      {/if}
+      {#if chosen.format !== 'gif' && !still}
         <div class="flex items-center justify-between gap-3 py-1 text-callout">
           Frame rate
           <div class="w-56">
@@ -230,7 +248,7 @@
   {#snippet footer()}
     {#if canExport}
       <span class="mr-auto text-footnote text-fg-muted tabular"
-        >{formatName} · about {fileSize(bytes)} · ready in about {etaText}</span
+        >{formatName} · about {fileSize(bytes)} · ready in {still ? '' : 'about '}{etaText}</span
       >
     {:else}
       <span class="mr-auto text-footnote text-fg-muted"

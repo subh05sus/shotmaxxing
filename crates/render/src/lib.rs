@@ -76,6 +76,19 @@ pub enum Format {
     Hevc,
     /// A looping GIF.
     Gif,
+    /// One frame as a PNG image, styled like the video: a screenshot with the wallpaper, zoom and cursor.
+    Png,
+}
+
+impl Format {
+    /// The file extension for this format.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::H264 | Self::Hevc => "mp4",
+            Self::Gif => "gif",
+            Self::Png => "png",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -87,6 +100,9 @@ pub struct ExportOptions {
     /// Bits per second, for video formats.
     pub bitrate: f64,
     pub output: PathBuf,
+    /// For a PNG: the moment of the recording to show, in seconds. A moment that was cut shows the next one kept.
+    #[serde(default)]
+    pub at: Option<f64>,
 }
 
 /// The size of a video whose shorter side is `short_side` pixels, in the canvas's shape (width ÷ height). Both
@@ -129,7 +145,7 @@ pub fn export(
         )));
     }
     let mut options = options.clone();
-    if options.format != Format::Gif {
+    if matches!(options.format, Format::H264 | Format::Hevc) {
         // 4:2:0 video needs even sides.
         options.width &= !1;
         options.height &= !1;

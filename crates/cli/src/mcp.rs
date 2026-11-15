@@ -280,12 +280,13 @@ fn tools() -> Value {
         {
             "name": "export_project",
             "title": "Export a video",
-            "description": "Renders the project with every edit applied, on the GPU: MP4 (H.264) plays everywhere, HEVC is smaller, GIF loops in chats and docs. Reports progress and can be cancelled.",
+            "description": "Renders the project with every edit applied, on the GPU: MP4 (H.264) plays everywhere, HEVC is smaller, GIF loops in chats and docs, and PNG saves one frame (the moment given by at) styled like the video, for docs and posts. Reports progress and can be cancelled.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project": project,
-                    "format": { "type": "string", "enum": ["mp4", "hevc", "gif"], "default": "mp4" },
+                    "format": { "type": "string", "enum": ["mp4", "hevc", "gif", "png"], "default": "mp4" },
+                    "at": { "type": "number", "minimum": 0, "description": "For png: the moment to show, in seconds into the recording, as zoom times are given. Defaults to the start." },
                     "size": { "type": "integer", "minimum": 240, "maximum": 4320, "description": "The shorter side in pixels. Defaults to 1080, or 480 for a GIF." },
                     "fps": { "type": "integer", "minimum": 1, "maximum": 120, "description": "Defaults to 60, or 15 for a GIF." },
                     "output": { "type": "string", "description": "The file to write. Defaults to a new file next to the project." },
@@ -578,7 +579,8 @@ fn export(args: &Value, progress: &dyn Fn(f64, &str), cancel: &AtomicBool) -> Re
         "mp4" | "h264" => Format::H264,
         "hevc" | "h265" => Format::Hevc,
         "gif" => Format::Gif,
-        other => return Err(format!("“{other}” isn't a format; use mp4, hevc or gif")),
+        "png" => Format::Png,
+        other => return Err(format!("“{other}” isn't a format; use mp4, hevc, gif or png")),
     };
     let gif = format == Format::Gif;
     let size = args.get("size").and_then(Value::as_u64).map_or(if gif { 480 } else { 1080 }, |s| s as u32);
@@ -589,7 +591,7 @@ fn export(args: &Value, progress: &dyn Fn(f64, &str), cancel: &AtomicBool) -> Re
         Some(out) => expand(out),
         None => {
             let dir = path.parent().unwrap_or(Path::new("."));
-            unique_path(dir, &sanitize_file_name(&project.name), if gif { "gif" } else { "mp4" })
+            unique_path(dir, &sanitize_file_name(&project.name), format.extension())
         }
     };
     let options = ExportOptions {
@@ -599,6 +601,7 @@ fn export(args: &Value, progress: &dyn Fn(f64, &str), cancel: &AtomicBool) -> Re
         format,
         bitrate: default_bitrate(width, height, fps, format),
         output: output.clone(),
+        at: (format == Format::Png).then(|| args.get("at").and_then(Value::as_f64).unwrap_or(0.0)),
     };
     let started = Instant::now();
     let mut last = -1.0;

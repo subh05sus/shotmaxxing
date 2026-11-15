@@ -12,6 +12,7 @@ use objc2_av_foundation::{
     AVAssetReader, AVAssetReaderStatus, AVAssetReaderTrackOutput, AVMediaTypeVideo, AVURLAsset,
 };
 use objc2_core_foundation::{CFRetained, CFString};
+use objc2_core_media::{CMTime, CMTimeRange};
 use objc2_core_video::{
     CVPixelBuffer, kCVPixelBufferIOSurfacePropertiesKey, kCVPixelBufferPixelFormatTypeKey,
 };
@@ -46,6 +47,27 @@ pub struct Decoder {
 
 impl Decoder {
     pub fn open(path: &Path) -> Result<Self, RenderError> {
+        Self::open_from(path, None)
+    }
+
+    /// Like `open`, but starts reading a second before `t`, so the picture at `t` comes without decoding everything
+    /// before it. Times still count from the recording's first frame.
+    pub fn open_near(path: &Path, t: f64) -> Result<Self, RenderError> {
+        if t < 2.0 {
+            return Self::open(path);
+        }
+        // Time zero is the first frame's timestamp; reading one frame finds it.
+        let mut probe = Self::open(path)?;
+        probe.read()?;
+        let Some(base) = probe.base else { return Self::open(path) };
+        drop(probe);
+        let mut decoder = Self::open_from(path, Some(base + t - 1.0))?;
+        decoder.base = Some(base);
+        Ok(decoder)
+    }
+
+    /// Opens the recording, reading from `start` (seconds of the file's own timeline) when given.
+    fn open_from(path: &Path, start: Option<f64>) -> Result<Self, RenderError> {
         let url = NSURL::from_file_path(path)
             .ok_or_else(|| system(format!("not a valid file path: {}", path.display())))?;
         // SAFETY: plain AVFoundation calls with valid arguments; the objects live as long as the decoder.
@@ -72,6 +94,12 @@ impl Decoder {
                 return Err(system("the recording's video can't be decoded"));
             }
             reader.addOutput(&output);
+            if let Some(start) = start {
+                reader.setTimeRange(CMTimeRange {
+                    start: CMTime::with_seconds(start, 600),
+                    duration: CMTime::with_seconds(1e7, 600),
+                });
+            }
             if !reader.startReading() {
                 let reason = reader.error().map(|e| e.localizedDescription().to_string()).unwrap_or_default();
                 return Err(system(format!("couldn't start reading the recording: {reason}")));

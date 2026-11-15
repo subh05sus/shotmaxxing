@@ -62,6 +62,8 @@ When you can see the app's controls, plan the whole performance and let Shotmaxx
 8. **Export.** Call `export_project`:
    - the default MP4 at 1080p suits most uses;
    - `"format": "gif"` gives a 480p, 15 fps loop for docs and chats;
+   - `"format": "png"` with `"at"` (seconds into the recording, as zoom times are given) saves one styled frame,
+     for a screenshot in docs or a post;
    - give `output` when the person wants the file somewhere specific.
    
    Report the file's path and length.

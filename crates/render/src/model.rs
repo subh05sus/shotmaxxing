@@ -411,6 +411,17 @@ impl RenderProject {
         None
     }
 
+    /// The moment `source` if it's kept, else the next moment that is (or the last one, past the end).
+    pub fn kept_time(&self, source: f64) -> f64 {
+        if self.export_time(source).is_some() {
+            return source;
+        }
+        match self.clips.iter().find(|c| c.start > source) {
+            Some(next) => next.start,
+            None => self.clips.last().map_or(0.0, |c| (c.end - 1e-3).max(c.start)),
+        }
+    }
+
     /// When each click sounds in the exported video, in order: every press that wasn't cut, if click sounds are on.
     pub fn click_times(&self) -> Vec<f64> {
         if !self.click_sounds {
@@ -487,5 +498,10 @@ mod tests {
         assert!(render.click_times().is_empty(), "off unless the project asks");
         render.click_sounds = true;
         assert_eq!(render.click_times(), vec![1.0, 3.0]);
+
+        // A still of a cut moment shows the first moment after the cut; past the end, the last one.
+        assert_eq!(render.kept_time(1.5), 1.5);
+        assert_eq!(render.kept_time(2.5), 3.0);
+        assert!((render.kept_time(12.0) - 9.999).abs() < 1e-9);
     }
 }

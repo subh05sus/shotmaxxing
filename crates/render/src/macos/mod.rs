@@ -552,6 +552,11 @@ struct Job<'a> {
 
 impl<'a> Job<'a> {
     fn new(project: &'a RenderProject, options: &ExportOptions) -> Result<Self, RenderError> {
+        Self::starting(project, options, 0.0)
+    }
+
+    /// A job whose first frame is at `t` seconds into the recording: its decoders start just before it.
+    fn starting(project: &'a RenderProject, options: &ExportOptions, t: f64) -> Result<Self, RenderError> {
         let screen = project
             .screen
             .as_ref()
@@ -563,8 +568,8 @@ impl<'a> Job<'a> {
             project,
             layout,
             compositor: Compositor::new(project, layout)?,
-            decoder: Decoder::open(screen)?,
-            camera: project.bubble.as_ref().map(|b| Decoder::open(&b.path)).transpose()?,
+            decoder: Decoder::open_near(screen, t)?,
+            camera: project.bubble.as_ref().map(|b| Decoder::open_near(&b.path, t - b.offset)).transpose()?,
             context: context(),
             fps,
             total: (project.output_duration() * f64::from(fps) - 1e-6).ceil().max(1.0) as u64,
@@ -580,6 +585,11 @@ impl<'a> Job<'a> {
     /// Draws frame `i`. Frames must be asked for in order.
     fn draw(&mut self, i: u64) -> Result<Retained<CIImage>, RenderError> {
         let t = self.time(i);
+        self.draw_at(t)
+    }
+
+    /// Draws the moment `t` seconds into the recording. Moments must be asked for in order.
+    fn draw_at(&mut self, t: f64) -> Result<Retained<CIImage>, RenderError> {
         let picture = self.decoder.frame_at(t)?.ok_or_else(|| system("the recording has no frames"))?;
         let camera = match (&mut self.camera, &self.project.bubble) {
             (Some(decoder), Some(bubble)) => decoder.frame_at(t - bubble.offset)?,
@@ -600,6 +610,7 @@ pub fn export(
     let result = match options.format {
         Format::Gif => export_gif(project, options, &temp, progress),
         Format::H264 | Format::Hevc => export_video(project, options, &temp, progress),
+        Format::Png => export_still(project, options, &temp),
     };
     match result {
         Ok(frames) => {
@@ -647,6 +658,27 @@ fn export_video(
             Err(error)
         }
     }
+}
+
+/// One moment, styled like the video, as a PNG.
+fn export_still(project: &RenderProject, options: &ExportOptions, temp: &Path) -> Result<u64, RenderError> {
+    let t = project.kept_time(options.at.unwrap_or(0.0).max(0.0));
+    let mut job = Job::starting(project, options, t)?;
+    let mut rgba = Vec::new();
+    autoreleasepool(|_| -> Result<(), RenderError> {
+        let image = job.draw_at(t)?;
+        let (width, height) = (options.width as usize, options.height as usize);
+        render_rgba(&job.context, &image, width, height, &job.compositor.space, &mut rgba);
+        Ok(())
+    })?;
+    let size = tiny_skia::IntSize::from_wh(options.width, options.height)
+        .ok_or_else(|| RenderError::Project("that size can't be drawn".into()))?;
+    // Core Image hands back premultiplied pixels, which is what a pixmap holds; the PNG gets straight alpha.
+    let pixmap =
+        tiny_skia::Pixmap::from_vec(rgba, size).ok_or_else(|| system("the frame couldn't be kept"))?;
+    let png = pixmap.encode_png().map_err(|e| system(format!("couldn't make the PNG: {e}")))?;
+    std::fs::write(temp, png)?;
+    Ok(1)
 }
 
 /// Frames sampled across the clip to learn a GIF's palette from.

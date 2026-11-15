@@ -63,7 +63,7 @@ and reopen that app.
 | `clean_voice` | Turns down hum, fan noise and hiss in the microphone, and evens out its level |
 | `plan_zooms` | Plans the automatic zooms again, subtle, standard or bold |
 | `style_project` | Wallpaper, canvas shape, padding, corners, shadow and cursor size |
-| `export_project` | Renders MP4 (H.264), HEVC or GIF, with progress, and can be cancelled |
+| `export_project` | Renders MP4 (H.264), HEVC or GIF, with progress, and can be cancelled. `png` saves one frame (`at`, in seconds into the recording) styled like the video |
 | `prepare_take` | Opens an app, finds its window and lists its controls with ids to use as refs, plus a picture of the window |
 | `perform_take` | Films a take script: Shotmaxxing moves the pointer, clicks and types at a human pace while it records, then saves the project (and exports when the script asks). `dry_run` shows the timeline first |
 | `validate_take` | Checks a take script and lists any problems |

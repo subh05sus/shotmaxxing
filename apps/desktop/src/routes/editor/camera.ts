@@ -129,3 +129,11 @@ export const ASPECTS: Record<string, number | null> = {
   '4:5': 4 / 5,
   original: null,
 };
+
+/** A size in the canvas's shape whose shorter side is `short` pixels, with even sides. */
+export function sizeForShort(aspect: number, short: number): { width: number; height: number } {
+  const even = (v: number) => Math.max(16, Math.round(v / 2) * 2);
+  return aspect >= 1
+    ? { width: even(short * aspect), height: even(short) }
+    : { width: even(short), height: even(short / aspect) };
+}

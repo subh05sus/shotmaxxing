@@ -286,7 +286,8 @@ export function chooseProjectsFolder(current?: string): Promise<string | null> {
   return call('choose_projects_folder', { current: current || null }, () => null);
 }
 
-export type ExportFormat = 'h264' | 'hevc' | 'gif';
+/** `png` is one frame, styled like the video. */
+export type ExportFormat = 'h264' | 'hevc' | 'gif' | 'png';
 
 export interface ExportRequest {
   id: string;
@@ -302,6 +303,8 @@ export interface ExportRequest {
   bitrate: number;
   /** Where to save, the short way; next to the project when empty. */
   folder?: string;
+  /** For a PNG: the moment of the recording to show, in seconds. */
+  at?: number;
 }
 
 export type ExportOutcome = { status: 'done'; path: string; file: string } | { status: 'cancelled' };

@@ -229,6 +229,7 @@ fn exports_every_frame_at_the_right_size() {
         format: Format::H264,
         bitrate: 8e6,
         output: output.clone(),
+        at: None,
     };
     let mut last = 0.0;
     export(&root, &options, &mut |done| {
@@ -281,6 +282,7 @@ fn click_sounds_play_under_presses_even_without_a_recorded_sound() {
         format: Format::H264,
         bitrate: 4e6,
         output: output.clone(),
+        at: None,
     };
     export(&root, &options, &mut |_| true).unwrap();
     // The click needs a sound track, which runs the whole video.
@@ -316,6 +318,46 @@ fn loudest_at(path: &Path) -> f64 {
 }
 
 #[test]
+fn saves_one_styled_moment_as_a_png() {
+    if !has_ffmpeg() {
+        eprintln!("skipped: ffmpeg isn't installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = make_project(dir.path());
+    let output = dir.path().join("Frame.png");
+    // Past two seconds, the decoder starts near the moment instead of at the beginning.
+    let options = ExportOptions {
+        width: 1600,
+        height: 900,
+        fps: 30,
+        format: Format::Png,
+        bitrate: 0.0,
+        output: output.clone(),
+        at: Some(2.5),
+    };
+    export(&root, &options, &mut |_| true).unwrap();
+    let png = std::fs::read(&output).unwrap();
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(&png[12..16], b"IHDR");
+    let side = |at: usize| u32::from_be_bytes([png[at], png[at + 1], png[at + 2], png[at + 3]]);
+    assert_eq!((side(16), side(20)), (1600, 900));
+    // The frame was drawn, not left empty: it decodes and has more than one colour.
+    let out = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(&output)
+        .args(["-vf", "scale=64:36", "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+        .output()
+        .unwrap();
+    assert_eq!(out.stdout.len(), 64 * 36);
+    let (lo, hi) = out.stdout.iter().fold((u8::MAX, 0), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+    assert!(hi - lo > 40, "the frame is flat: {lo}..{hi}");
+    // Nothing else was left in the folder.
+    let names: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert!(!names.iter().any(|n| n.to_string_lossy().contains("partial")), "{names:?}");
+}
+
+#[test]
 fn exports_a_looping_gif() {
     if !has_ffmpeg() {
         eprintln!("skipped: ffmpeg isn't installed");
@@ -331,6 +373,7 @@ fn exports_a_looping_gif() {
         format: Format::Gif,
         bitrate: 0.0,
         output: output.clone(),
+        at: None,
     };
     export(&root, &options, &mut |_| true).unwrap();
     let bytes = std::fs::read(&output).unwrap();
@@ -358,6 +401,7 @@ fn cancelling_leaves_nothing_behind() {
         format: Format::H264,
         bitrate: 2e6,
         output: output.clone(),
+        at: None,
     };
     let mut calls = 0;
     let result = export(&root, &options, &mut |_| {

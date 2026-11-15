@@ -51,6 +51,7 @@
   } from '../../lib/native';
   import { relativeTime } from '../../lib/format';
   import { EditorState, type ToolId } from './store.svelte';
+  import { ASPECTS, sizeForShort } from './camera';
   import Canvas from './Canvas.svelte';
   import Transport from './Transport.svelte';
   import Timeline from './Timeline.svelte';
@@ -235,6 +236,13 @@
     }
   }
 
+  /** Saves the frame at the playhead as a PNG, styled like the video, at 1440 pixels on its shorter side. */
+  function saveFrame() {
+    const p = ed.project;
+    const aspect = ASPECTS[p.canvas.aspect] ?? p.capture.width / p.capture.height;
+    void runExport({ ...sizeForShort(aspect, 1440), fps: 1, format: 'png', bitrate: 0, at: ed.time });
+  }
+
   /** Seconds left, once there's enough progress to tell. */
   function timeLeft(startedAt: number, progress: number): string {
     if (progress < 0.04) return '';
@@ -251,6 +259,14 @@
         icon: Download,
         chord: 'mod+e',
         run: () => (exportOpen = true),
+      },
+      {
+        id: 'ed-still',
+        title: 'Save this frame as an image',
+        group: 'Project',
+        icon: Image,
+        keywords: 'screenshot png still picture frame poster',
+        run: () => saveFrame(),
       },
       {
         id: 'ed-history',
