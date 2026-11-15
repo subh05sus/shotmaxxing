@@ -1,6 +1,6 @@
 //! The still parts of a frame, drawn once per export: the background with the window's shadow, the cursor shapes,
 //! the click ring and spotlight, arrows, and the pills behind titles and keystrokes. Each frame then only moves and
-//! fades them, which is cheap on the GPU.
+//! fades them. Both compositors use them: Core Image on macOS and the portable one elsewhere.
 //!
 //! Colours are the editor's tokens (packages/ui/src/styles/tokens.css), converted from OKLCH to sRGB.
 
@@ -11,6 +11,9 @@ use tiny_skia::{
 
 use crate::model::CursorLook;
 use crate::scene::Layout;
+
+/// The line box of titles and the keystroke overlay, as a multiple of the font size.
+pub const LINE_HEIGHT: f64 = 1.25;
 
 /// Converts an OKLCH colour to straight-alpha sRGB.
 pub fn oklch(l: f64, c: f64, h: f64, alpha: f64) -> Color {
@@ -386,6 +389,41 @@ pub fn label(
 /// How far a label's pixmap extends beyond the pill on each side.
 pub fn label_margin(shadow: Option<(f64, f64, f32)>) -> f64 {
     shadow.map_or(0.0, |(offset, sigma, _)| offset + sigma * 3.0).ceil()
+}
+
+/// A title or keystroke, drawn at frame scale with its top-left corner on whole pixels, above the camera.
+pub struct Label {
+    pub pixmap: Pixmap,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// A title: a lime pill with a soft shadow behind `glyphs` (drawn in the accent's ink), its top-left corner at `at`
+/// (fractions of the frame).
+pub fn title(
+    layout: &Layout,
+    glyphs: &Pixmap,
+    at: shotmaxxing_core::geometry::Point,
+    palette: &Palette,
+) -> Option<Label> {
+    let size = layout.text_px;
+    let shadow = Some((0.25 * size, 0.375 * size, 0.3));
+    let pill = f64::from(glyphs.height()) + size;
+    let pixmap = label(glyphs, 1.4 * size, 0.5 * size, pill / 2.0, palette.accent, shadow)?;
+    let margin = label_margin(shadow);
+    let x = (at.x * layout.width - margin).round();
+    let y = (at.y * layout.height - margin).round();
+    Some(Label { pixmap, x, y })
+}
+
+/// A keystroke: `glyphs` (drawn in the stage's ink) centred near the bottom on a dark scrim.
+pub fn key(layout: &Layout, glyphs: &Pixmap, palette: &Palette) -> Option<Label> {
+    let size = layout.text_px;
+    let pixmap = label(glyphs, 0.8 * size, 0.35 * size, 0.5 * size, palette.scrim, None)?;
+    let (w, h) = (f64::from(pixmap.width()), f64::from(pixmap.height()));
+    let x = ((layout.width - w) / 2.0).round();
+    let y = (layout.height * 0.94 - h).round();
+    Some(Label { pixmap, x, y })
 }
 
 #[cfg(test)]

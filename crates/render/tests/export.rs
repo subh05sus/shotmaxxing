@@ -494,3 +494,75 @@ fn cancelling_leaves_nothing_behind() {
         .collect();
     assert!(left.is_empty(), "left behind: {left:?}");
 }
+
+/// How far apart two RGBA frames are, seen at a quarter of their size so that a shade of difference along soft edges
+/// (Core Image blends in linear light, the portable compositor in sRGB) counts for little and anything out of place
+/// counts for a lot: the mean difference, and the share of pixels more than 24 levels apart.
+fn difference(a: &[u8], b: &[u8], width: usize, height: usize) -> (f64, f64, Vec<u8>) {
+    let (w, h) = (width / 4, height / 4);
+    let mut diff = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut worst = 0u32;
+            for c in 0..3 {
+                let (mut sa, mut sb) = (0u32, 0u32);
+                for dy in 0..4 {
+                    for dx in 0..4 {
+                        let i = ((y * 4 + dy) * width + x * 4 + dx) * 4 + c;
+                        sa += u32::from(a[i]);
+                        sb += u32::from(b[i]);
+                    }
+                }
+                worst = worst.max(sa.abs_diff(sb) / 16);
+            }
+            diff[y * w + x] = worst.min(255) as u8;
+        }
+    }
+    let mean = diff.iter().map(|&d| f64::from(d)).sum::<f64>() / diff.len() as f64;
+    let far = diff.iter().filter(|&&d| d > 24).count() as f64 / diff.len() as f64;
+    (mean, far, diff)
+}
+
+#[test]
+fn the_portable_compositor_draws_what_core_image_draws() {
+    if !has_ffmpeg() {
+        eprintln!("skipped: ffmpeg isn't installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = make_project(dir.path());
+    let keep = std::env::var("SHOTMAXXING_KEEP_EXPORT").ok();
+    // Still, with the blur, arrow, title and camera; zooming in, just after a click; zoomed in, with a keystroke.
+    for at in [0.5, 1.6, 2.1] {
+        let options = ExportOptions {
+            width: 1600,
+            height: 900,
+            fps: 30,
+            format: Format::Png,
+            bitrate: 0.0,
+            output: dir.path().join("unused.png"),
+            at: Some(at),
+        };
+        let (core, soft) = shotmaxxing_render::draw_both_ways(&root, &options).unwrap();
+        assert_eq!(core.len(), soft.len());
+        let (mean, far, diff) = difference(&core, &soft, 1600, 900);
+        eprintln!("at {at} s: mean difference {mean:.2}, {:.2}% of pixels far apart", far * 100.0);
+        if let Some(keep) = &keep {
+            let save = |name: &str, rgba: Vec<u8>| {
+                let size = tiny_skia::IntSize::from_wh(1600, 900).unwrap();
+                tiny_skia::Pixmap::from_vec(rgba, size)
+                    .unwrap()
+                    .save_png(Path::new(keep).join(name))
+                    .unwrap();
+            };
+            save(&format!("core-{at}.png"), core);
+            save(&format!("soft-{at}.png"), soft);
+            let heat: Vec<u8> = diff.iter().flat_map(|&d| [d.saturating_mul(8), 0, 0, 255]).collect();
+            let size = tiny_skia::IntSize::from_wh(400, 225).unwrap();
+            let heat = tiny_skia::Pixmap::from_vec(heat, size).unwrap();
+            heat.save_png(Path::new(keep).join(format!("diff-{at}.png"))).unwrap();
+        }
+        assert!(mean < 2.0, "at {at} s the frames differ by {mean:.2} on average");
+        assert!(far < 0.005, "at {at} s {:.2}% of the frame is far apart", far * 100.0);
+    }
+}

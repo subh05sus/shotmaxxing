@@ -15,13 +15,12 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 realfft = "3"
-
-# The exporters; only macOS has one so far.
-[target.'cfg(target_os = "macos")'.dependencies]
 tracing.workspace = true
 tiny-skia = "0.11"
 gif = "0.13"
 color_quant = "1.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
 objc2-foundation = "0.3"
@@ -37,8 +36,6 @@ objc2-avf-audio = "0.3"
 
 [dev-dependencies]
 tempfile.workspace = true
-# The wallpapers example draws with it on every system.
-tiny-skia = "0.11"
 
 [lints]
 workspace = true

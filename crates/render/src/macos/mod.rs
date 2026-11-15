@@ -24,7 +24,7 @@ use objc2_core_foundation::{CFRetained, CGAffineTransform, CGPoint, CGRect, CGSi
 use objc2_core_graphics::{CGColorSpace, kCGColorSpaceSRGB};
 use objc2_core_image::{
     CIColor, CIContext, CIContextOption, CIFilter, CIImage, CIVector, kCIContextPriorityRequestLow,
-    kCIFormatRGBA8,
+    kCIContextWorkingColorSpace, kCIFormatRGBA8,
 };
 use objc2_core_video::CVPixelBuffer;
 use objc2_foundation::{NSData, NSDictionary, NSNumber, NSString, ns_string};
@@ -36,11 +36,8 @@ use self::sound::Sound;
 use self::video::VideoWriter;
 use crate::model::{Bubble, RenderProject};
 use crate::scene::{Frame, Layout, frame_at};
-use crate::sprites::{self, Palette, Sprite};
-use crate::{ExportOptions, Format, RenderError, animated, wallpaper};
-
-/// Line height of titles and keystrokes, as in the editor.
-const LINE_HEIGHT: f64 = 1.25;
+use crate::sprites::{self, LINE_HEIGHT, Label, Palette, Sprite};
+use crate::{ExportOptions, Format, RenderError, animated, soft, wallpaper};
 
 /// A picture ready to place. `x`, `y`, `w`, `h` are in frame pixels; what they are relative to depends on the layer.
 struct Placed {
@@ -145,28 +142,19 @@ impl<'a> Compositor<'a> {
 
     /// A title: a lime pill with a soft shadow, its top-left corner at `at` (fractions of the frame).
     fn title(&self, text: &str, at: Point) -> Option<Placed> {
-        let (size, layout) = (self.layout.text_px, &self.layout);
-        let glyphs = text::draw(text, size, LINE_HEIGHT, self.palette.accent_ink)?;
-        let shadow = Some((0.25 * size, 0.375 * size, 0.3));
-        let pill = f64::from(glyphs.height()) + size;
-        let pixmap =
-            sprites::label(&glyphs, 1.4 * size, 0.5 * size, pill / 2.0, self.palette.accent, shadow)?;
-        let margin = sprites::label_margin(shadow);
-        let (w, h) = (f64::from(pixmap.width()), f64::from(pixmap.height()));
-        let x = (at.x * layout.width - margin).round();
-        let y = (at.y * layout.height - margin).round();
-        Some(Placed { image: to_ci(&pixmap, &self.space), x, y, w, h })
+        let glyphs = text::draw(text, self.layout.text_px, LINE_HEIGHT, self.palette.accent_ink)?;
+        sprites::title(&self.layout, &glyphs, at, &self.palette).map(|label| self.label(label))
     }
 
     /// A keystroke: centred near the bottom on a dark scrim.
     fn key(&self, label: &str) -> Option<Placed> {
-        let (size, layout) = (self.layout.text_px, &self.layout);
-        let glyphs = text::draw(label, size, LINE_HEIGHT, self.palette.on_stage)?;
-        let pixmap = sprites::label(&glyphs, 0.8 * size, 0.35 * size, 0.5 * size, self.palette.scrim, None)?;
-        let (w, h) = (f64::from(pixmap.width()), f64::from(pixmap.height()));
-        let x = ((layout.width - w) / 2.0).round();
-        let y = (layout.height * 0.94 - h).round();
-        Some(Placed { image: to_ci(&pixmap, &self.space), x, y, w, h })
+        let glyphs = text::draw(label, self.layout.text_px, LINE_HEIGHT, self.palette.on_stage)?;
+        sprites::key(&self.layout, &glyphs, &self.palette).map(|label| self.label(label))
+    }
+
+    fn label(&self, label: Label) -> Placed {
+        let (w, h) = (f64::from(label.pixmap.width()), f64::from(label.pixmap.height()));
+        Placed { image: to_ci(&label.pixmap, &self.space), x: label.x, y: label.y, w, h }
     }
 
     /// Stretches `image` over the rectangle `x`, `y`, `w`, `h` of the output frame (y down).
@@ -480,18 +468,27 @@ impl<'a> Compositor<'a> {
     }
 }
 
-fn context() -> Retained<CIContext> {
-    // Low priority keeps the rest of the Mac smooth while an export runs.
+fn context() -> Result<Retained<CIContext>, RenderError> {
+    // Low priority keeps the rest of the Mac smooth while an export runs. Blending in sRGB, as browsers do, keeps
+    // glows, soft shadows and blurs as they look in the editor; by default Core Image blends in linear light, which
+    // makes them larger and brighter.
     let yes = NSNumber::new_bool(true);
-    // SAFETY: an immutable framework constant used as a dictionary key.
+    let space = CGColorSpace::with_name(Some(
+        // SAFETY: an immutable framework constant.
+        unsafe { kCGColorSpaceSRGB },
+    ))
+    .ok_or_else(|| system("the sRGB colour space is missing"))?;
+    let raw: *const CGColorSpace = &*space;
+    // SAFETY: Core Foundation objects are Objective-C objects (toll-free bridged), so a colour space can be a
+    // dictionary value; the dictionary retains it. The keys are immutable framework constants.
     let options = unsafe {
         NSDictionary::<CIContextOption, AnyObject>::from_slices(
-            &[kCIContextPriorityRequestLow],
-            &[yes.as_ref()],
+            &[kCIContextPriorityRequestLow, kCIContextWorkingColorSpace],
+            &[yes.as_ref(), &*raw.cast::<AnyObject>()],
         )
     };
     // SAFETY: creating a GPU context with valid options.
-    unsafe { CIContext::contextWithOptions(Some(&options)) }
+    Ok(unsafe { CIContext::contextWithOptions(Some(&options)) })
 }
 
 /// Where the file is written until it's complete: hidden, next to the final file, with the same extension.
@@ -572,7 +569,7 @@ impl<'a> Job<'a> {
             compositor: Compositor::new(project, layout)?,
             decoder: Decoder::open_near(screen, t)?,
             camera: project.bubble.as_ref().map(|b| Decoder::open_near(&b.path, t - b.offset)).transpose()?,
-            context: context(),
+            context: context()?,
             fps,
             total: (project.output_duration() * f64::from(fps) - 1e-6).ceil().max(1.0) as u64,
             last: project.clips.last().map_or(0.0, |c| (c.end - 1e-3).max(c.start)),
@@ -681,6 +678,46 @@ fn export_still(project: &RenderProject, options: &ExportOptions, temp: &Path) -
     let png = pixmap.encode_png().map_err(|e| system(format!("couldn't make the PNG: {e}")))?;
     std::fs::write(temp, png)?;
     Ok(1)
+}
+
+/// Draws one moment with Core Image and with the portable compositor, from the same decoded pictures, as RGBA
+/// frames. It lets tests hold the portable compositor to the Mac's.
+pub fn draw_both(
+    project: &RenderProject,
+    options: &ExportOptions,
+) -> Result<(Vec<u8>, Vec<u8>), RenderError> {
+    let t = project.kept_time(options.at.unwrap_or(0.0).max(0.0));
+    let mut job = Job::starting(project, options, t)?;
+    let (width, height) = (options.width as usize, options.height as usize);
+    autoreleasepool(|_| {
+        let screen = job.decoder.frame_at(t)?.ok_or_else(|| system("the recording has no frames"))?;
+        let camera = match (&mut job.camera, &project.bubble) {
+            (Some(decoder), Some(bubble)) => decoder.frame_at(t - bubble.offset)?,
+            _ => None,
+        };
+        let frame = frame_at(project, &job.layout, t);
+        let image = job.compositor.compose(&frame, &screen, camera.as_deref());
+        let mut core = Vec::new();
+        render_rgba(&job.context, &image, width, height, &job.compositor.space, &mut core);
+
+        let pixmap = |buffer: &CVPixelBuffer| -> Result<Pixmap, RenderError> {
+            // SAFETY: the buffer comes from the decoder and stays alive for this frame.
+            let image = unsafe { CIImage::imageWithCVPixelBuffer(buffer) };
+            // SAFETY: reading an image's extent is a pure operation.
+            let size = unsafe { image.extent() }.size;
+            let (w, h) = (size.width as usize, size.height as usize);
+            let mut rgba = Vec::new();
+            render_rgba(&job.context, &image, w, h, &job.compositor.space, &mut rgba);
+            let size =
+                tiny_skia::IntSize::from_wh(w as u32, h as u32).ok_or_else(|| system("an empty picture"))?;
+            Pixmap::from_vec(rgba, size).ok_or_else(|| system("the picture couldn't be kept"))
+        };
+        let screen = pixmap(&screen)?;
+        let camera = camera.as_deref().map(pixmap).transpose()?;
+        let mut portable = soft::Compositor::new(project, job.layout, text::draw)?;
+        let drawn = portable.compose(&frame, screen.as_ref(), camera.as_ref().map(Pixmap::as_ref));
+        Ok((core, drawn.data().to_vec()))
+    })
 }
 
 /// Frames sampled across the clip to learn a GIF's palette from.

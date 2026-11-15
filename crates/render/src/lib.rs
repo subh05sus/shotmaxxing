@@ -10,12 +10,15 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 // The GIF writer and the CPU-drawn sprites serve the exporters, which only macOS has so far.
-#[cfg(target_os = "macos")]
+// Windows draws with these once its exporter lands.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod animated;
 pub mod click;
 mod model;
 pub mod scene;
-#[cfg(target_os = "macos")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod soft;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod sprites;
 pub mod voice;
 pub mod wallpaper;
@@ -37,8 +40,14 @@ pub fn find_pauses(root: &Path) -> Result<Vec<(f64, f64)>, RenderError> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = root;
-        Err(RenderError::Unsupported)
+        // Without a voice there are no pauses to find, on any system.
+        let (_, project) = shotmaxxing_core::bundle::ProjectBundle::open(root)
+            .map_err(|e| RenderError::Project(e.to_string()))?;
+        if project.tracks.iter().any(|t| t.kind == shotmaxxing_core::project::TrackKind::Microphone) {
+            Err(RenderError::Unsupported)
+        } else {
+            Ok(Vec::new())
+        }
     }
 }
 
@@ -62,7 +71,7 @@ pub enum RenderError {
     Project(String),
     #[error("{0}")]
     System(String),
-    #[error("exporting isn't available on this system yet")]
+    #[error("this isn't available on this system yet")]
     Unsupported,
     #[error("the export was cancelled")]
     Cancelled,
@@ -217,6 +226,15 @@ pub fn export(
         let _ = (project, progress);
         Err(RenderError::Unsupported)
     }
+}
+
+/// Draws the moment `options.at` of the project at `root` with Core Image and with the portable compositor, as
+/// RGBA frames, so tests can hold one to the other.
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub fn draw_both_ways(root: &Path, options: &ExportOptions) -> Result<(Vec<u8>, Vec<u8>), RenderError> {
+    let project = RenderProject::load(root)?;
+    macos::draw_both(&project, options)
 }
 
 #[cfg(test)]
