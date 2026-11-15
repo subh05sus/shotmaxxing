@@ -40,14 +40,22 @@ An `mcpServers` entry looks like this:
 
 ## Permissions
 
-macOS asks for Screen Recording the first time a take starts. The permission belongs to the app that started the
-server:
+The Shotmaxxing app does everything that takes the system's permissions: it lists the windows, looks at an app before
+a take, records, and moves the pointer and types during a take. It uses its own permissions (Screen Recording,
+Accessibility, and the microphone and camera when a take records them), the ones you gave it during setup. Your
+terminal or agent app needs none.
 
-- the terminal, for Claude Code, Codex, OpenCode and Gemini CLI;
-- the agent's own app, for Claude Desktop, Cursor, VS Code and Windsurf.
+When an agent needs the app and it isn't running, `shotmaxxing mcp` opens it, behind the agent's window.
 
-The microphone and camera work the same way. Give the permission in System Settings → Privacy & Security, then quit
-and reopen that app.
+You decide what an agent may do, in the app:
+
+- **Once per session**, before Shotmaxxing shows an agent your screen or records it for the first time, the take card
+  asks you. The answer lasts until that agent disconnects.
+- **Every take** asks you again on the take card, listing every step.
+
+The card says who is asking as the system reports it, not as the agent describes itself: the agent's program, the
+app it runs in and, on macOS, who signed that app (for example "From claude in Terminal · signed by Apple"). A
+warning shows when the request didn't come from the `shotmaxxing` command, or when the app around it isn't signed.
 
 ## Tools
 
@@ -56,8 +64,8 @@ and reopen that app.
 | `list_sources` | The screens and windows that can be recorded, with ids and sizes |
 | `list_devices` | Microphones and cameras |
 | `start_recording` | Records a display, a window or an app's largest window into a new project. Can add the computer's sound, a microphone and a camera |
-| `recording_status` | Whether a take is recording, and for how long |
-| `stop_recording` | Stops the take, plans automatic zooms and reports what the project holds, including any warnings |
+| `recording_status` | Whether the recording this session started is still running, and for how long |
+| `stop_recording` | Stops it, plans automatic zooms and reports what the project holds, including any warnings |
 | `project_info` | A project's length, size, zooms, tracks, cuts, voice settings and canvas |
 | `cut_silences` | Shortens pauses over a second where nothing happens on screen |
 | `clean_voice` | Turns down hum, fan noise and hiss in the microphone, and evens out its level |
@@ -94,8 +102,7 @@ while it records:
    ```
 
 3. `perform_take` with `{ "script": …, "dry_run": true }` shows the timeline. Then run it without `dry_run`.
-4. When the Shotmaxxing app is open, the take card asks you first, listing every step. Allow it, or allow the rest
-   of that agent's session. The card then follows the take live.
+4. The take card asks you first, listing every step. Once you allow it, the card follows the take live.
 5. The reply has the project, how far the take got and, for `mode: video`, the exported file.
 
 Targets can be any of these:
@@ -121,10 +128,9 @@ Anything an agent does can be changed later in the editor: open the project from
 
 ## Safety
 
-- **Asking first.** When the Shotmaxxing app is open, an agent's take starts only after you allow it on the take
-  card. You can allow the rest of that agent's session too. If nobody answers within two minutes, the take doesn't
-  start. When the app isn't open, the agent's own approval prompt is the only check, and the agent is told there
-  was no take card.
+- **Asking first.** Shotmaxxing shows an agent your screen or records it only after you allow that agent's session,
+  and films a take only after you allow that take, both on the take card. If nobody answers within two minutes, it
+  doesn't happen. An agent that calls a request off takes the question off the card too.
 - **Stopping a take.** Press Stop on the take card, press Esc three times, or move the mouse. The take stops at once
   and leaves the rest to you.
 - **Passwords.** A take never types into a password field. A `user_step` beat hands that part to you:
@@ -146,10 +152,12 @@ Long calls send `notifications/progress` when the request has a `progressToken`,
 The command reaches the running app through a control socket that only you can open (JSON, one message per line):
 `~/Library/Application Support/dev.shotmaxxing.desktop/control.sock` on macOS, and on Windows the local named pipe
 `\\.\pipe\dev.shotmaxxing.desktop.control.<your SID>`, which the command only talks to when your own account serves
-it. It carries the take card today. Set `SHOTMAXXING_CONTROL_SOCKET` to point both ends somewhere else while
-developing (on Windows, another pipe name).
+it. Each request opens a connection, says hello with the protocol version, and asks one thing. The app learns which
+process connected from the system (on macOS from the socket, on Windows from the pipe), so the take card can name it.
+Set `SHOTMAXXING_CONTROL_SOCKET` to point both ends somewhere else while developing (on Windows, another pipe name);
+the command then never opens the app, it only talks to one already listening there.
 
-The same work is available from the terminal:
+The same work is available from the terminal, where it runs with the terminal's own permissions:
 
 - `shotmaxxing record`
 - `shotmaxxing export`

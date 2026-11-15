@@ -1,14 +1,18 @@
 //! The control API: how the `shotmaxxing` command, and through it every connected agent, reaches the running app.
 //!
 //! The app listens where only this user can reach it: a Unix socket in its own support folder on macOS and Linux, and
-//! a local named pipe on Windows. The command connects when it has something to show the person, sends one JSON
-//! message per line, and carries on by itself when the app isn't open. Today it carries agent takes: the app asks the
-//! person before a take starts, then shows it live on the take card, where Stop and Hand back reach the take straight
-//! away.
+//! a local named pipe on Windows. For each thing it needs, the command connects, says hello and sends one request;
+//! messages are JSON, one per line.
+//!
+//! The app does everything that takes the system's permissions: it lists what can be recorded, looks at an app before
+//! a take, records, and films takes, all with its own permissions, so an agent's terminal needs none. Before it uses
+//! them for an agent it asks the person: once per agent session before it lets the agent see or record the screen,
+//! and before every take. The person sees who is asking as the system reports it ([`Caller`]), not as the request
+//! claims.
 
-// Only the Windows pipe needs system calls the standard library doesn't wrap.
-#![cfg_attr(not(windows), forbid(unsafe_code))]
-#![cfg_attr(windows, deny(unsafe_code))]
+// Naming the caller and the Windows pipe need system calls the standard library doesn't wrap. Each module that makes
+// them says so.
+#![deny(unsafe_code)]
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::marker::PhantomData;
@@ -18,28 +22,119 @@ use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-
+use serde_json::Value;
 pub use shotmaxxing_core::APP_ID;
+use shotmaxxing_core::refs::ControlSnapshot;
+use shotmaxxing_core::take::TakeScript;
 
-/// The longest message accepted, so a confused peer can't fill memory.
-const MAX_LINE: u64 = 1 << 20;
+pub mod caller;
+pub use caller::Caller;
 
-/// A take an agent wants to film, as the person sees it before saying yes.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// The protocol this build speaks. The command sends it in [`ToApp::Hello`] and the app answers with its own in
+/// [`FromApp::Welcome`], so a command and an app from different versions say so instead of guessing.
+pub const PROTOCOL: u32 = 2;
+
+/// The longest message accepted, so a confused peer can't fill memory. A window's picture travels in one, as base64.
+const MAX_LINE: u64 = 8 << 20;
+
+/// How long the command waits for the app to answer its hello.
+const HELLO_SECONDS: u64 = 5;
+
+/// A take an agent wants to film.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TakeRequest {
-    /// The agent, e.g. "Claude Code".
-    pub client: String,
-    /// The agent's session (one `shotmaxxing mcp` process), so "allow for this session" can be remembered.
-    pub session: String,
-    /// The app being filmed.
-    pub app: String,
-    /// Each beat in words.
+    /// The script, already checked by the command.
+    pub script: TakeScript,
+    /// The controls the agent saw when it prepared the take, to check refs against.
+    #[serde(default)]
+    pub planned: Vec<ControlSnapshot>,
+    /// Each beat in words, as the person sees them before saying yes.
     pub beats: Vec<String>,
     /// About how long the take runs, in seconds.
     pub seconds: f64,
+    /// Where the project goes.
+    pub folder: PathBuf,
+    /// A microphone id, `default` for the system's choice, or nothing for no microphone.
+    #[serde(default)]
+    pub microphone: Option<String>,
+    /// Record what the computer plays.
+    #[serde(default)]
+    pub system_audio: bool,
 }
 
-/// How a take ended.
+/// How a take went, once the app has saved it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Performed {
+    /// The saved project.
+    pub project: PathBuf,
+    pub beats: usize,
+    pub beats_done: usize,
+    /// Why the take stopped early, in a sentence; `None` when every beat played.
+    pub stopped: Option<String>,
+    /// Captions added from `say` beats.
+    pub captions: usize,
+    /// How many times the person had control (cut from the video).
+    pub handed_over: usize,
+    /// What the agent should know: a microphone that wasn't allowed, dropped frames, a ref that moved.
+    pub warnings: Vec<String>,
+    /// The take's length in seconds.
+    pub seconds: f64,
+}
+
+/// A picture of a window for an agent: a JPEG in base64, and its size in pixels.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Picture {
+    pub data: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Picture {
+    pub fn from_jpeg(jpeg: &[u8]) -> Self {
+        let (width, height) = jpeg_size(jpeg).unwrap_or_default();
+        Self { data: base64(jpeg), width, height }
+    }
+}
+
+/// A JPEG's size in pixels, from its frame header.
+fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let mut i = 2;
+    while i + 9 < bytes.len() {
+        if bytes[i] != 0xff {
+            return None;
+        }
+        let marker = bytes[i + 1];
+        let length = usize::from(u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]));
+        if (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
+            let height = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]);
+            let width = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]);
+            return Some((u32::from(width), u32::from(height)));
+        }
+        i += 2 + length;
+    }
+    None
+}
+
+/// Standard base64, with padding.
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            if i <= chunk.len() {
+                out.push(TABLE[((n >> shift) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// How a take ended, as the take card shows it once the command's own work (an export) is done too.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TakeResult {
     pub beats_done: usize,
@@ -53,34 +148,101 @@ pub struct TakeResult {
     pub seconds: f64,
 }
 
-/// From the command to the app.
+/// A recording an agent wants to start: a window by id, else the biggest window of an app, else a display.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecordRequest {
+    pub window: Option<u32>,
+    pub app: Option<String>,
+    /// A display id; the main display when nothing is chosen.
+    pub display: Option<u32>,
+    pub name: String,
+    pub folder: PathBuf,
+    /// The most frames per second.
+    pub fps: u32,
+    pub hide_desktop_icons: bool,
+    pub system_audio: bool,
+    /// A microphone id, `default`, or nothing.
+    pub microphone: Option<String>,
+    /// A camera id, `default`, or nothing.
+    pub camera: Option<String>,
+    /// It stops by itself (and is kept) after this long.
+    pub max_seconds: f64,
+}
+
+/// A recording an agent started, while it runs.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecordingStatus {
+    pub project: PathBuf,
+    pub seconds: f64,
+    pub stops_after_seconds: f64,
+}
+
+/// A recording that ended.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Recorded {
+    /// The saved project; `None` when it was discarded.
+    pub project: Option<PathBuf>,
+    pub dropped_frames: u64,
+    pub warnings: Vec<String>,
+}
+
+/// From the command to the app. Every connection starts with [`ToApp::Hello`] and carries one request.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToApp {
-    /// Asks the person before a take. The app answers with [`FromApp::Answer`].
-    Ask { take: TakeRequest },
-    /// The take is on beat `beat` (counting from 0), `done` of the way through (0 to 1).
-    Progress { beat: usize, done: f64 },
-    /// The take is waiting for the person to do something, then hand back.
-    Waiting { message: String },
-    /// The take finished, or stopped early.
+    /// Who the command works for, as the agent named itself, and its session (one `shotmaxxing mcp` process). The
+    /// app answers with [`FromApp::Welcome`].
+    Hello { protocol: u32, client: String, session: String },
+    /// Lists the displays and windows that can be recorded: [`FromApp::Sources`].
+    Sources,
+    /// Reads an app's controls, and takes a picture of its window when `picture` is set, to plan a take:
+    /// [`FromApp::Prepared`].
+    Prepare { app: Option<String>, window: Option<String>, picture: bool },
+    /// Films a take once the person allows it: [`FromApp::Answer`], [`FromApp::Progress`] while it plays, then
+    /// [`FromApp::Performed`].
+    Take { take: Box<TakeRequest> },
+    /// The command finished its own work on the take (an export): the card shows how it ended.
     Finished { result: TakeResult },
+    /// The agent called the take off. What was filmed so far is kept.
+    Cancel,
+    /// Starts recording for the agent: [`FromApp::Recording`].
+    Record { record: RecordRequest },
+    /// Asks after the recording this session started: [`FromApp::Recording`].
+    RecordingStatus,
+    /// Stops this session's recording: [`FromApp::Recorded`].
+    StopRecording { discard: bool },
 }
 
 /// From the app to the command.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FromApp {
-    /// The person's answer to [`ToApp::Ask`], with the reason when it's no.
+    /// The answer to [`ToApp::Hello`]: the app's protocol and version.
+    Welcome { protocol: u32, version: String },
+    /// The person's answer before a take, with the reason when it's no.
     Answer {
         allowed: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
-    /// The person pressed Stop on the take card.
-    Stop,
-    /// The person pressed Hand back on the take card.
-    HandBack,
+    /// What can be recorded: `shotmaxxing_capture::Sources` as JSON.
+    Sources { sources: Value },
+    /// What preparing found (`shotmaxxing_agent::Prepared` as JSON), with a picture of the window.
+    Prepared {
+        prepared: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        picture: Option<Picture>,
+    },
+    /// A take moving on: `done` from 0 to 1, and what's happening in words.
+    Progress { done: f64, message: String },
+    /// How the take went.
+    Performed { performed: Performed },
+    /// The session's recording, or `None` when it isn't recording.
+    Recording { status: Option<RecordingStatus> },
+    /// The session's recording ended.
+    Recorded { recorded: Recorded },
+    /// The request couldn't be done, or the person said no: why, in a sentence.
+    Failed { message: String },
 }
 
 /// Where the app listens: `~/Library/Application Support/<APP_ID>/control.sock` on macOS, the runtime folder (or the
@@ -168,6 +330,42 @@ pub fn read_message<T: DeserializeOwned>(reader: &mut impl BufRead) -> io::Resul
     read_into(reader, &mut String::new())
 }
 
+impl Peer {
+    /// Who connected, named by the system rather than by anything they sent. `None` when it can't tell.
+    pub fn caller(&self) -> Option<Caller> {
+        self.peer_pid().and_then(caller::identify)
+    }
+}
+
+impl Client {
+    /// Says who the command works for and waits briefly for the app's welcome. Returns the app's version, or what
+    /// went wrong in a sentence: an app from another version, or one that doesn't answer at all (a copy from before
+    /// agents' work moved into the app ignores the hello).
+    pub fn hello(&mut self, client: &str, session: &str) -> Result<String, String> {
+        self.hello_within(client, session, Duration::from_secs(HELLO_SECONDS))
+    }
+
+    fn hello_within(&mut self, client: &str, session: &str, wait: Duration) -> Result<String, String> {
+        let hello = ToApp::Hello { protocol: PROTOCOL, client: client.into(), session: session.into() };
+        self.send(&hello).map_err(|e| format!("couldn't reach the Shotmaxxing app: {e}"))?;
+        let never = AtomicBool::new(false);
+        match self.receive_until(Instant::now() + wait, &never) {
+            Ok(Some(FromApp::Welcome { protocol: PROTOCOL, version })) => Ok(version),
+            Ok(Some(FromApp::Welcome { version, .. })) => Err(format!(
+                "the Shotmaxxing app that's open (version {version}) doesn't match this shotmaxxing command; update \
+                 it, or quit it and open it again"
+            )),
+            Ok(Some(_)) => Err("the Shotmaxxing app answered out of turn".into()),
+            Ok(None) => Err("the Shotmaxxing app closed the connection".into()),
+            Err(_) => Err(
+                "the Shotmaxxing app that's open didn't answer; it may be an older version, so quit it and \
+                 open it again"
+                    .into(),
+            ),
+        }
+    }
+}
+
 #[cfg(unix)]
 pub use unix::*;
 
@@ -199,6 +397,10 @@ mod elsewhere {
             Err(unsupported())
         }
 
+        pub fn try_clone(&self) -> io::Result<Self> {
+            Err(unsupported())
+        }
+
         pub fn close(&self) {}
     }
 
@@ -217,6 +419,10 @@ mod elsewhere {
 
         pub fn sender(&self) -> io::Result<Sender<Out>> {
             Err(unsupported())
+        }
+
+        pub fn peer_pid(&self) -> Option<u32> {
+            None
         }
     }
 
@@ -270,6 +476,11 @@ mod unix {
             write_message(&mut self.writer, message)
         }
 
+        /// Another handle on the same connection.
+        pub fn try_clone(&self) -> io::Result<Self> {
+            Ok(Self { writer: self.writer.try_clone()?, kind: PhantomData })
+        }
+
         /// Closes the connection both ways, which also ends a receive waiting on another thread.
         pub fn close(&self) {
             let _ = self.writer.shutdown(std::net::Shutdown::Both);
@@ -310,6 +521,11 @@ mod unix {
         /// A handle that sends from another thread while this one receives.
         pub fn sender(&self) -> io::Result<Sender<Out>> {
             Ok(Sender { writer: self.writer.try_clone()?, kind: PhantomData })
+        }
+
+        /// The process on the other end, as the system reports it.
+        pub fn peer_pid(&self) -> Option<u32> {
+            caller::peer_pid(&self.writer)
         }
 
         /// How long each read may wait.
@@ -405,9 +621,9 @@ mod pipe {
         FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION,
     };
     use windows_sys::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeServerProcessId,
-        PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-        PeekNamedPipe, WaitNamedPipeW,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
+        GetNamedPipeServerProcessId, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
+        PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, PeekNamedPipe, WaitNamedPipeW,
     };
     use windows_sys::Win32::System::Threading::{
         GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -546,6 +762,11 @@ mod pipe {
             write_message(&mut self.writer, message)
         }
 
+        /// Another handle on the same connection.
+        pub fn try_clone(&self) -> io::Result<Self> {
+            Ok(Self { writer: PipeWriter(self.writer.0.clone()), kind: PhantomData })
+        }
+
         /// Closes the connection both ways, which also ends a receive waiting on another thread. The other side sees
         /// the end once this side's last handle goes.
         pub fn close(&self) {
@@ -596,6 +817,21 @@ mod pipe {
         /// A handle that sends from another thread while this one receives.
         pub fn sender(&self) -> io::Result<Sender<Out>> {
             Ok(Sender { writer: PipeWriter(self.writer.0.clone()), kind: PhantomData })
+        }
+
+        /// The process on the other end, as the system reports it.
+        pub fn peer_pid(&self) -> Option<u32> {
+            let pipe = &self.writer.0;
+            let mut pid = 0u32;
+            // SAFETY: asks about a pipe this process holds open.
+            let ok = unsafe {
+                if pipe.server {
+                    GetNamedPipeClientProcessId(pipe.handle(), &mut pid)
+                } else {
+                    GetNamedPipeServerProcessId(pipe.handle(), &mut pid)
+                }
+            };
+            (ok != 0 && pid != 0).then_some(pid)
         }
     }
 
@@ -832,15 +1068,20 @@ mod pipe {
 mod tests {
     use super::*;
 
+    fn script() -> TakeScript {
+        TakeScript::parse(r#"{"app":"TextEdit","beats":[{"type":{"text":"hi"}}]}"#).unwrap()
+    }
+
     #[test]
     fn messages_are_tagged_json_lines() {
         let mut out = Vec::new();
         write_message(&mut out, &FromApp::Answer { allowed: false, reason: Some("Not now".into()) }).unwrap();
-        write_message(&mut out, &FromApp::Stop).unwrap();
+        write_message(&mut out, &FromApp::Progress { done: 0.5, message: "Typing".into() }).unwrap();
         let text = String::from_utf8(out.clone()).unwrap();
         assert_eq!(
             text,
-            "{\"type\":\"answer\",\"allowed\":false,\"reason\":\"Not now\"}\n{\"type\":\"stop\"}\n"
+            "{\"type\":\"answer\",\"allowed\":false,\"reason\":\"Not now\"}\n\
+             {\"type\":\"progress\",\"done\":0.5,\"message\":\"Typing\"}\n"
         );
         // Kinds from a newer version are skipped, and blank lines too.
         let input = format!("{{\"type\":\"wave\"}}\n\n{text}");
@@ -849,8 +1090,43 @@ mod tests {
             read_message::<FromApp>(&mut reader).unwrap(),
             Some(FromApp::Answer { allowed: false, reason: Some("Not now".into()) })
         );
-        assert_eq!(read_message::<FromApp>(&mut reader).unwrap(), Some(FromApp::Stop));
+        assert_eq!(
+            read_message::<FromApp>(&mut reader).unwrap(),
+            Some(FromApp::Progress { done: 0.5, message: "Typing".into() })
+        );
         assert_eq!(read_message::<FromApp>(&mut reader).unwrap(), None);
+        // A take carries its script whole.
+        let take = ToApp::Take {
+            take: Box::new(TakeRequest {
+                script: script(),
+                planned: Vec::new(),
+                beats: vec!["Type “hi”".into()],
+                seconds: 2.0,
+                folder: PathBuf::from("/tmp/takes"),
+                microphone: None,
+                system_audio: false,
+            }),
+        };
+        let mut line = Vec::new();
+        write_message(&mut line, &take).unwrap();
+        assert_eq!(read_message::<ToApp>(&mut io::Cursor::new(line)).unwrap(), Some(take));
+    }
+
+    #[test]
+    fn pictures_are_base64_jpegs_with_their_size() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        // SOI, an APP0 segment, then a baseline frame header for 640×360.
+        let jpeg = [
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x68, 0x02,
+            0x80, 0x03,
+        ];
+        let picture = Picture::from_jpeg(&jpeg);
+        assert_eq!((picture.width, picture.height), (640, 360));
+        assert_eq!(picture.data, base64(&jpeg));
+        assert_eq!(jpeg_size(b"not a jpeg at all"), None);
     }
 
     #[test]
@@ -869,13 +1145,27 @@ mod tests {
 
         std::thread::spawn(move || {
             server.run(|mut peer| {
+                // The system says who connected: here, this very process.
+                let who = peer.caller().map_or_else(|| "unknown".to_string(), |c| c.pid.to_string());
                 while let Ok(Some(message)) = peer.receive() {
                     match message {
-                        ToApp::Ask { take } => {
-                            let allowed = take.client == "Claude Code";
-                            peer.send(&FromApp::Answer { allowed, reason: None }).unwrap();
+                        ToApp::Hello { protocol, .. } => {
+                            peer.send(&FromApp::Welcome { protocol, version: who.clone() }).unwrap()
                         }
-                        ToApp::Progress { beat: 1, .. } => peer.send(&FromApp::Stop).unwrap(),
+                        ToApp::Take { take } => {
+                            let allowed = take.script.app.as_deref() == Some("TextEdit");
+                            peer.send(&FromApp::Answer { allowed, reason: None }).unwrap();
+                            peer.send(&FromApp::Progress { done: 0.5, message: "Typing".into() }).unwrap();
+                        }
+                        ToApp::Cancel => {
+                            let performed = Performed {
+                                project: PathBuf::from("/tmp/takes/Take.smx"),
+                                beats: 1,
+                                stopped: Some("Called off".into()),
+                                ..Performed::default()
+                            };
+                            peer.send(&FromApp::Performed { performed }).unwrap();
+                        }
                         _ => {}
                     }
                 }
@@ -883,24 +1173,53 @@ mod tests {
         });
 
         let mut client = Client::connect_to(&path).unwrap();
+        let version = client.hello("Claude Code", "session-1").unwrap();
+        if cfg!(any(target_os = "macos", windows)) {
+            assert_eq!(version, std::process::id().to_string(), "the app sees who connected");
+        }
         let take = TakeRequest {
-            client: "Claude Code".into(),
-            beats: vec!["Click Export".into()],
-            ..Default::default()
+            script: script(),
+            planned: Vec::new(),
+            beats: vec!["Type “hi”".into()],
+            seconds: 2.0,
+            folder: PathBuf::from("/tmp/takes"),
+            microphone: None,
+            system_audio: false,
         };
-        client.send(&ToApp::Ask { take }).unwrap();
+        client.send(&ToApp::Take { take: Box::new(take) }).unwrap();
         let never = AtomicBool::new(false);
         let deadline = Instant::now() + Duration::from_secs(5);
         assert_eq!(
             client.receive_until(deadline, &never).unwrap(),
             Some(FromApp::Answer { allowed: true, reason: None })
         );
+        assert_eq!(
+            client.receive_until(deadline, &never).unwrap(),
+            Some(FromApp::Progress { done: 0.5, message: "Typing".into() })
+        );
         // Nothing more comes until the take moves on: waiting ends at the deadline.
         let soon = Instant::now() + Duration::from_millis(300);
         assert_eq!(client.receive_until(soon, &never).err().map(|e| e.kind()), Some(io::ErrorKind::TimedOut));
         let mut sender = client.sender().unwrap();
-        sender.send(&ToApp::Progress { beat: 1, done: 0.5 }).unwrap();
-        assert_eq!(client.receive().unwrap(), Some(FromApp::Stop));
+        sender.send(&ToApp::Cancel).unwrap();
+        match client.receive().unwrap() {
+            Some(FromApp::Performed { performed }) => {
+                assert_eq!(performed.stopped.as_deref(), Some("Called off"))
+            }
+            other => panic!("expected how the take went, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_app_that_ignores_the_hello_is_named_as_out_of_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = scratch_address(dir.path());
+        let server = Server::bind(&path).unwrap();
+        // A copy from before protocol 2 skips kinds it doesn't know, so it never answers.
+        std::thread::spawn(move || server.run(|mut peer| while let Ok(Some(_)) = peer.receive() {}));
+        let mut client = Client::connect_to(&path).unwrap();
+        let error = client.hello_within("Codex", "s", Duration::from_millis(300)).unwrap_err();
+        assert!(error.contains("older version"), "{error}");
     }
 
     #[cfg(unix)]
@@ -931,21 +1250,20 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_app_ends_the_take_and_a_quit_app_frees_its_name() {
+    fn a_closed_app_ends_the_request_and_a_quit_app_frees_its_name() {
         let dir = tempfile::tempdir().unwrap();
         let path = scratch_address(dir.path());
         let server = Server::bind(&path).unwrap();
         std::thread::spawn(move || {
-            // The app answers, then goes away.
+            // The app answers the hello, then goes away.
             server.run(|mut peer| {
-                if let Ok(Some(ToApp::Ask { .. })) = peer.receive() {
-                    peer.send(&FromApp::Answer { allowed: true, reason: None }).unwrap();
+                if let Ok(Some(ToApp::Hello { protocol, .. })) = peer.receive() {
+                    peer.send(&FromApp::Welcome { protocol, version: "1.0".into() }).unwrap();
                 }
             })
         });
         let mut client = Client::connect_to(&path).unwrap();
-        client.send(&ToApp::Ask { take: TakeRequest::default() }).unwrap();
-        assert_eq!(client.receive().unwrap(), Some(FromApp::Answer { allowed: true, reason: None }));
+        assert_eq!(client.hello("Cursor", "s").as_deref(), Ok("1.0"));
         assert_eq!(client.receive().unwrap(), None, "the app's end closed");
 
         // Closing our own end ends a receive waiting on another thread.

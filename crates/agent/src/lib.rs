@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use shotmaxxing_capture::{DeviceChoice, FinishedProject, WindowInfo};
 use shotmaxxing_core::beats::{self, Aim, Cue, Performance, ResolvedBeat, Timing};
 use shotmaxxing_core::bundle::ProjectBundle;
@@ -146,8 +146,9 @@ pub struct Progress {
     pub waiting: Option<String>,
 }
 
-/// What `prepare` found: the window to film and the controls an agent can name by ref.
-#[derive(Clone, Debug, Serialize)]
+/// What `prepare` found: the window to film and the controls an agent can name by ref. The app prepares, and the
+/// command reads it back.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Prepared {
     pub app: String,
     pub window: Option<WindowInfo>,

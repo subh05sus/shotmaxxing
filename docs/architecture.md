@@ -178,9 +178,13 @@ What makes a take look human and stay safe:
   clicking the wrong spot.
 - **Background first.** Accessibility actions (`AXPress`, UIA Invoke) run without touching the user's mouse. Keys
   are delivered to the target process. On macOS the take runs on a virtual display, so the user can keep working.
-- **Consent for real input.** Borrowing the real mouse or keyboard, recording a full display or launching an app
-  asks once per session. Typing into password fields and deleting files outside projects are always blocked.
-  A Stop control is always on screen, and pressing Esc three times aborts any take.
+- **The app does the work, after asking.** The command sends anything that takes the system's permissions to the
+  running app (opening it when needed), which does it with its own: listing windows, preparing, recording and
+  performing. It asks the person on the take card once per agent session before it sees or records the screen, and
+  before every take. The card names the caller from the connection itself: the peer process (the socket's
+  `LOCAL_PEERPID` on macOS, the pipe's client process on Windows), the agent that started it, the app that runs in
+  and, on macOS, that app's code signature. Typing into password fields and deleting files outside projects are
+  always blocked. A Stop control is always on screen, and pressing Esc three times aborts any take.
 - **Hand-off.** When a step needs a person (signing in, a CAPTCHA), the take pauses and the take card asks the
   user. Only the user's physical "Hand back" resumes it.
 

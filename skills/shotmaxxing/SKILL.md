@@ -24,9 +24,9 @@ When you can see the app's controls, plan the whole performance and let Shotmaxx
 3. Add `say:` beats for short captions. Use a `user_step:` beat for anything only the person may do, such as
    signing in.
 4. Call `perform_take` with `"dry_run": true`, check the timeline, then call it again for real. Use
-   `output: { mode: video }` to get a file straight away. When the Shotmaxxing app is open, the person allows the
-   take there first, so the call can wait a minute or two for them. If they say no, don't try again: ask them what
-   they'd like instead.
+   `output: { mode: video }` to get a file straight away. The person allows every take in the Shotmaxxing app
+   first, so the call can wait a minute or two for them. If they say no, don't try again: ask them what they'd like
+   instead.
 5. If the reply says the take stopped:
    - a control was gone or disabled, or Esc was pressed: tell the person, fix the script, and ask before trying
      again;
@@ -72,9 +72,11 @@ When you can see the app's controls, plan the whole performance and let Shotmaxx
 
 ## Good to know
 
-- **Permissions.** macOS asks for Screen Recording the first time. The permission belongs to the app that started
-  the MCP server: the terminal for command-line agents, otherwise the agent's own app. If recording fails for
-  this reason, ask the person to allow it in System Settings → Privacy & Security, then restart that app.
+- **Permissions.** The Shotmaxxing app records and drives the take with its own permissions, and opens if it isn't
+  running; your terminal needs none. The first call that needs the screen (`list_sources`, `prepare_take`,
+  `start_recording`) waits while the person allows your session in the app. If they say no, stop and ask what
+  they'd like. If the app says a permission is missing, ask the person to turn it on for Shotmaxxing in System
+  Settings → Privacy & Security.
 - **One take at a time.** If `start_recording` says a take is already recording, call `recording_status`, and
   stop that take first if it's yours.
 - **Undo.** `plan_zooms` and `cut_silences` keep the previous edits in the project's history. Everything can also

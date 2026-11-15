@@ -371,12 +371,36 @@ export async function onExportProgress(
 
 // Agent takes ---------------------------------------------------------------------------------------------------
 
-/** What the take card shows: an agent's take, from asking the person through to the saved project. */
+/** Who connected, as the system reports it, never as the agent describes itself. */
+export interface TakeCaller {
+  pid: number;
+  /** The program that connected: `shotmaxxing` when it's the command. */
+  program: string;
+  path: string;
+  /** The program that started it: the agent, e.g. `claude`. */
+  agent: string | null;
+  /** The app it all runs in, e.g. "Terminal". */
+  app: string | null;
+  /** Who signed that app, when its signature checks out: "Apple", or the developer's name. */
+  signer: string | null;
+  /** Whether the signature was checked at all (macOS only, so far). */
+  checked: boolean;
+}
+
+/**
+ * What the take card shows. `access`: an agent asks to see and record the screen for its session. `take`: an
+ * agent's take, from asking the person through to the saved project.
+ */
 export interface TakeCardState {
   id: number;
+  kind: 'access' | 'take';
   phase: 'asking' | 'running' | 'waiting' | 'done' | 'stopped';
+  /** The agent's name for itself. */
   client: string;
+  caller: TakeCaller | null;
   app: string;
+  /** What an agent asking for access wants to do first, e.g. "look at TextEdit". */
+  purpose: string;
   beats: string[];
   /** The beat in progress, counting from 0; `beats.length` while the take is being saved. */
   beat: number;
@@ -397,9 +421,9 @@ export function takeCard(): Promise<TakeCardState | null> {
   return call('take_card', undefined, () => null);
 }
 
-/** Allows the take or not. With `session`, the agent's later takes start without asking until it disconnects. */
-export function answerTake(id: number, allow: boolean, session: boolean): Promise<void> {
-  return call('answer_take', { id, allow, session }, () => undefined);
+/** The person's answer to what the card asks. Every take asks; access lasts until the agent disconnects. */
+export function answerTake(id: number, allow: boolean): Promise<void> {
+  return call('answer_take', { id, allow }, () => undefined);
 }
 
 export function stopTake(id: number): Promise<void> {

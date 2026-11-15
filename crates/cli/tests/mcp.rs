@@ -109,39 +109,116 @@ fn make_project(dir: &Path, media: bool) -> PathBuf {
     bundle.root().to_path_buf()
 }
 
+/// A stand-in for the app at a scratch socket: it welcomes each connection, records what came, and answers the
+/// request with `answer`.
+fn fake_app(
+    socket: &Path,
+    answer: impl Fn(&shotmaxxing_control::ToApp) -> shotmaxxing_control::FromApp + Send + Sync + 'static,
+) -> std::sync::mpsc::Receiver<(String, String, shotmaxxing_control::ToApp)> {
+    use shotmaxxing_control::{FromApp, PROTOCOL, ToApp};
+    let app = shotmaxxing_control::Server::bind(socket).unwrap();
+    let (heard, requests) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        app.run(move |mut peer| {
+            let Ok(Some(ToApp::Hello { protocol, client, session })) = peer.receive() else { return };
+            peer.send(&FromApp::Welcome { protocol: PROTOCOL, version: "test".into() }).unwrap();
+            assert_eq!(protocol, PROTOCOL);
+            if let Ok(Some(request)) = peer.receive() {
+                peer.send(&answer(&request)).unwrap();
+                heard.send((client, session, request)).unwrap();
+            }
+        })
+    });
+    requests
+}
+
+fn initialize(server: &mut Server) {
+    let client = json!({ "name": "test-agent", "title": "Test agent", "version": "1" });
+    server.request(
+        "initialize",
+        json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": client }),
+    );
+}
+
 /// The app asks the person before an agent's take. When they say no, nothing moves and the agent hears why.
 #[test]
 fn a_take_the_person_declines_in_the_app_never_starts() {
     use shotmaxxing_control::{FromApp, ToApp};
     let dir = tempfile::tempdir().unwrap();
     let socket = shotmaxxing_control::scratch_address(dir.path());
-    let app = shotmaxxing_control::Server::bind(&socket).unwrap();
-    let (asked, questions) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        app.run(move |mut peer| {
-            if let Ok(Some(ToApp::Ask { take })) = peer.receive() {
-                asked.send(take).unwrap();
-                peer.send(&FromApp::Answer { allowed: false, reason: Some("Not today.".into()) }).unwrap();
-            }
-        })
-    });
+    let requests =
+        fake_app(&socket, |_| FromApp::Answer { allowed: false, reason: Some("Not today.".into()) });
 
     let mut server = Server::start_with(&socket);
-    let client = json!({ "name": "test-agent", "title": "Test agent", "version": "1" });
-    server.request(
-        "initialize",
-        json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": client }),
-    );
+    initialize(&mut server);
     let yaml = "app: Notes\nbeats:\n  - click: { point: { x: 400, y: 300 } }\n  - type: hello\n";
     let result = server.tool("perform_take", json!({ "script": yaml }));
     assert_eq!(result["isError"], json!(true), "{result}");
     assert!(result["content"][0]["text"].as_str().is_some_and(|t| t.contains("Not today.")), "{result}");
 
-    let take = questions.recv_timeout(std::time::Duration::from_secs(5)).expect("the app was never asked");
-    assert_eq!((take.client.as_str(), take.app.as_str()), ("Test agent", "Notes"));
+    let (client, session, request) =
+        requests.recv_timeout(std::time::Duration::from_secs(5)).expect("the app was never asked");
+    assert_eq!(client, "Test agent");
+    assert!(!session.is_empty());
+    let ToApp::Take { take } = request else { panic!("expected a take, got {request:?}") };
+    assert_eq!(take.script.app.as_deref(), Some("Notes"));
     assert_eq!(take.beats.len(), 2);
     assert!(take.seconds > 0.5, "{take:?}");
-    assert!(!take.session.is_empty());
+}
+
+/// Seeing the screen goes through the app, and what it found comes back to the agent: the controls, and the
+/// window's picture as an image beside them.
+#[test]
+fn the_app_looks_for_the_agent() {
+    use shotmaxxing_control::{FromApp, Picture, ToApp};
+    let dir = tempfile::tempdir().unwrap();
+    let socket = shotmaxxing_control::scratch_address(dir.path());
+    let requests = fake_app(&socket, |request| match request {
+        ToApp::Sources => FromApp::Sources { sources: json!({ "displays": [], "windows": [{ "id": 7 }] }) },
+        ToApp::Prepare { .. } => FromApp::Prepared {
+            prepared: json!({
+                "app": "Notes",
+                "window": { "id": 7, "title": "Notes", "app": "Notes", "bundle_id": "com.apple.Notes",
+                            "x": 100.0, "y": 50.0, "width": 1280.0, "height": 800.0 },
+                "controls": [{ "id": "button.new", "role": "button", "label": "New Note", "enabled": true,
+                               "bounds": { "x": 120.4, "y": 60.6, "width": 30.0, "height": 24.0 } }],
+                "truncated": false,
+            }),
+            picture: Some(Picture { data: "aGk=".into(), width: 640, height: 400 }),
+        },
+        _ => FromApp::Failed { message: "not here".into() },
+    });
+    let mut server = Server::start_with(&socket);
+    initialize(&mut server);
+
+    let result = server.tool("list_sources", json!({}));
+    assert_eq!(result["structuredContent"]["windows"][0]["id"], 7, "{result}");
+    assert!(matches!(requests.recv().unwrap().2, ToApp::Sources));
+
+    let result = server.tool("prepare_take", json!({ "app": "Notes" }));
+    let found = &result["structuredContent"];
+    assert_eq!(found["controls"][0]["id"], "button.new", "{result}");
+    assert_eq!(found["controls"][0]["x"], 120.0);
+    assert_eq!(found["picture"]["points_per_pixel"], 2.0, "1280 points across 640 pixels");
+    let image = &result["content"][1];
+    assert_eq!((image["type"].as_str(), image["data"].as_str()), (Some("image"), Some("aGk=")), "{result}");
+    let (_, _, request) = requests.recv().unwrap();
+    assert_eq!(request, ToApp::Prepare { app: Some("Notes".into()), window: None, picture: true });
+
+    // A dry run checks refs against what the app found.
+    let script = json!({ "app": "Notes", "beats": [{ "click": "button.new" }] });
+    let result = server.tool("perform_take", json!({ "script": script, "dry_run": true }));
+    assert_eq!(result["structuredContent"]["beats"].as_array().map(Vec::len), Some(1), "{result}");
+}
+
+/// With the socket pointed at a scratch address, the command never opens the app: tools that need it say so.
+#[test]
+fn without_the_app_the_tools_that_need_it_say_so() {
+    let mut server = Server::start();
+    initialize(&mut server);
+    let result = server.tool("list_sources", json!({}));
+    assert_eq!(result["isError"], true, "{result}");
+    assert!(result["content"][0]["text"].as_str().is_some_and(|t| t.contains("isn't open")), "{result}");
 }
 
 #[test]

@@ -1,21 +1,40 @@
-//! Agent takes as the app sees them. The `shotmaxxing` command films a take; before it starts, it asks here, and
-//! the person answers on the take card. The card then follows the take live, and its Stop and Hand back buttons
-//! reach the take straight away. Once the person allows an agent's session, its later takes start without asking
-//! (the card still shows them).
+//! Agents in the app. The `shotmaxxing` command connects for each thing an agent asks that takes the system's
+//! permissions (listing windows, looking at an app before a take, recording, filming a take), and the app does it with
+//! its own, so the agent's terminal needs none.
+//!
+//! The person decides first, on the take card: once per agent session before an agent may see or record the screen,
+//! and before every take. The card names who asked as the system reports it (the connecting process, the agent that
+//! started it, the app that runs in and who signed that app), never as the request claims. A take then plays out on
+//! the card, where Stop and Hand back reach it straight away.
 
 use std::collections::HashSet;
-use std::sync::Mutex;
-use std::sync::mpsc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use shotmaxxing_control::{FromApp, Peer, Sender, Server, TakeRequest, TakeResult, ToApp};
+use shotmaxxing_capture::Target;
+use shotmaxxing_control::{
+    Caller, FromApp, PROTOCOL, Peer, Performed, Picture, Sender, Server, TakeRequest, TakeResult, ToApp,
+};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::{recording, windows};
 
 /// How long the card waits for an answer before saying no for the person.
 const ASK_SECONDS: u64 = 120;
+
+/// The widest picture of a window sent to an agent.
+const PICTURE_WIDTH: u32 = 1280;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    /// An agent asks to see and record the screen for the rest of its session.
+    Access,
+    /// An agent's take.
+    Take,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -31,9 +50,16 @@ pub enum Phase {
 #[derive(Clone, Debug, Serialize)]
 pub struct Card {
     pub id: u64,
+    pub kind: Kind,
     pub phase: Phase,
+    /// The agent's name for itself, e.g. "Claude Code".
     pub client: String,
+    /// Who connected, as the system reports it.
+    pub caller: Option<Caller>,
+    /// The app a take films.
     pub app: String,
+    /// What an agent asking for access wants to do first, e.g. "look at TextEdit".
+    pub purpose: String,
     pub beats: Vec<String>,
     /// The beat in progress, counting from 0; the number of beats while the take is being saved.
     pub beat: usize,
@@ -43,8 +69,6 @@ pub struct Card {
     /// What the person was asked to do, while the take waits for them.
     pub waiting: Option<String>,
     pub result: Option<TakeResult>,
-    #[serde(skip)]
-    session: String,
 }
 
 impl Card {
@@ -53,35 +77,104 @@ impl Card {
     }
 }
 
-struct Answer {
-    allowed: bool,
-    /// Also allow the agent's later takes, for as long as its session lasts.
-    session: bool,
+/// The take being filmed, for the card's buttons.
+#[derive(Clone, Default)]
+struct Flags {
+    cancel: Arc<AtomicBool>,
+    hand_back: Arc<AtomicBool>,
 }
+
+/// An agent session the person let see and record the screen: the session the command named, and the process the
+/// system says connected, so a session can't be borrowed by another program.
+type Allowed = (String, Option<u32>);
 
 #[derive(Default)]
 pub struct Takes(Mutex<Inner>);
+
+/// What a connection waits for: the person's answer on the card, or the command.
+enum Event {
+    Answer(bool),
+    Message(ToApp),
+    /// The command went away.
+    Gone,
+}
+
+/// One connection after its request: replies go out through `reply`, and the command's later messages arrive as
+/// events beside the person's answers, so a request the agent calls off while the card asks goes away at once.
+struct Conn {
+    who: Who,
+    reply: Sender<FromApp>,
+    events: mpsc::Sender<Event>,
+    rx: mpsc::Receiver<Event>,
+}
+
+impl Conn {
+    fn send(&mut self, message: &FromApp) -> bool {
+        self.reply.send(message).is_ok()
+    }
+}
 
 #[derive(Default)]
 struct Inner {
     next: u64,
     card: Option<Card>,
-    /// Waiting for the person's answer.
-    answer: Option<mpsc::Sender<Answer>>,
-    /// The command filming the take, for Stop and Hand back.
-    peer: Option<Sender<FromApp>>,
-    /// Agent sessions the person allowed for as long as they last.
-    sessions: HashSet<String>,
+    /// Where the person's answer goes, while the card asks.
+    answer: Option<mpsc::Sender<Event>>,
+    /// The take being filmed: which card, and its flags.
+    filming: Option<(u64, Flags)>,
+    allowed: HashSet<Allowed>,
+}
+
+/// Who is asking, from the hello and from the system.
+struct Who {
+    client: String,
+    session: String,
+    caller: Option<Caller>,
+}
+
+impl Who {
+    fn key(&self) -> Allowed {
+        (self.session.clone(), self.caller.as_ref().map(|c| c.pid))
+    }
+
+    fn card(&self, kind: Kind) -> Card {
+        Card {
+            id: 0,
+            kind,
+            phase: Phase::Asking,
+            client: self.client.clone(),
+            caller: self.caller.clone(),
+            app: String::new(),
+            purpose: String::new(),
+            beats: Vec::new(),
+            beat: 0,
+            done: 0.0,
+            seconds: 0.0,
+            waiting: None,
+            result: None,
+        }
+    }
+}
+
+/// An agent's name as it gave it, made safe to show: one line, at most 40 characters.
+fn tidy_name(name: &str) -> String {
+    let flat: String = name.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
+    match flat.chars().count() {
+        0 => "An agent".into(),
+        n if n > 40 => format!("{}…", flat.chars().take(39).collect::<String>()),
+        _ => flat,
+    }
 }
 
 /// Starts listening for the `shotmaxxing` command. Without the socket (another copy listening, or no home folder),
-/// takes simply run without a card.
+/// agents can't reach the app and say so.
 pub fn listen<R: Runtime>(app: &AppHandle<R>) {
     let Some(path) = shotmaxxing_control::socket_path() else { return };
     let server = match Server::bind(&path) {
         Ok(server) => server,
         Err(error) => {
-            tracing::warn!(%error, path = %path.display(), "agents' takes won't show a take card");
+            tracing::warn!(%error, path = %path.display(), "agents can't reach this copy of Shotmaxxing");
             return;
         }
     };
@@ -90,138 +183,379 @@ pub fn listen<R: Runtime>(app: &AppHandle<R>) {
         server.run(move |peer| serve(&app, peer));
     });
     if let Err(error) = started {
-        tracing::warn!(%error, "couldn't start listening for agents' takes");
+        tracing::warn!(%error, "couldn't start listening for agents");
     }
 }
 
-/// One connection from the command: an ask, then the take's progress until it finishes.
+/// One connection from the command: a hello, then one request.
 fn serve<R: Runtime>(app: &AppHandle<R>, mut peer: Peer) {
+    let caller = peer.caller();
+    let who = match peer.receive() {
+        Ok(Some(ToApp::Hello { protocol, client, session })) => {
+            let welcome = FromApp::Welcome { protocol: PROTOCOL, version: env!("CARGO_PKG_VERSION").into() };
+            if peer.send(&welcome).is_err() || protocol != PROTOCOL {
+                return;
+            }
+            Who { client: tidy_name(&client), session, caller }
+        }
+        _ => return,
+    };
+    let Ok(Some(request)) = peer.receive() else { return };
+    let Ok(reply) = peer.sender() else { return };
+    let (events, rx) = mpsc::channel();
+    let reader = events.clone();
+    let reading = std::thread::Builder::new().name("control reader".into()).spawn(move || {
+        while let Ok(Some(message)) = peer.receive() {
+            if reader.send(Event::Message(message)).is_err() {
+                return;
+            }
+        }
+        let _ = reader.send(Event::Gone);
+    });
+    if reading.is_err() {
+        return;
+    }
+    let mut conn = Conn { who, reply, events, rx };
     let takes = app.state::<Takes>();
-    let mut id = None;
-    while let Ok(Some(message)) = peer.receive() {
-        match message {
-            ToApp::Ask { take } => id = takes.ask(app, &mut peer, take),
-            ToApp::Progress { beat, done } => takes.update(app, id, |card| {
-                card.phase = Phase::Running;
-                card.beat = beat.min(card.beats.len());
-                card.done = done.clamp(0.0, 1.0);
-                card.waiting = None;
-            }),
-            ToApp::Waiting { message } => takes.update(app, id, |card| {
-                card.phase = Phase::Waiting;
-                card.waiting = Some(message);
-            }),
-            ToApp::Finished { result } => takes.update(app, id, |card| {
-                card.phase = if result.stopped.is_some() { Phase::Stopped } else { Phase::Done };
-                card.beat = result.beats_done.min(card.beats.len());
-                card.done = 1.0;
-                card.waiting = None;
-                card.result = Some(result);
-            }),
+    let answer = match request {
+        ToApp::Sources => takes.allow(app, &conn, "see which windows are open").and_then(|()| {
+            let sources = shotmaxxing_capture::sources().map_err(|e| e.to_string())?;
+            let sources = serde_json::to_value(sources).map_err(|e| e.to_string())?;
+            Ok(FromApp::Sources { sources })
+        }),
+        ToApp::Prepare { app: target, window, picture } => {
+            let purpose = match target.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+                Some(target) => format!("look at {target}"),
+                None => "look at the app in front".to_string(),
+            };
+            takes
+                .allow(app, &conn, &purpose)
+                .and_then(|()| prepare(target.as_deref(), window.as_deref(), picture))
+        }
+        ToApp::Take { take } => {
+            film(app, &mut conn, *take);
+            conn.reply.close();
+            return;
+        }
+        ToApp::Record { record } => takes.allow(app, &conn, "record the screen").and_then(|()| {
+            let status = recording::start_for_agent(app, conn.who.key(), record)?;
+            Ok(FromApp::Recording { status: Some(status) })
+        }),
+        ToApp::RecordingStatus => {
+            Ok(FromApp::Recording { status: recording::agent_status(app, &conn.who.key()) })
+        }
+        ToApp::StopRecording { discard } => {
+            recording::stop_for_agent(app, &conn.who.key(), discard).map(|recorded| match recorded {
+                Some(recorded) => FromApp::Recorded { recorded },
+                None => FromApp::Recording { status: None },
+            })
+        }
+        _ => Err("That isn't something the Shotmaxxing app does.".into()),
+    };
+    conn.send(&answer.unwrap_or_else(|message| FromApp::Failed { message }));
+    conn.reply.close();
+}
+
+/// Reads an app's controls, and takes a picture of its window.
+fn prepare(target: Option<&str>, window: Option<&str>, picture: bool) -> Result<FromApp, String> {
+    let prepared = shotmaxxing_agent::prepare(target, window).map_err(|e| e.to_string())?;
+    let picture = match (&prepared.window, picture) {
+        (Some(window), true) => shotmaxxing_capture::thumbnails(&[Target::Window(window.id)], PICTURE_WIDTH)
+            .ok()
+            .and_then(|pictures| pictures.into_iter().next().flatten())
+            .map(|jpeg| Picture::from_jpeg(&jpeg)),
+        _ => None,
+    };
+    let prepared = serde_json::to_value(prepared).map_err(|e| e.to_string())?;
+    Ok(FromApp::Prepared { prepared, picture })
+}
+
+/// Films a take once the person allows it, then follows it on the card until the command is done with it.
+fn film<R: Runtime>(app: &AppHandle<R>, conn: &mut Conn, take: TakeRequest) {
+    let takes = app.state::<Takes>();
+    let refuse = |conn: &mut Conn, reason: String| {
+        conn.send(&FromApp::Answer { allowed: false, reason: Some(reason) });
+    };
+    const RECORDING: &str = "Shotmaxxing is recording. Stop that recording before filming a take.";
+    if app.state::<recording::Recordings>().is_recording() {
+        return refuse(conn, RECORDING.into());
+    }
+    let mut card = conn.who.card(Kind::Take);
+    card.app = take.script.app.clone().unwrap_or_default();
+    card.beats = take.beats.clone();
+    card.seconds = take.seconds;
+    let id = match takes.ask(app, conn, card) {
+        Ok((id, true)) => id,
+        Ok((id, false)) => {
+            takes.forget(app, id);
+            return refuse(conn, "The person said no to this take in Shotmaxxing.".into());
+        }
+        Err(reason) => return refuse(conn, reason),
+    };
+    // The person may have started recording while the card asked.
+    if app.state::<recording::Recordings>().is_recording() {
+        takes.forget(app, id);
+        return refuse(conn, RECORDING.into());
+    }
+    // Only a command that's still there to hear it starts a take.
+    let Ok(sender) = conn.reply.try_clone() else {
+        takes.forget(app, id);
+        return;
+    };
+    if !conn.send(&FromApp::Answer { allowed: true, reason: None }) {
+        takes.forget(app, id);
+        return;
+    }
+    let flags = Flags::default();
+    takes.start(app, id, flags.clone());
+
+    // The take plays on a thread of its own, and this one keeps listening for the agent calling it off.
+    let performer = {
+        let (app, flags, client) = (app.clone(), flags.clone(), conn.who.client.clone());
+        std::thread::Builder::new()
+            .name("agent take".into())
+            .spawn(move || perform(&app, id, take, client, flags, sender))
+    };
+    let performer = match performer {
+        Ok(performer) => performer,
+        Err(error) => {
+            tracing::warn!(%error, "couldn't start the take");
+            let message = "Shotmaxxing couldn't start the take.".to_string();
+            takes.end(app, id, None, Some(message.clone()));
+            conn.send(&FromApp::Failed { message });
+            return;
+        }
+    };
+    let mut finished = false;
+    loop {
+        match conn.rx.recv() {
+            Ok(Event::Message(ToApp::Cancel)) => flags.cancel.store(true, Ordering::SeqCst),
+            Ok(Event::Message(ToApp::Finished { result })) => {
+                takes.finish(app, id, result);
+                finished = true;
+            }
+            Ok(Event::Message(_) | Event::Answer(_)) => {}
+            Ok(Event::Gone) | Err(_) => break,
         }
     }
-    // The command went away. A take it hadn't finished ended with it.
-    takes.update(app, id, |card| {
-        if card.live() {
-            card.phase = Phase::Stopped;
-            card.waiting = None;
-            card.result = Some(TakeResult {
-                beats_done: card.beat,
-                stopped: Some("The agent stopped before the take finished.".into()),
-                ..TakeResult::default()
-            });
+    // The agent went away. A take still playing stops there, and what was filmed is kept.
+    let went_early = !performer.is_finished();
+    flags.cancel.store(true, Ordering::SeqCst);
+    let performed = performer.join().ok().flatten();
+    if !finished {
+        let reason = went_early.then(|| "The agent stopped before the take finished.".to_string());
+        takes.end(app, id, performed, reason);
+    }
+}
+
+/// Plays the take. Returns how it went, once it's saved.
+fn perform<R: Runtime>(
+    app: &AppHandle<R>,
+    id: u64,
+    take: TakeRequest,
+    client: String,
+    flags: Flags,
+    mut sender: Sender<FromApp>,
+) -> Option<Performed> {
+    let takes = app.state::<Takes>();
+    let beats = take.beats.len();
+    let options = shotmaxxing_agent::TakeOptions {
+        folder: take.folder,
+        planned: take.planned,
+        microphone: recording::device_choice(take.microphone.as_deref()),
+        system_audio: take.system_audio,
+        client: Some(client),
+        cancel: flags.cancel.clone(),
+        hand_back: flags.hand_back.clone(),
+    };
+    let result = shotmaxxing_agent::run_take(&take.script, options, &mut |p| {
+        // A Hand back pressed before the take asked for one doesn't count.
+        if p.waiting.is_some() {
+            flags.hand_back.store(false, Ordering::SeqCst);
         }
+        takes.update(app, id, |card| {
+            match (&p.waiting, p.beat) {
+                (Some(message), _) => {
+                    card.phase = Phase::Waiting;
+                    card.waiting = Some(message.clone());
+                    return;
+                }
+                (None, Some(beat)) => card.beat = beat.min(beats),
+                // Every beat played: the take is being saved.
+                (None, None) if p.done >= 1.0 => card.beat = beats,
+                (None, None) => {}
+            }
+            card.phase = Phase::Running;
+            card.waiting = None;
+            card.done = p.done.clamp(0.0, 1.0);
+        });
+        let _ = sender.send(&FromApp::Progress { done: p.done, message: p.message.clone() });
     });
-    if let Ok(mut inner) = takes.0.lock()
-        && inner.card.as_ref().is_some_and(|c| Some(c.id) == id)
-    {
-        inner.peer = None;
-        inner.answer = None;
+    match result {
+        Ok(take) => {
+            app.state::<recording::Notices>().remember(&take.finished);
+            let mut warnings = take.finished.warnings.clone();
+            warnings.extend(take.performed.warnings.iter().cloned());
+            let performed = Performed {
+                project: take.finished.root.clone(),
+                seconds: take.finished.project.duration_us() as f64 / 1_000_000.0,
+                beats: take.performed.beats,
+                beats_done: take.performed.beats_done,
+                stopped: take.performed.stopped.clone(),
+                captions: take.performed.captions.len(),
+                handed_over: take.performed.handoffs.len(),
+                warnings,
+            };
+            takes.update(app, id, |card| {
+                card.phase = Phase::Running;
+                card.beat = beats;
+                card.done = 1.0;
+                card.waiting = None;
+            });
+            let _ = sender.send(&FromApp::Performed { performed: performed.clone() });
+            Some(performed)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            takes.end(app, id, None, Some(message.clone()));
+            let _ = sender.send(&FromApp::Failed { message });
+            None
+        }
     }
 }
 
 impl Takes {
-    /// Shows the card and waits for the person's answer, then tells the command. Returns the card's id when the
-    /// take may go ahead.
-    fn ask<R: Runtime>(&self, app: &AppHandle<R>, peer: &mut Peer, take: TakeRequest) -> Option<u64> {
-        let refuse = |peer: &mut Peer, reason: &str| {
-            let _ = peer.send(&FromApp::Answer { allowed: false, reason: Some(reason.into()) });
-            None
-        };
-        if app.state::<recording::Recordings>().is_recording() {
-            return refuse(peer, "The person is recording in Shotmaxxing. Try again when they're done.");
+    /// Whether an agent's take is being filmed right now.
+    pub fn is_filming(&self) -> bool {
+        self.0.lock().is_ok_and(|inner| inner.filming.is_some())
+    }
+
+    /// Lets the session see and record the screen, asking the person the first time. `Err` says why not.
+    fn allow<R: Runtime>(&self, app: &AppHandle<R>, conn: &Conn, purpose: &str) -> Result<(), String> {
+        let key = conn.who.key();
+        if self.0.lock().map_err(|_| busy())?.allowed.contains(&key) {
+            return Ok(());
         }
-        let (id, answer) = {
-            let Ok(mut inner) = self.0.lock() else {
-                return refuse(peer, "Shotmaxxing couldn't show the take.");
-            };
+        let mut card = conn.who.card(Kind::Access);
+        card.purpose = purpose.to_string();
+        let (id, allowed) = self.ask(app, conn, card)?;
+        self.forget(app, id);
+        if !allowed {
+            return Err(format!(
+                "The person said no in Shotmaxxing, so {} can't see or record the screen in this session.",
+                conn.who.client
+            ));
+        }
+        self.0.lock().map_err(|_| busy())?.allowed.insert(key);
+        Ok(())
+    }
+
+    /// Puts `card` up and waits for the person's answer: the card's id, and whether they allowed it. The card goes
+    /// away by itself when the agent calls the request off or goes away, or after two minutes.
+    fn ask<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        conn: &Conn,
+        mut card: Card,
+    ) -> Result<(u64, bool), String> {
+        let id = {
+            let mut inner = self.0.lock().map_err(|_| busy())?;
             if inner.card.as_ref().is_some_and(Card::live) {
-                drop(inner);
-                return refuse(peer, "Another take is being filmed. Try again when it's done.");
+                return Err(
+                    "Shotmaxxing is busy with another agent request. Try again when it's done.".into()
+                );
             }
             inner.next += 1;
-            let id = inner.next;
-            let allowed = inner.sessions.contains(&take.session);
-            inner.card = Some(Card {
-                id,
-                phase: if allowed { Phase::Running } else { Phase::Asking },
-                client: take.client,
-                app: take.app,
-                beats: take.beats,
-                beat: 0,
-                done: 0.0,
-                seconds: take.seconds,
-                waiting: None,
-                result: None,
-                session: take.session,
-            });
-            inner.peer = peer.sender().ok();
-            let answer = (!allowed).then(|| {
-                let (tx, rx) = mpsc::channel();
-                inner.answer = Some(tx);
-                rx
-            });
-            (id, answer)
+            card.id = inner.next;
+            card.phase = Phase::Asking;
+            let id = card.id;
+            inner.card = Some(card);
+            inner.answer = Some(conn.events.clone());
+            id
         };
         self.show(app);
-
-        let allowed = match answer {
-            None => true,
-            Some(answer) => match answer.recv_timeout(Duration::from_secs(ASK_SECONDS)) {
-                Ok(Answer { allowed, session }) => {
-                    if allowed
-                        && session
-                        && let Ok(mut inner) = self.0.lock()
-                        && let Some(card) = inner.card.as_ref().filter(|c| c.id == id)
-                    {
-                        let session = card.session.clone();
-                        inner.sessions.insert(session);
-                    }
-                    allowed
+        let deadline = Instant::now() + Duration::from_secs(ASK_SECONDS);
+        loop {
+            match conn.rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(Event::Answer(allowed)) => return Ok((id, allowed)),
+                Ok(Event::Message(ToApp::Cancel) | Event::Gone) => {
+                    self.forget(app, id);
+                    return Err("The agent called it off.".into());
                 }
+                Ok(Event::Message(_)) => {}
                 Err(_) => {
                     self.forget(app, id);
-                    return refuse(
-                        peer,
-                        "Nobody answered in Shotmaxxing within two minutes, so the take didn't start.",
-                    );
+                    return Err("Nobody answered in Shotmaxxing within two minutes.".into());
                 }
-            },
-        };
-        if !allowed {
-            self.forget(app, id);
-            return refuse(peer, "The person said no to this take in Shotmaxxing.");
+            }
         }
-        self.update(app, Some(id), |card| card.phase = Phase::Running);
-        let _ = peer.send(&FromApp::Answer { allowed: true, reason: None });
-        Some(id)
+    }
+
+    /// The take on card `id` starts.
+    fn start<R: Runtime>(&self, app: &AppHandle<R>, id: u64, flags: Flags) {
+        if let Ok(mut inner) = self.0.lock() {
+            inner.answer = None;
+            inner.filming = Some((id, flags));
+        }
+        self.update(app, id, |card| card.phase = Phase::Running);
+    }
+
+    /// The command finished its work on the take: the card shows how it ended.
+    fn finish<R: Runtime>(&self, app: &AppHandle<R>, id: u64, result: TakeResult) {
+        self.stop_filming(id);
+        self.update(app, id, |card| {
+            card.phase = if result.stopped.is_some() { Phase::Stopped } else { Phase::Done };
+            card.beat = result.beats_done.min(card.beats.len());
+            card.done = 1.0;
+            card.waiting = None;
+            card.result = Some(result);
+        });
+    }
+
+    /// The take ended without the command finishing it: from what the app knows, and why it stopped, if it did.
+    fn end<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        id: u64,
+        performed: Option<Performed>,
+        reason: Option<String>,
+    ) {
+        self.stop_filming(id);
+        self.update(app, id, |card| {
+            if !card.live() {
+                return;
+            }
+            let result = match performed {
+                Some(performed) => TakeResult {
+                    beats_done: performed.beats_done,
+                    stopped: reason.or(performed.stopped),
+                    project: Some(performed.project),
+                    video: None,
+                    seconds: performed.seconds,
+                },
+                None => TakeResult { beats_done: card.beat, stopped: reason, ..TakeResult::default() },
+            };
+            card.phase = if result.stopped.is_some() { Phase::Stopped } else { Phase::Done };
+            card.beat = result.beats_done.min(card.beats.len());
+            card.done = 1.0;
+            card.waiting = None;
+            card.result = Some(result);
+        });
+    }
+
+    fn stop_filming(&self, id: u64) {
+        if let Ok(mut inner) = self.0.lock()
+            && inner.filming.as_ref().is_some_and(|(filming, _)| *filming == id)
+        {
+            inner.filming = None;
+        }
     }
 
     /// Changes the card, if it's still the one with `id`, and shows the change.
-    fn update<R: Runtime>(&self, app: &AppHandle<R>, id: Option<u64>, change: impl FnOnce(&mut Card)) {
+    fn update<R: Runtime>(&self, app: &AppHandle<R>, id: u64, change: impl FnOnce(&mut Card)) {
         let card = {
             let Ok(mut inner) = self.0.lock() else { return };
-            let Some(card) = inner.card.as_mut().filter(|c| Some(c.id) == id) else { return };
+            let Some(card) = inner.card.as_mut().filter(|c| c.id == id) else { return };
             change(card);
             card.clone()
         };
@@ -245,59 +579,76 @@ impl Takes {
         }
     }
 
+    /// Whether the card asks something or follows a take.
+    pub fn is_live(&self) -> bool {
+        self.0.lock().is_ok_and(|inner| inner.card.as_ref().is_some_and(Card::live))
+    }
+
+    /// Puts the card's window back if it closed while the card still asks or a take plays.
+    pub fn keep_shown<R: Runtime>(&self, app: &AppHandle<R>) {
+        if self.is_live() {
+            self.show(app);
+        }
+    }
+
     /// Drops the card with `id` and closes its window.
     fn forget<R: Runtime>(&self, app: &AppHandle<R>, id: u64) {
-        if let Ok(mut inner) = self.0.lock()
-            && inner.card.as_ref().is_some_and(|c| c.id == id)
-        {
-            inner.card = None;
-            inner.answer = None;
-            inner.peer = None;
-        }
-        if let Some(window) = app.get_webview_window("take") {
+        let forgotten = match self.0.lock() {
+            Ok(mut inner) if inner.card.as_ref().is_some_and(|c| c.id == id) => {
+                inner.card = None;
+                inner.answer = None;
+                true
+            }
+            _ => false,
+        };
+        if forgotten && let Some(window) = app.get_webview_window("take") {
             let _ = window.close();
         }
     }
 
-    fn send(&self, id: u64, message: FromApp) -> Result<(), String> {
-        let mut inner = self.0.lock().map_err(|_| "Shotmaxxing couldn't reach the take.".to_string())?;
-        if !inner.card.as_ref().is_some_and(|c| c.id == id && c.live()) {
-            return Err("That take has ended.".into());
+    /// The flags of the take on card `id`, while it plays.
+    fn flags(&self, id: u64) -> Result<Flags, String> {
+        let inner = self.0.lock().map_err(|_| busy())?;
+        match &inner.filming {
+            Some((filming, flags)) if *filming == id => Ok(flags.clone()),
+            _ => Err("That take has ended.".into()),
         }
-        let peer = inner.peer.as_mut().ok_or("That take has ended.")?;
-        peer.send(&message).map_err(|_| "The agent has gone away.".to_string())
     }
 }
 
-/// What the take card shows now, if there's a take.
+fn busy() -> String {
+    "Shotmaxxing couldn't reach the take card.".into()
+}
+
+/// What the take card shows now, if anything.
 #[tauri::command]
 pub fn take_card(takes: State<'_, Takes>) -> Option<Card> {
     takes.0.lock().ok().and_then(|inner| inner.card.clone())
 }
 
-/// The person's answer: allow the take (and, with `session`, the agent's later takes) or not.
+/// The person's answer to what the card asks: a take, or access to the screen for an agent's session.
 #[tauri::command]
-pub fn answer_take(takes: State<'_, Takes>, id: u64, allow: bool, session: bool) -> Result<(), String> {
-    let inner = takes.0.lock().map_err(|_| "Shotmaxxing couldn't reach the take.".to_string())?;
+pub fn answer_take(takes: State<'_, Takes>, id: u64, allow: bool) -> Result<(), String> {
+    let inner = takes.0.lock().map_err(|_| busy())?;
     if !inner.card.as_ref().is_some_and(|c| c.id == id && c.phase == Phase::Asking) {
-        return Err("That take isn't waiting for an answer any more.".into());
+        return Err("That request isn't waiting for an answer any more.".into());
     }
-    let answer = inner.answer.as_ref().ok_or("That take isn't waiting for an answer any more.")?;
-    answer
-        .send(Answer { allowed: allow, session })
-        .map_err(|_| "That take isn't waiting any more.".to_string())
+    let answer = inner.answer.as_ref().ok_or("That request isn't waiting for an answer any more.")?;
+    answer.send(Event::Answer(allow)).map_err(|_| "That request isn't waiting any more.".to_string())
 }
 
 /// Stops the take now. What was filmed so far is kept as a project.
 #[tauri::command]
 pub fn stop_take(takes: State<'_, Takes>, id: u64) -> Result<(), String> {
-    takes.send(id, FromApp::Stop)
+    takes.flags(id)?.cancel.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 /// Gives control back to the take after a hand-over, like pressing ⌥⌘Return.
 #[tauri::command]
 pub fn hand_back_take(takes: State<'_, Takes>, id: u64) -> Result<(), String> {
-    takes.send(id, FromApp::HandBack)
+    takes.flags(id)?.hand_back.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 /// Clears a finished take's card.
@@ -307,5 +658,20 @@ pub fn dismiss_take(takes: State<'_, Takes>, id: u64) {
         && inner.card.as_ref().is_some_and(|c| c.id == id && !c.live())
     {
         inner.card = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tidy_name;
+
+    #[test]
+    fn agents_names_are_one_short_line() {
+        assert_eq!(tidy_name("  Claude\nCode  "), "Claude Code");
+        assert_eq!(tidy_name(""), "An agent");
+        assert_eq!(tidy_name("\u{7}\t"), "An agent");
+        let long = "x".repeat(80);
+        assert_eq!(tidy_name(&long).chars().count(), 40);
+        assert!(tidy_name(&long).ends_with('…'));
     }
 }

@@ -17,7 +17,7 @@
 
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent};
 
 mod project;
@@ -70,7 +70,7 @@ pub struct DisplayInfo {
 }
 
 /// A window that can be recorded.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WindowInfo {
     pub id: u32,
     pub title: String,

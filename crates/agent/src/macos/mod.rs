@@ -24,12 +24,12 @@ use shotmaxxing_core::telemetry::{AGENT_EVENT_MARK, MouseButton};
 
 use crate::{AgentError, Desk, Prepared, Progress, Take, TakeOptions};
 
-const SCREEN_PERMISSION: &str = "Shotmaxxing needs the Screen Recording permission to film a take. Allow it in \
-System Settings → Privacy & Security → Screen & System Audio Recording for the app that started Shotmaxxing (your \
-terminal or agent app), then quit and reopen that app.";
+const SCREEN_PERMISSION: &str = "Shotmaxxing needs the Screen Recording permission to film a take. Turn it on for \
+Shotmaxxing in System Settings → Privacy & Security → Screen & System Audio Recording, then quit Shotmaxxing and open \
+it again. (A take run with `shotmaxxing take` in a terminal uses the terminal's permission instead.)";
 const ACCESSIBILITY_PERMISSION: &str = "Shotmaxxing needs the Accessibility permission to read controls, move the \
-pointer and type. Allow it in System Settings → Privacy & Security → Accessibility for the app that started \
-Shotmaxxing (your terminal or agent app), then quit and reopen that app.";
+pointer and type. Turn it on for Shotmaxxing in System Settings → Privacy & Security → Accessibility, then try \
+again. (A take run with `shotmaxxing take` in a terminal uses the terminal's permission instead.)";
 
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {

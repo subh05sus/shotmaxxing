@@ -1,6 +1,17 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { Bot, Check, Hand, Pause, Play, RotateCcw, Stop, X } from '@shotmaxxing/ui/icons';
+  import {
+    Bot,
+    Check,
+    CircleAlert,
+    Hand,
+    Pause,
+    Play,
+    RotateCcw,
+    ShieldCheck,
+    Stop,
+    X,
+  } from '@shotmaxxing/ui/icons';
   import {
     Button,
     CheckDraw,
@@ -8,7 +19,6 @@
     IconButton,
     Keycap,
     Spinner,
-    Switch,
     confetti,
     fade,
     rise,
@@ -24,13 +34,15 @@
     onTakeCard,
     stopTake,
     takeCard,
+    type TakeCaller,
     type TakeCardState,
   } from '../../lib/native';
 
   /**
-   * The take card. An agent asks here before it films, then the take plays out step by step, with Stop and Hand
-   * back always in reach. In the app it follows the real take through the control API; in the browser preview it
-   * plays a sample take.
+   * The take card. An agent asks here before Shotmaxxing sees the screen for it (once per session) and before every
+   * take, and the card names who asked as the system reports it. Then the take plays out step by step, with Stop and
+   * Hand back always in reach. In the app it follows the real take through the control API; in the browser preview
+   * it plays a sample take (`?state=access` shows the access question).
    */
   type Phase = 'asking' | 'running' | 'paused' | 'handoff' | 'saving' | 'done' | 'stopped';
 
@@ -49,7 +61,21 @@
   const initial = route.query.get('state');
   const live = isTauri && !initial;
   const startPhase: Phase =
-    initial === 'asking' || initial === 'handoff' || initial === 'done' ? initial : 'running';
+    initial === 'asking' || initial === 'handoff' || initial === 'done'
+      ? initial
+      : initial === 'access'
+        ? 'asking'
+        : 'running';
+  let sampleKind = $state<'access' | 'take'>(initial === 'access' ? 'access' : 'take');
+  const SAMPLE_CALLER: TakeCaller = {
+    pid: 0,
+    program: 'shotmaxxing',
+    path: '/Applications/Shotmaxxing.app/Contents/MacOS/shotmaxxing',
+    agent: 'claude',
+    app: 'Terminal',
+    signer: 'Apple',
+    checked: true,
+  };
   let samplePhase = $state<Phase>(startPhase);
   let sampleCurrent = $state(initial === 'handoff' ? HANDOFF : initial === 'done' ? BEATS.length : 0);
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -72,6 +98,7 @@
   if (!live && startPhase === 'running') run();
 
   function restart() {
+    sampleKind = 'take';
     sampleCurrent = 0;
     samplePhase = 'running';
     run();
@@ -80,7 +107,6 @@
   // The real take.
   let card = $state<TakeCardState | null>(null);
   let loaded = $state(false);
-  let allowSession = $state(false);
   let pending = $state(false);
   let problem = $state('');
   let unlisten: (() => void) | undefined;
@@ -135,6 +161,22 @@
   const current = $derived(live ? (card?.beat ?? 0) : sampleCurrent);
   const client = $derived(live ? card?.client || 'An agent' : 'Claude Code');
   const app = $derived(live ? card?.app || 'the app' : 'Safari');
+  const kind = $derived(live ? (card?.kind ?? 'take') : sampleKind);
+  const purpose = $derived(live ? card?.purpose || 'see your screen' : 'look at Safari');
+  const caller = $derived(live ? (card?.caller ?? null) : SAMPLE_CALLER);
+
+  /** Who asked, from the system rather than the request: the agent's program, its app, and who signed that app. */
+  const asker = $derived.by((): { tone: 'safe' | 'plain' | 'warn'; text: string } => {
+    if (!caller) return { tone: 'warn', text: 'Shotmaxxing couldn’t tell which program asked' };
+    const command = /^shotmaxxing(\.exe)?$/i.test(caller.program);
+    const who = command ? (caller.agent ?? 'a program') : caller.program;
+    const where = caller.app ? ` in ${caller.app}` : '';
+    if (!command) return { tone: 'warn', text: `From ${who}${where}, not the shotmaxxing command` };
+    if (!caller.app) return { tone: 'warn', text: `From ${who}, outside any app` };
+    if (!caller.checked) return { tone: 'plain', text: `From ${who}${where}` };
+    if (!caller.signer) return { tone: 'warn', text: `From ${who}${where}, which isn’t signed` };
+    return { tone: 'safe', text: `From ${who}${where} · signed by ${caller.signer}` };
+  });
   const result = $derived(live ? (card?.result ?? null) : null);
   const progress = $derived(
     phase === 'done' || phase === 'saving' ? 1 : Math.min(1, current / Math.max(1, beats.length)),
@@ -149,7 +191,7 @@
 
   const title = $derived(
     {
-      asking: `${client} wants to film a take`,
+      asking: kind === 'access' ? `${client} wants to see your screen` : `${client} wants to film a take`,
       running: `${client} is filming`,
       paused: 'Paused',
       handoff: 'Your turn',
@@ -160,6 +202,7 @@
   );
   const subtitle = $derived.by(() => {
     const n = beats.length;
+    if (kind === 'access') return 'For as long as it stays connected';
     switch (phase) {
       case 'asking':
         return `${app} · ${steps(n)} · about ${duration(live ? (card?.seconds ?? 0) : 42)}`;
@@ -217,8 +260,29 @@
 
     {#if phase === 'asking'}
       <div class="px-4 pt-3" in:fade>
-        <p class="text-footnote leading-[1.45] text-fg-muted">
-          It will move the pointer, click and type in {app} while Shotmaxxing records. Stop it whenever you like.
+        <p
+          class={[
+            'flex items-center gap-1.5 text-caption font-medium',
+            asker.tone === 'safe' && 'text-success',
+            asker.tone === 'warn' && 'text-warning',
+            asker.tone === 'plain' && 'text-fg-muted',
+          ]}
+          title={caller?.path || undefined}
+        >
+          {#if asker.tone === 'safe'}
+            <Icon icon={ShieldCheck} size={14} class="shrink-0" aria-hidden="true" />
+          {:else if asker.tone === 'warn'}
+            <Icon icon={CircleAlert} size={14} class="shrink-0" aria-hidden="true" />
+          {/if}
+          <span class="min-w-0 truncate">{asker.text}</span>
+        </p>
+        <p class="mt-1.5 text-footnote leading-[1.45] text-fg-muted">
+          {#if kind === 'access'}
+            Shotmaxxing will {purpose} for it. Until it disconnects, it can also see which windows are open and
+            record the screen, with the recording pill showing. Every take still asks you first.
+          {:else}
+            It will move the pointer, click and type in {app} while Shotmaxxing records. Stop it whenever you like.
+          {/if}
         </p>
       </div>
     {:else if phase === 'handoff'}
@@ -238,40 +302,33 @@
       </div>
     {/if}
 
-    <ol class="scroll-room max-h-60 overflow-y-auto" aria-label="Steps">
-      {#each beats as beat, i (i)}
-        {@const active = i === current && phase !== 'asking' && phase !== 'done' && phase !== 'saving'}
-        <li
-          class={[
-            'flex items-center gap-2.5 rounded-[7px] px-2 py-1.5 text-footnote',
-            active && phase !== 'stopped' && 'bg-fill font-semibold',
-          ]}
-        >
-          <span class="grid size-4 shrink-0 place-items-center">
-            {#if phase !== 'asking' && (i < current || phase === 'done' || phase === 'saving')}
-              <Icon icon={Check} size={13} class="text-success" aria-label="Done" />
-            {:else if active && phase === 'running'}
-              <Spinner size={13} label="In progress" />
-            {:else if active && phase === 'handoff'}
-              <Icon icon={Hand} size={13} class="text-accent-text" aria-label="Waiting for you" />
-            {:else}
-              <span class="size-1.5 rounded-full bg-fg-subtle" aria-hidden="true"></span>
-            {/if}
-          </span>
-          <span class={['min-w-0', phase !== 'asking' && i > current && 'text-fg-muted']}>{beat}</span>
-        </li>
-      {/each}
-    </ol>
-
-    {#if phase === 'asking'}
-      <label class="flex items-center justify-between gap-3 border-t border-border px-4 py-2 text-footnote">
-        Don’t ask again while {client} is connected
-        <Switch
-          checked={allowSession}
-          label="Don’t ask again this session"
-          onchange={(v) => (allowSession = v)}
-        />
-      </label>
+    {#if kind === 'take'}
+      <ol class="scroll-room max-h-60 overflow-y-auto" aria-label="Steps">
+        {#each beats as beat, i (i)}
+          {@const active = i === current && phase !== 'asking' && phase !== 'done' && phase !== 'saving'}
+          <li
+            class={[
+              'flex items-center gap-2.5 rounded-[7px] px-2 py-1.5 text-footnote',
+              active && phase !== 'stopped' && 'bg-fill font-semibold',
+            ]}
+          >
+            <span class="grid size-4 shrink-0 place-items-center">
+              {#if phase !== 'asking' && (i < current || phase === 'done' || phase === 'saving')}
+                <Icon icon={Check} size={13} class="text-success" aria-label="Done" />
+              {:else if active && phase === 'running'}
+                <Spinner size={13} label="In progress" />
+              {:else if active && phase === 'handoff'}
+                <Icon icon={Hand} size={13} class="text-accent-text" aria-label="Waiting for you" />
+              {:else}
+                <span class="size-1.5 rounded-full bg-fg-subtle" aria-hidden="true"></span>
+              {/if}
+            </span>
+            <span class={['min-w-0', phase !== 'asking' && i > current && 'text-fg-muted']}>{beat}</span>
+          </li>
+        {/each}
+      </ol>
+    {:else}
+      <div class="h-3" aria-hidden="true"></div>
     {/if}
 
     <footer class="flex items-center gap-2 border-t border-border px-3 py-2.5">
@@ -281,16 +338,18 @@
           variant="ghost"
           disabled={pending}
           onclick={() =>
-            live && card ? act(() => answerTake(card!.id, false, false)) : (samplePhase = 'stopped')}
-          >Don’t allow</Button
+            live && card
+              ? act(() => answerTake(card!.id, false))
+              : kind === 'access'
+                ? restart()
+                : (samplePhase = 'stopped')}>Don’t allow</Button
         >
         <span class="flex-1"></span>
         <Button
           size="sm"
           variant="primary"
           loading={pending}
-          onclick={() => (live && card ? act(() => answerTake(card!.id, true, allowSession)) : restart())}
-          >Allow</Button
+          onclick={() => (live && card ? act(() => answerTake(card!.id, true)) : restart())}>Allow</Button
         >
       {:else if phase === 'saving'}
         <Spinner size={14} label="Saving" />

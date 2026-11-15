@@ -5,18 +5,21 @@
 //! it. Messages are JSON-RPC 2.0, one per line. Every tool call runs on a thread of its own, so the server keeps
 //! answering (and can be told to cancel) while a take records or an export renders. Logs go to stderr; stdout
 //! carries nothing but protocol messages.
+//!
+//! Whatever takes the system's permissions (seeing the screen, recording it, moving the pointer and typing) the
+//! Shotmaxxing app does, over the control API, after the person allows it there; this server opens the app when it
+//! isn't running. So the agent's terminal needs no permissions. Projects and exports are files, worked on here.
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use shotmaxxing_capture::{DeviceChoice, FinishedProject, ProjectOptions, ProjectRecording, Target};
-use shotmaxxing_control::{Client, FromApp, TakeRequest, TakeResult, ToApp};
+use shotmaxxing_control::{Client, FromApp, RecordRequest, TakeRequest, TakeResult, ToApp};
 use shotmaxxing_core::bundle::{ProjectBundle, sanitize_file_name};
 use shotmaxxing_core::project::ExportPreset;
 use shotmaxxing_core::project::{
@@ -32,11 +35,12 @@ const INSTRUCTIONS: &str = "Shotmaxxing records the screen into editable project
 polished videos: a wallpaper behind the window, smooth automatic zooms on clicks and typing, a clean cursor, and \
 the voice and camera when recorded. The best demos are planned takes: prepare_take lists an app's controls and \
 shows its window, then perform_take films a script while Shotmaxxing moves the pointer and types at a human \
-pace (try dry_run first). When the Shotmaxxing app is open, it asks the person before each planned take and \
-shows it live. To film something else doing the work: list_sources, start_recording, the demo, \
+pace (try dry_run first). The Shotmaxxing app does the looking, recording and filming with its own permissions, \
+so this server needs none, and it opens the app when it isn't running. The person allows it there: once per \
+session before Shotmaxxing shows you the screen or records it, and before every planned take, which then plays \
+live on the app's take card. To film something else doing the work: list_sources, start_recording, the demo, \
 stop_recording. Then export_project. project_info shows what a project holds; cut_silences, clean_voice, \
-plan_zooms, style_project and set_music (only with a music file the person chose) tidy it up before exporting. Recording needs the Screen Recording permission, and \
-planned takes also Accessibility, for the app that started this server.";
+plan_zooms, style_project and set_music (only with a music file the person chose) tidy it up before exporting.";
 
 type Reply = Result<Value, String>;
 
@@ -61,27 +65,10 @@ impl Outbox {
     }
 }
 
-/// A take being recorded, on a thread of its own: capture objects stay on the thread that made them.
-struct Session {
-    root: PathBuf,
-    started: Instant,
-    finish: Sender<bool>,
-    done: Receiver<Result<Option<FinishedProject>, String>>,
-}
-
-impl Session {
-    /// Stops (keeping or discarding the take) and waits for the files to be finished.
-    fn end(self, keep: bool) -> Result<Option<FinishedProject>, String> {
-        let _ = self.finish.send(keep);
-        self.done.recv_timeout(Duration::from_secs(90)).map_err(|_| {
-            "saving the recording took too long; it may still appear in the folder".to_string()
-        })?
-    }
-}
-
 #[derive(Clone, Default)]
 struct State {
-    recording: Arc<Mutex<Option<Session>>>,
+    /// The project of the recording this session started in the app, while it may still be running.
+    recording: Arc<Mutex<Option<PathBuf>>>,
     /// Cancel flags of the tool calls in progress, by request id.
     calls: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     /// What the last `prepare_take` found, to check a take's refs against.
@@ -101,10 +88,8 @@ impl Drop for Taking {
     }
 }
 
-/// Runs the server until the client closes stdin. A take still recording then is kept.
+/// Runs the server until the client closes stdin. A recording this session left running is then stopped and kept.
 pub fn serve() -> anyhow::Result<()> {
-    // Recordings start on other threads; the window server connection has to come from this one.
-    shotmaxxing_capture::prepare();
     let out = Outbox(Arc::new(Mutex::new(std::io::stdout())));
     let state = State::default();
     for line in std::io::stdin().lock().lines() {
@@ -118,9 +103,10 @@ pub fn serve() -> anyhow::Result<()> {
             Err(_) => out.error(&Value::Null, -32700, "that line isn't JSON"),
         }
     }
-    let session = state.recording.lock().ok().and_then(|mut slot| slot.take());
-    if let Some(session) = session
-        && let Err(error) = session.end(true)
+    let recording = state.recording.lock().ok().and_then(|mut slot| slot.take());
+    if recording.is_some()
+        && let Err(error) =
+            ask_app(&state, ToApp::StopRecording { discard: false }, &AtomicBool::new(false), Launch::No)
     {
         tracing::warn!(%error, "couldn't finish the recording as the client left");
     }
@@ -222,7 +208,7 @@ fn tools() -> Value {
         {
             "name": "list_sources",
             "title": "List screens and windows",
-            "description": "The screens and windows that can be recorded, with their ids and sizes in points.",
+            "description": "The screens and windows that can be recorded, with their ids and sizes in points. The first time a session uses the screen, the person allows it in the Shotmaxxing app (the call waits up to two minutes).",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": { "readOnlyHint": true, "openWorldHint": false },
         },
@@ -236,7 +222,7 @@ fn tools() -> Value {
         {
             "name": "start_recording",
             "title": "Start recording",
-            "description": "Starts recording a screen or a window into a new project, with clicks, typing and the cursor path for automatic zooms. The real cursor is left out of the video and drawn cleanly later. One take records at a time; it stops by itself after max_seconds.",
+            "description": "Starts recording a screen or a window into a new project, with clicks, typing and the cursor path for automatic zooms. The real cursor is left out of the video and drawn cleanly later. The Shotmaxxing app records it and shows its recording pill, where the person can stop it; the first time a session uses the screen, they allow it there. One recording runs at a time; it stops by itself after max_seconds.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -258,14 +244,14 @@ fn tools() -> Value {
         {
             "name": "recording_status",
             "title": "Recording status",
-            "description": "Whether a take is recording, which project it goes into and for how long it has run.",
+            "description": "Whether the recording this session started is still running, which project it goes into and for how long it has run.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": { "readOnlyHint": true, "openWorldHint": false },
         },
         {
             "name": "stop_recording",
             "title": "Stop recording",
-            "description": "Stops the take, plans automatic zooms and saves the project. Returns what it holds: length, zooms, tracks, and anything that went wrong, such as a microphone that wasn't allowed.",
+            "description": "Stops the recording this session started, plans automatic zooms and saves the project. Returns what it holds: length, zooms, tracks, and anything that went wrong, such as a microphone that wasn't allowed. If the person already stopped it in Shotmaxxing, or it reached max_seconds, this reports the saved project.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "discard": { "type": "boolean", "default": false, "description": "Throw the take away instead of keeping it." } },
@@ -368,7 +354,7 @@ fn tools() -> Value {
         {
             "name": "prepare_take",
             "title": "Prepare a take",
-            "description": "Opens an app (or brings it forward), finds its window and lists the controls in it, with ids to use as refs in a take script, plus a picture of the window. Plan the whole take from this, then call perform_take. Needs the Accessibility permission.",
+            "description": "Opens an app (or brings it forward), finds its window and lists the controls in it, with ids to use as refs in a take script, plus a picture of the window. Plan the whole take from this, then call perform_take. The Shotmaxxing app does this with its own permissions; the first time a session uses the screen, the person allows it there.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -422,16 +408,17 @@ fn call(
     cancel: &Arc<AtomicBool>,
 ) -> Reply {
     match name {
-        "list_sources" => shotmaxxing_capture::sources()
-            .map_err(|e| e.to_string())
-            .and_then(|s| serde_json::to_value(s).map_err(|e| e.to_string())),
+        "list_sources" => match ask_app(state, ToApp::Sources, cancel, Launch::Yes)? {
+            FromApp::Sources { sources } => Ok(sources),
+            other => Err(unexpected(&other)),
+        },
         "list_devices" => Ok(json!({
             "microphones": shotmaxxing_capture::microphones(),
             "cameras": shotmaxxing_capture::cameras(),
         })),
-        "start_recording" => start_recording(state, args),
-        "recording_status" => Ok(recording_status(state)),
-        "stop_recording" => stop_recording(state, args),
+        "start_recording" => start_recording(state, args, cancel),
+        "recording_status" => recording_status(state, cancel),
+        "stop_recording" => stop_recording(state, args, cancel),
         "project_info" => {
             let (bundle, project) = open(&project_arg(args)?)?;
             Ok(summary(bundle.root(), &project))
@@ -443,7 +430,7 @@ fn call(
         "set_music" => set_music(args),
         "style_project" => style(args),
         "validate_take" => validate(args),
-        "prepare_take" => prepare_take(state, args),
+        "prepare_take" => prepare_take(state, args, cancel),
         "perform_take" => perform_take(state, args, progress, cancel),
         _ => Err(format!("there's no tool called {name}")),
     }
@@ -484,111 +471,98 @@ pub fn summary(root: &Path, project: &Project) -> Value {
     })
 }
 
-fn device(choice: Option<&str>) -> DeviceChoice {
-    match choice {
-        None => DeviceChoice::Off,
-        Some("default") => DeviceChoice::Default,
-        Some(id) => DeviceChoice::Id(id.to_string()),
-    }
-}
-
-fn start_recording(state: &State, args: &Value) -> Reply {
-    let mut slot = state.recording.lock().map_err(|_| "the recorder is busy".to_string())?;
-    if slot.is_some() {
-        return Err("a take is already recording; stop it first".into());
-    }
-    let target = if let Some(id) = args.get("window").and_then(Value::as_u64) {
-        Target::Window(u32::try_from(id).map_err(|_| "that window id is too large")?)
-    } else if let Some(app) = text(args, "app") {
-        let needle = app.to_lowercase();
-        let sources = shotmaxxing_capture::sources().map_err(|e| e.to_string())?;
-        let window = sources
-            .windows
-            .iter()
-            .filter(|w| w.app.to_lowercase().contains(&needle))
-            .max_by(|a, b| (a.width * a.height).total_cmp(&(b.width * b.height)))
-            .ok_or_else(|| format!("no open window belongs to “{app}”; list_sources shows them"))?;
-        Target::Window(window.id)
-    } else {
-        Target::Display(args.get("display").and_then(Value::as_u64).and_then(|d| u32::try_from(d).ok()))
+fn start_recording(state: &State, args: &Value, cancel: &AtomicBool) -> Reply {
+    let window = match args.get("window").and_then(Value::as_u64) {
+        Some(id) => Some(u32::try_from(id).map_err(|_| "that window id is too large")?),
+        None => None,
     };
-    let mut options = ProjectOptions::new(target);
-    options.max_fps = args.get("fps").and_then(Value::as_u64).map_or(60, |f| f.clamp(15, 120) as u32);
-    options.hide_desktop_icons = args.get("hide_desktop_icons").and_then(Value::as_bool).unwrap_or(false);
-    options.system_audio = args.get("system_audio").and_then(Value::as_bool).unwrap_or(false);
-    options.microphone = device(text(args, "microphone"));
-    options.camera = device(text(args, "camera"));
-    let folder = text(args, "folder").map(expand).unwrap_or_else(crate::default_folder);
-    let name = text(args, "name").unwrap_or("Recording").to_string();
-    let limit =
-        Duration::from_secs_f64(args.get("max_seconds").and_then(Value::as_f64).unwrap_or(900.0).max(1.0));
-
-    let (ready_tx, ready_rx) = sync_channel::<Result<PathBuf, String>>(1);
-    let (finish_tx, finish_rx) = channel::<bool>();
-    let (done_tx, done_rx) = sync_channel(1);
-    std::thread::Builder::new()
-        .name("smx-mcp-recording".into())
-        .spawn(move || {
-            let recording = match ProjectRecording::start(&folder, &name, options) {
-                Ok(recording) => recording,
-                Err(error) => {
-                    let _ = ready_tx.send(Err(error.to_string()));
-                    return;
-                }
-            };
-            let root = recording.root().to_path_buf();
-            let _ = ready_tx.send(Ok(root.clone()));
-            // Kept when told to stop, when the limit passes, or when the server goes away.
-            let keep = finish_rx.recv_timeout(limit).unwrap_or(true);
-            let result = recording.stop().map_err(|e| e.to_string());
-            let result = if keep {
-                result.map(Some)
-            } else {
-                let _ = std::fs::remove_dir_all(&root);
-                Ok(None)
-            };
-            let _ = done_tx.send(result);
-        })
-        .map_err(|e| e.to_string())?;
-    // The first take with a microphone or camera waits while the system asks the person.
-    let root = match ready_rx.recv_timeout(Duration::from_secs(150)) {
-        Ok(root) => root?,
-        Err(_) => {
-            let _ = finish_tx.send(false);
-            return Err("the recording didn't start in time".into());
+    let record = RecordRequest {
+        window,
+        app: text(args, "app").map(str::to_string),
+        display: args.get("display").and_then(Value::as_u64).and_then(|d| u32::try_from(d).ok()),
+        name: text(args, "name").unwrap_or("Recording").to_string(),
+        folder: text(args, "folder").map(expand).unwrap_or_else(crate::default_folder),
+        fps: args.get("fps").and_then(Value::as_u64).map_or(60, |f| f.clamp(15, 120) as u32),
+        hide_desktop_icons: args.get("hide_desktop_icons").and_then(Value::as_bool).unwrap_or(false),
+        system_audio: args.get("system_audio").and_then(Value::as_bool).unwrap_or(false),
+        microphone: text(args, "microphone").map(str::to_string),
+        camera: text(args, "camera").map(str::to_string),
+        max_seconds: args.get("max_seconds").and_then(Value::as_f64).unwrap_or(900.0).max(1.0),
+    };
+    match ask_app(state, ToApp::Record { record }, cancel, Launch::Yes)? {
+        FromApp::Recording { status: Some(status) } => {
+            if let Ok(mut slot) = state.recording.lock() {
+                *slot = Some(status.project.clone());
+            }
+            Ok(json!({
+                "recording": true,
+                "project": status.project,
+                "stops_by_itself_after_seconds": status.stops_after_seconds,
+            }))
         }
-    };
-    *slot = Some(Session { root: root.clone(), started: Instant::now(), finish: finish_tx, done: done_rx });
-    Ok(json!({ "recording": true, "project": root, "stops_by_itself_after_seconds": limit.as_secs_f64() }))
-}
-
-fn recording_status(state: &State) -> Value {
-    match state.recording.lock().ok().as_deref() {
-        Some(Some(session)) => json!({
-            "recording": true,
-            "project": session.root,
-            "seconds": (session.started.elapsed().as_secs_f64() * 10.0).round() / 10.0,
-        }),
-        _ => json!({ "recording": false }),
+        other => Err(unexpected(&other)),
     }
 }
 
-fn stop_recording(state: &State, args: &Value) -> Reply {
-    let session = state
+fn recording_status(state: &State, cancel: &AtomicBool) -> Reply {
+    let Some(root) = state.recording.lock().ok().and_then(|slot| slot.clone()) else {
+        return Ok(json!({ "recording": false }));
+    };
+    match ask_app(state, ToApp::RecordingStatus, cancel, Launch::No) {
+        Ok(FromApp::Recording { status: Some(status) }) => Ok(json!({
+            "recording": true,
+            "project": status.project,
+            "seconds": status.seconds,
+            "stops_by_itself_after_seconds": status.stops_after_seconds,
+        })),
+        Ok(FromApp::Recording { status: None }) | Err(_) => Ok(json!({
+            "recording": false,
+            "project": root,
+            "note": "It has stopped: the person stopped it in Shotmaxxing, it reached max_seconds, or the app quit. stop_recording reports what it holds.",
+        })),
+        Ok(other) => Err(unexpected(&other)),
+    }
+}
+
+fn stop_recording(state: &State, args: &Value, cancel: &AtomicBool) -> Reply {
+    let root = state
         .recording
         .lock()
         .map_err(|_| "the recorder is busy".to_string())?
         .take()
-        .ok_or_else(|| "no take is recording".to_string())?;
+        .ok_or_else(|| "no recording from this session is running".to_string())?;
     let discard = args.get("discard").and_then(Value::as_bool).unwrap_or(false);
-    match session.end(!discard)? {
-        None => Ok(json!({ "discarded": true })),
-        Some(finished) => {
-            let mut report = summary(&finished.root, &finished.project);
-            report["dropped_frames"] = json!(finished.dropped);
-            report["warnings"] = json!(finished.warnings);
-            Ok(report)
+    let report = |root: &Path| -> Reply {
+        let (_, project) = open(root)?;
+        Ok(summary(root, &project))
+    };
+    match ask_app(state, ToApp::StopRecording { discard }, cancel, Launch::No) {
+        Ok(FromApp::Recorded { recorded }) => match recorded.project {
+            None => Ok(json!({ "discarded": true })),
+            Some(project) => {
+                let mut summary = report(&project)?;
+                summary["dropped_frames"] = json!(recorded.dropped_frames);
+                summary["warnings"] = json!(recorded.warnings);
+                Ok(summary)
+            }
+        },
+        // It ended without this session: the person stopped or threw it away in the app, it reached its limit, or
+        // the app quit (which keeps it).
+        Ok(FromApp::Recording { status: None }) | Err(_) if root.join("project.json").is_file() => {
+            let mut summary = report(&root)?;
+            summary["note"] = json!(if discard {
+                "It had already stopped and been saved in Shotmaxxing, so it wasn't thrown away."
+            } else {
+                "It had already stopped: the person stopped it in Shotmaxxing, or it reached max_seconds."
+            });
+            Ok(summary)
         }
+        Ok(FromApp::Recording { status: None }) => Ok(json!({
+            "discarded": true,
+            "note": "The recording was thrown away in Shotmaxxing.",
+        })),
+        Ok(other) => Err(unexpected(&other)),
+        Err(error) => Err(error),
     }
 }
 
@@ -825,7 +799,7 @@ fn perform_take_tool() -> Value {
     json!({
         "name": "perform_take",
         "title": "Perform and film a take",
-        "description": "Films a take script. Shotmaxxing records the app's window while it moves the pointer, clicks and types at a human pace, then saves an editable project, and exports a video when the script's output mode is video. Targets are refs from prepare_take (checked again just before each click), screen points, or { find: label } for controls that appear later. When the Shotmaxxing app is open, it asks the person first (the call waits up to two minutes for their answer) and shows the take live on its take card. The person can stop the take at any time with the card's Stop button, by pressing Esc three times, or by moving the mouse. user_step beats hand control to them until they press ⌥⌘Return or Hand back on the card, and that stretch is cut from the video. It never types into password fields. Use dry_run to see the timeline first. Needs the Screen Recording and Accessibility permissions.",
+        "description": "Films a take script. Shotmaxxing records the app's window while it moves the pointer, clicks and types at a human pace, then saves an editable project, and exports a video when the script's output mode is video. Targets are refs from prepare_take (checked again just before each click), screen points, or { find: label } for controls that appear later. The Shotmaxxing app films it with its own permissions, opening first if it isn't running: the person allows every take on its take card (the call waits up to two minutes for their answer), then watches it live there. The person can stop the take at any time with the card's Stop button, by pressing Esc three times, or by moving the mouse. user_step beats hand control to them until they press ⌥⌘Return or Hand back on the card, and that stretch is cut from the video. It never types into password fields. Use dry_run to see the timeline first.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -842,28 +816,18 @@ fn perform_take_tool() -> Value {
     })
 }
 
-/// A JPEG's size in pixels, from its frame header.
-fn jpeg_size(bytes: &[u8]) -> Option<(u32, u32)> {
-    let mut i = 2;
-    while i + 9 < bytes.len() {
-        if bytes[i] != 0xff {
-            return None;
-        }
-        let marker = bytes[i + 1];
-        let length = usize::from(u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]));
-        if (0xc0..=0xcf).contains(&marker) && !matches!(marker, 0xc4 | 0xc8 | 0xcc) {
-            let height = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]);
-            let width = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]);
-            return Some((u32::from(width), u32::from(height)));
-        }
-        i += 2 + length;
-    }
-    None
-}
-
-fn prepare_take(state: &State, args: &Value) -> Reply {
-    let prepared =
-        shotmaxxing_agent::prepare(text(args, "app"), text(args, "window")).map_err(|e| e.to_string())?;
+fn prepare_take(state: &State, args: &Value, cancel: &AtomicBool) -> Reply {
+    let request = ToApp::Prepare {
+        app: text(args, "app").map(str::to_string),
+        window: text(args, "window").map(str::to_string),
+        picture: args.get("picture").and_then(Value::as_bool) != Some(false),
+    };
+    let (prepared, picture) = match ask_app(state, request, cancel, Launch::Yes)? {
+        FromApp::Prepared { prepared, picture } => (prepared, picture),
+        other => return Err(unexpected(&other)),
+    };
+    let prepared: shotmaxxing_agent::Prepared = serde_json::from_value(prepared)
+        .map_err(|e| format!("the Shotmaxxing app's answer didn't make sense: {e}"))?;
     const LISTED: usize = 300;
     let round = |v: f64| v.round();
     let controls: Vec<Value> = prepared
@@ -886,43 +850,21 @@ fn prepare_take(state: &State, args: &Value) -> Reply {
         "more_controls": prepared.truncated || prepared.controls.len() > LISTED,
         "how_to_use": "Name controls by id as refs, e.g. click: button.export. Points are global screen points. A control that only appears later is found by its label with { find: \"Export\" }.",
     });
-    if args.get("picture").and_then(Value::as_bool) != Some(false)
-        && let Some(window) = &prepared.window
-        && let Ok(pictures) = shotmaxxing_capture::thumbnails(&[Target::Window(window.id)], 1280)
-        && let Some(Some(jpeg)) = pictures.into_iter().next()
-    {
-        if let Some((width, _)) = jpeg_size(&jpeg) {
-            let per_pixel = window.width / f64::from(width.max(1));
+    if let (Some(picture), Some(window)) = (picture, &prepared.window) {
+        if picture.width > 0 {
+            let per_pixel = window.width / f64::from(picture.width);
             value["picture"] = json!({
                 "origin": { "x": window.x, "y": window.y },
                 "points_per_pixel": (per_pixel * 1000.0).round() / 1000.0,
                 "note": "A pixel (px, py) in the picture is the screen point (origin.x + px × points_per_pixel, origin.y + py × points_per_pixel).",
             });
         }
-        value["_image"] = json!({ "type": "image", "data": base64(&jpeg), "mimeType": "image/jpeg" });
+        value["_image"] = json!({ "type": "image", "data": picture.data, "mimeType": "image/jpeg" });
     }
     if let Ok(mut slot) = state.prepared.lock() {
         *slot = Some(prepared);
     }
     Ok(value)
-}
-
-fn base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = (u32::from(chunk[0]) << 16)
-            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
-            | u32::from(*chunk.get(2).unwrap_or(&0));
-        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
-            if i <= chunk.len() {
-                out.push(TABLE[((n >> shift) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
 }
 
 /// The export a script's preset asks for: format, shorter side, frame rate and canvas shape.
@@ -939,7 +881,14 @@ fn preset_export(preset: Option<ExportPreset>) -> (&'static str, u32, u32, Optio
 /// How long the person has to answer in the app before a take is called off.
 const ASK_SECONDS: u64 = 120;
 
-/// This agent session, for "allow for this session" in the app: one `shotmaxxing mcp` process.
+/// How long a request may take in the app beyond the person's answer: starting a recording can wait on the system's
+/// microphone and camera questions.
+const WORK_SECONDS: u64 = 180;
+
+/// How long the app may take to open and start listening.
+const OPEN_SECONDS: u64 = 30;
+
+/// This agent session, as the app knows it: one `shotmaxxing mcp` process.
 fn session_id() -> &'static str {
     static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     SESSION.get_or_init(|| {
@@ -949,82 +898,132 @@ fn session_id() -> &'static str {
     })
 }
 
-/// The take card in the running app. It asks the person before a take, then follows the take live; its Stop and
-/// Hand back buttons reach the take through the cancel and hand-back flags.
-struct Card {
-    sender: shotmaxxing_control::Sender<ToApp>,
-    /// The beat the take is on, and how many there are.
-    beat: usize,
-    beats: usize,
+/// Whether reaching the app may open it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Launch {
+    Yes,
+    /// Only a running app will do: there's nothing to ask a closed one.
+    No,
 }
 
-impl Card {
-    /// Asks the person in the app. `Ok(None)` when the app isn't open: the take goes ahead without a card. An
-    /// error when the person says no, doesn't answer in time, or the call is cancelled while waiting.
-    fn ask(
-        request: TakeRequest,
-        cancel: &Arc<AtomicBool>,
-        hand_back: &Arc<AtomicBool>,
-    ) -> Result<Option<Self>, String> {
-        let Some(mut client) = Client::connect() else { return Ok(None) };
-        let beats = request.beats.len();
-        let who = request.client.clone();
-        if client.send(&ToApp::Ask { take: request }).is_err() {
-            return Ok(None);
-        }
-        let deadline = Instant::now() + Duration::from_secs(ASK_SECONDS + 10);
-        match client.receive_until(deadline, cancel) {
-            Ok(Some(FromApp::Answer { allowed: true, .. })) => {}
-            Ok(Some(FromApp::Answer { allowed: false, reason })) => {
-                return Err(
-                    reason.unwrap_or_else(|| format!("The person said no to {who}'s take in Shotmaxxing."))
-                );
-            }
-            Ok(Some(_)) | Ok(None) => return Err("Shotmaxxing closed before the person answered.".into()),
-            Err(_) if cancel.load(Ordering::SeqCst) => return Err("cancelled".into()),
-            Err(_) => return Err("Nobody answered in Shotmaxxing, so the take didn't start.".into()),
-        }
-        let sender = client.sender().map_err(|e| format!("lost touch with Shotmaxxing: {e}"))?;
-        let (cancel, hand_back) = (cancel.clone(), hand_back.clone());
-        std::thread::Builder::new()
-            .name("take card".into())
-            .spawn(move || {
-                while let Ok(Some(message)) = client.receive() {
-                    match message {
-                        FromApp::Stop => cancel.store(true, Ordering::SeqCst),
-                        FromApp::HandBack => hand_back.store(true, Ordering::SeqCst),
-                        FromApp::Answer { .. } => {}
-                    }
-                }
-            })
-            .map_err(|e| e.to_string())?;
-        Ok(Some(Self { sender, beat: 0, beats }))
-    }
+/// A connection to the app for one request, after the hello. Opens the app first when it isn't running and
+/// `launch` allows it, except when `SHOTMAXXING_CONTROL_SOCKET` points somewhere else (tests and development): then
+/// only an app already listening there will do.
+fn reach_app(state: &State, launch: Launch) -> Result<Client, String> {
+    let name = state.client.lock().ok().and_then(|c| c.clone()).unwrap_or_else(|| "An agent".into());
+    let elsewhere = std::env::var_os("SHOTMAXXING_CONTROL_SOCKET").is_some_and(|p| !p.is_empty());
+    let mut client = match Client::connect() {
+        Some(client) => client,
+        None if launch == Launch::Yes && !elsewhere => open_app()?,
+        None => return Err("Shotmaxxing isn't open. Open the Shotmaxxing app, then try again.".into()),
+    };
+    client.hello(&name, session_id())?;
+    Ok(client)
+}
 
-    fn progress(&mut self, p: &shotmaxxing_agent::Progress) {
-        let message = match (&p.waiting, p.beat) {
-            (Some(message), _) => ToApp::Waiting { message: message.clone() },
-            (None, Some(beat)) => {
-                self.beat = beat;
-                ToApp::Progress { beat, done: p.done }
-            }
-            // Every beat played: the take is being saved.
-            (None, None) if p.done >= 1.0 => ToApp::Progress { beat: self.beats, done: 1.0 },
-            (None, None) => ToApp::Progress { beat: self.beat, done: p.done },
-        };
-        let _ = self.sender.send(&message);
+/// Opens the app and waits until it listens.
+fn open_app() -> Result<Client, String> {
+    start_app()?;
+    let deadline = Instant::now() + Duration::from_secs(OPEN_SECONDS);
+    while Instant::now() < deadline {
+        if let Some(client) = Client::connect() {
+            return Ok(client);
+        }
+        std::thread::sleep(Duration::from_millis(250));
     }
+    Err("Shotmaxxing didn't open in time. Open the Shotmaxxing app, then try again.".into())
+}
 
-    fn finish(mut self, result: TakeResult) {
-        let _ = self.sender.send(&ToApp::Finished { result });
+/// Starts the app this command came with: the bundle it sits in, or a development build beside it; otherwise the
+/// installed app. It opens behind the agent's window.
+#[cfg(target_os = "macos")]
+fn start_app() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("couldn't find the Shotmaxxing app: {e}"))?;
+    let bundle = exe.ancestors().find(|p| p.extension().is_some_and(|e| e == "app"));
+    let beside = exe.with_file_name("shotmaxxing-desktop");
+    if bundle.is_none() && beside.is_file() {
+        return spawn_app(&beside);
+    }
+    let mut open = std::process::Command::new("/usr/bin/open");
+    open.arg("-g");
+    match bundle {
+        Some(bundle) => open.arg(bundle),
+        None => open.args(["-b", shotmaxxing_core::APP_ID]),
+    };
+    let status = open
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| format!("couldn't open Shotmaxxing: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("Shotmaxxing isn't installed, or macOS couldn't open it. Open the Shotmaxxing app, then try again.".into())
     }
 }
 
-impl Drop for Card {
-    fn drop(&mut self) {
-        // Ends the listening thread, and tells the app the take is over even if it never heard how.
-        self.sender.close();
+/// Starts the app installed beside this command, or a development build beside it.
+#[cfg(windows)]
+fn start_app() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("couldn't find the Shotmaxxing app: {e}"))?;
+    ["Shotmaxxing.exe", "shotmaxxing-desktop.exe"]
+        .into_iter()
+        .map(|name| exe.with_file_name(name))
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            "Shotmaxxing isn't installed beside this command. Open the Shotmaxxing app, then try again."
+                .to_string()
+        })
+        .and_then(|app| spawn_app(&app))
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn start_app() -> Result<(), String> {
+    Err("Open the Shotmaxxing app, then try again.".into())
+}
+
+/// Starts the app as a process of its own, so it carries on when this command (or the agent's terminal) ends.
+#[cfg(any(target_os = "macos", windows))]
+fn spawn_app(program: &Path) -> Result<(), String> {
+    let mut command = std::process::Command::new(program);
+    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    let mut child = command.spawn().map_err(|e| format!("couldn't open Shotmaxxing: {e}"))?;
+    // Collected when it quits, so it doesn't linger while this command runs.
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
+/// Sends one request to the app and waits for its answer: as long as the person may take to answer on the card and
+/// the work needs, or until the call is cancelled (which also takes the question off the card).
+fn ask_app(state: &State, request: ToApp, cancel: &AtomicBool, launch: Launch) -> Result<FromApp, String> {
+    let mut client = reach_app(state, launch)?;
+    client.send(&request).map_err(|e| format!("lost touch with Shotmaxxing: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(ASK_SECONDS + WORK_SECONDS);
+    match client.receive_until(deadline, cancel) {
+        Ok(Some(FromApp::Failed { message })) => Err(message),
+        Ok(Some(reply)) => Ok(reply),
+        Ok(None) => Err("the Shotmaxxing app closed the connection before answering".into()),
+        Err(_) if cancel.load(Ordering::SeqCst) => Err("cancelled".into()),
+        Err(error) => Err(format!("the Shotmaxxing app didn't answer in time: {error}")),
+    }
+}
+
+fn unexpected(reply: &FromApp) -> String {
+    let kind = serde_json::to_value(reply).ok().and_then(|v| v["type"].as_str().map(str::to_string));
+    format!("the Shotmaxxing app gave an answer this command doesn't expect ({})", kind.unwrap_or_default())
 }
 
 fn perform_take(
@@ -1050,80 +1049,96 @@ fn perform_take(
     if args.get("dry_run").and_then(Value::as_bool).unwrap_or(false) {
         return serde_json::to_value(shotmaxxing_agent::plan(&script, &planned)).map_err(|e| e.to_string());
     }
-    if state.recording.lock().is_ok_and(|r| r.is_some()) {
-        return Err("a recording is running; stop it before filming a take".into());
-    }
     if state.taking.swap(true, Ordering::SeqCst) {
         return Err("a take is already being filmed".into());
     }
     let _taking = Taking(state.taking.clone());
-    let client = state.client.lock().ok().and_then(|c| c.clone());
 
-    // When the app is open, it asks the person first and shows the take live on its take card.
-    let hand_back = Arc::new(AtomicBool::new(false));
     let plan = shotmaxxing_agent::plan(&script, &planned);
-    let request = TakeRequest {
-        client: client.clone().unwrap_or_else(|| "An agent".into()),
-        session: session_id().into(),
-        app: script.app.clone().unwrap_or_default(),
+    let take = TakeRequest {
+        script: script.clone(),
+        planned,
         beats: plan.beats.iter().map(|b| b.what.clone()).collect(),
         seconds: plan.seconds,
+        folder: text(args, "folder").map(expand).unwrap_or_else(crate::default_folder),
+        microphone: text(args, "microphone").map(str::to_string),
+        system_audio: args.get("system_audio").and_then(Value::as_bool).unwrap_or(false),
     };
     progress(0.0, "Asking in Shotmaxxing");
-    let mut card = Card::ask(request, cancel, &hand_back)?;
-
-    let options = shotmaxxing_agent::TakeOptions {
-        folder: text(args, "folder").map(expand).unwrap_or_else(crate::default_folder),
-        planned,
-        microphone: device(text(args, "microphone")),
-        system_audio: args.get("system_audio").and_then(Value::as_bool).unwrap_or(false),
-        client,
-        cancel: cancel.clone(),
-        hand_back: hand_back.clone(),
-    };
-    let result = shotmaxxing_agent::run_take(&script, options, &mut |p| {
-        // A Hand back pressed before the take asked for one doesn't count.
-        if p.waiting.is_some() {
-            hand_back.store(false, Ordering::SeqCst);
+    let mut client = reach_app(state, Launch::Yes)?;
+    client
+        .send(&ToApp::Take { take: Box::new(take) })
+        .map_err(|e| format!("lost touch with Shotmaxxing: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(ASK_SECONDS + 10);
+    match client.receive_until(deadline, cancel) {
+        Ok(Some(FromApp::Answer { allowed: true, .. })) => {}
+        Ok(Some(FromApp::Answer { allowed: false, reason })) => {
+            return Err(reason.unwrap_or_else(|| "The person said no to this take in Shotmaxxing.".into()));
         }
-        if let Some(card) = card.as_mut() {
-            card.progress(&p);
-        }
-        progress(p.done * 0.9, &p.message)
-    });
-    let take = match result {
-        Ok(take) => take,
-        Err(error) => {
-            if let Some(card) = card.take() {
-                card.finish(TakeResult { stopped: Some(error.to_string()), ..TakeResult::default() });
-            }
-            return Err(error.to_string());
-        }
-    };
-    let root = take.finished.root.clone();
-    let mut report = summary(&root, &take.finished.project);
-    let mut warnings = take.finished.warnings.clone();
-    warnings.extend(take.performed.warnings.iter().cloned());
-    if card.is_none() {
-        warnings.push(
-            "Shotmaxxing wasn't open, so nobody was asked in the app and there was no take card.".into(),
-        );
+        Ok(Some(FromApp::Failed { message })) => return Err(message),
+        Ok(Some(_) | None) => return Err("Shotmaxxing closed before the person answered.".into()),
+        Err(_) if cancel.load(Ordering::SeqCst) => return Err("cancelled".into()),
+        Err(_) => return Err("Nobody answered in Shotmaxxing, so the take didn't start.".into()),
     }
+
+    // The take plays in the app, and its progress comes here. Calling the tool off stops it there at once; what was
+    // filmed so far is kept.
+    let mut sender = client.sender().map_err(|e| format!("lost touch with Shotmaxxing: {e}"))?;
+    let never = AtomicBool::new(false);
+    let mut called_off = false;
+    let performed = loop {
+        // A take can wait for the person as long as they need, so only the agent or the app ends this.
+        let deadline = Instant::now() + Duration::from_secs(24 * 60 * 60);
+        match client.receive_until(deadline, if called_off { &never } else { cancel.as_ref() }) {
+            Ok(Some(FromApp::Progress { done, message })) => progress(done.clamp(0.0, 1.0) * 0.9, &message),
+            Ok(Some(FromApp::Performed { performed })) => break performed,
+            Ok(Some(FromApp::Failed { message })) => return Err(message),
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return Err(
+                    "Shotmaxxing closed before the take finished. What was filmed may be in the Library."
+                        .into(),
+                );
+            }
+            Err(_) if !called_off && cancel.load(Ordering::SeqCst) => {
+                let _ = sender.send(&ToApp::Cancel);
+                called_off = true;
+            }
+            Err(error) => return Err(format!("lost touch with Shotmaxxing: {error}")),
+        }
+    };
+    let mut finish = |result: TakeResult| {
+        let _ = sender.send(&ToApp::Finished { result });
+    };
+    let root = performed.project.clone();
+    if called_off {
+        finish(TakeResult {
+            beats_done: performed.beats_done,
+            stopped: performed.stopped.clone().or_else(|| Some("The agent called the take off.".into())),
+            project: Some(root),
+            video: None,
+            seconds: performed.seconds,
+        });
+        return Err("cancelled".into());
+    }
+    let (_, project) = open(&root)?;
+    let mut report = summary(&root, &project);
     report["performance"] = json!({
-        "beats": take.performed.beats,
-        "beats_done": take.performed.beats_done,
-        "stopped": take.performed.stopped,
-        "captions": take.performed.captions.len(),
-        "handed_over": take.performed.handoffs.len(),
+        "beats": performed.beats,
+        "beats_done": performed.beats_done,
+        "stopped": performed.stopped,
+        "captions": performed.captions,
+        "handed_over": performed.handed_over,
     });
-    report["warnings"] = json!(warnings);
-    if take.performed.stopped.is_none() && script.output.mode == OutputMode::Video {
+    report["warnings"] = json!(performed.warnings);
+    if performed.stopped.is_none() && script.output.mode == OutputMode::Video {
+        progress(0.9, "Exporting the video");
         let (format, size, fps, aspect) = preset_export(script.output.preset);
         if let Some(aspect) = aspect {
             style(&json!({ "project": root, "aspect": aspect }))?;
         }
         let output = script.output.label.as_deref().map(|label| {
-            let name = sanitize_file_name(&format!("{} {label}", take.finished.project.name));
+            let name = sanitize_file_name(&format!("{} {label}", project.name));
             unique_path(
                 root.parent().unwrap_or(Path::new(".")),
                 &name,
@@ -1132,50 +1147,34 @@ fn perform_take(
         });
         let export_args =
             json!({ "project": root, "format": format, "size": size, "fps": fps, "output": output });
-        let video = export(&export_args, &|done, message| progress(0.9 + done * 0.1, message), cancel);
-        if let (Some(card), Err(error)) = (card.take(), &video) {
-            card.finish(TakeResult {
-                beats_done: take.performed.beats_done,
-                stopped: Some(format!("The take is saved, but the video couldn't be exported: {error}")),
-                project: Some(root.clone()),
-                ..TakeResult::default()
-            });
+        match export(&export_args, &|done, message| progress(0.9 + done * 0.1, message), cancel) {
+            Ok(video) => report["video"] = video,
+            Err(error) => {
+                finish(TakeResult {
+                    beats_done: performed.beats_done,
+                    stopped: Some(format!("The take is saved, but the video couldn't be exported: {error}")),
+                    project: Some(root),
+                    video: None,
+                    seconds: performed.seconds,
+                });
+                return Err(error);
+            }
         }
-        report["video"] = video?;
     }
-    if let Some(card) = card {
-        let video = &report["video"];
-        card.finish(TakeResult {
-            beats_done: take.performed.beats_done,
-            stopped: take.performed.stopped.clone(),
-            project: Some(root),
-            video: video["file"].as_str().map(PathBuf::from),
-            seconds: video["seconds"]
-                .as_f64()
-                .unwrap_or(take.finished.project.duration_us() as f64 / 1_000_000.0),
-        });
-    }
+    let video = &report["video"];
+    finish(TakeResult {
+        beats_done: performed.beats_done,
+        stopped: performed.stopped.clone(),
+        project: Some(root),
+        video: video["file"].as_str().map(PathBuf::from),
+        seconds: video["seconds"].as_f64().unwrap_or(performed.seconds),
+    });
     Ok(report)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn encodes_base64_and_reads_jpeg_sizes() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-        // SOI, an APP0 segment, then a baseline frame header for 640×360.
-        let jpeg = [
-            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x68, 0x02,
-            0x80, 0x03,
-        ];
-        assert_eq!(jpeg_size(&jpeg), Some((640, 360)));
-        assert_eq!(jpeg_size(b"not a jpeg at all"), None);
-    }
 
     #[test]
     fn ranges_are_sorted_and_joined() {

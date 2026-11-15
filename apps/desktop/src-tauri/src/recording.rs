@@ -4,14 +4,15 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
-use std::time::Duration;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel, sync_channel};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use shotmaxxing_capture::{DeviceChoice, FinishedProject, ProjectOptions, ProjectRecording, Target};
+use shotmaxxing_control::{RecordRequest, Recorded, RecordingStatus};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
-use crate::{tray, windows};
+use crate::{takes, tray, windows};
 
 enum Finish {
     Keep,
@@ -35,7 +36,7 @@ pub struct StartOptions {
     camera: Option<String>,
 }
 
-fn device_choice(choice: Option<&str>) -> DeviceChoice {
+pub(crate) fn device_choice(choice: Option<&str>) -> DeviceChoice {
     match choice.map(str::trim) {
         None | Some("") => DeviceChoice::Off,
         Some("default") => DeviceChoice::Default,
@@ -49,7 +50,7 @@ fn device_choice(choice: Option<&str>) -> DeviceChoice {
 pub struct Notices(Mutex<HashMap<String, Vec<String>>>);
 
 impl Notices {
-    fn remember(&self, finished: &FinishedProject) {
+    pub(crate) fn remember(&self, finished: &FinishedProject) {
         let mut notes = finished.warnings.clone();
         if finished.dropped > 0 {
             notes.push(format!("{} frames were dropped while the computer was busy.", finished.dropped));
@@ -68,12 +69,21 @@ pub fn take_recording_notices(state: State<'_, Notices>, project: String) -> Vec
     state.0.lock().ok().and_then(|mut map| map.remove(&project)).unwrap_or_default()
 }
 
+/// The agent session that started a recording: its session, and the process the system says asked.
+pub type Owner = (String, Option<u32>);
+
 struct Session {
     source: String,
     name: String,
     options: StartOptions,
     finish: Sender<Finish>,
     done: Receiver<Result<Option<FinishedProject>, String>>,
+    root: PathBuf,
+    started: Instant,
+    /// The agent that started it, if one did, and when it stops by itself.
+    agent: Option<(Owner, Duration)>,
+    /// Dropped with the session, which wakes the timer that would stop an agent's recording.
+    _timer: Option<Sender<()>>,
 }
 
 impl Session {
@@ -204,7 +214,18 @@ fn start_session(
             return Err("The recording didn't start in time. Try again.".to_string());
         }
     };
-    Ok((Session { source, name, options, finish: finish_tx, done: done_rx }, root))
+    let session = Session {
+        source,
+        name,
+        options,
+        finish: finish_tx,
+        done: done_rx,
+        root: root.clone(),
+        started: Instant::now(),
+        agent: None,
+        _timer: None,
+    };
+    Ok((session, root))
 }
 
 #[derive(Serialize)]
@@ -231,6 +252,9 @@ pub async fn start_recording<R: Runtime>(
 ) -> Result<Started, String> {
     if state.0.lock().map_err(|_| "The recorder is busy.".to_string())?.is_some() {
         return Err("A recording is already running. Stop it first.".into());
+    }
+    if app.state::<takes::Takes>().is_filming() {
+        return Err("An agent's take is being filmed. Stop it on the take card first.".into());
     }
     let options = options.unwrap_or_default();
     let folder = projects_folder(&app, options.folder.as_deref())?;
@@ -289,16 +313,157 @@ pub async fn restart_recording<R: Runtime>(
 ) -> Result<Started, String> {
     let session = state.take()?;
     let folder = projects_folder(&app, session.options.folder.as_deref())?;
-    let (session, root) = tauri::async_runtime::spawn_blocking(move || {
+    let agent = session.agent.clone();
+    let (mut session, root) = tauri::async_runtime::spawn_blocking(move || {
         let (source, name, options) = (session.source.clone(), session.name.clone(), session.options.clone());
         session.end(Finish::Discard)?;
         start_session(folder, source, name, options)
     })
     .await
     .map_err(|e| e.to_string())??;
+    if let Some((owner, limit)) = agent {
+        session._timer = Some(stop_when_due(&app, root.clone(), limit));
+        session.agent = Some((owner, limit));
+    }
     let mut slot = state.0.lock().map_err(|_| "The recorder is busy.".to_string())?;
     *slot = Some(session);
     Ok(Started { project: root.to_string_lossy().into_owned() })
+}
+
+/// Starts recording for an agent. It shows on the pill and in the menu bar like any recording, and the person can stop
+/// it there; otherwise it stops by itself after the agent's limit.
+pub fn start_for_agent<R: Runtime>(
+    app: &AppHandle<R>,
+    owner: Owner,
+    request: RecordRequest,
+) -> Result<RecordingStatus, String> {
+    let state = app.state::<Recordings>();
+    if state.is_recording() {
+        return Err("Shotmaxxing is already recording. Stop that recording first.".into());
+    }
+    if app.state::<takes::Takes>().is_filming() {
+        return Err("A take is being filmed. Try again when it's done.".into());
+    }
+    let source = if let Some(window) = request.window {
+        format!("window-{window}")
+    } else if let Some(name) = request.app.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        let needle = name.to_lowercase();
+        let sources = shotmaxxing_capture::sources().map_err(|e| e.to_string())?;
+        let window = sources
+            .windows
+            .iter()
+            .filter(|w| w.app.to_lowercase().contains(&needle))
+            .max_by(|a, b| (a.width * a.height).total_cmp(&(b.width * b.height)))
+            .ok_or_else(|| format!("No open window belongs to “{name}”. list_sources shows them."))?;
+        format!("window-{}", window.id)
+    } else {
+        request.display.map_or_else(|| "display".to_string(), |d| format!("display-{d}"))
+    };
+    let options = StartOptions {
+        fps: Some(request.fps),
+        hide_desktop_icons: request.hide_desktop_icons,
+        folder: Some(request.folder.to_string_lossy().into_owned()),
+        system_audio: request.system_audio,
+        microphone: request.microphone,
+        camera: request.camera,
+    };
+    let name = Some(request.name.trim()).filter(|n| !n.is_empty()).unwrap_or("Recording").to_string();
+    let limit = Duration::from_secs_f64(request.max_seconds.clamp(1.0, 4.0 * 60.0 * 60.0));
+    let (mut session, root) = start_session(request.folder, source, name, options)?;
+    session._timer = Some(stop_when_due(app, root.clone(), limit));
+    session.agent = Some((owner, limit));
+    {
+        let mut slot = state.0.lock().map_err(|_| "The recorder is busy.".to_string())?;
+        if slot.is_some() {
+            // The person started one meanwhile.
+            drop(slot);
+            let _ = session.end(Finish::Discard);
+            return Err("Shotmaxxing started another recording meanwhile. Stop it first.".into());
+        }
+        *slot = Some(session);
+    }
+    tray::set_recording(app, true);
+    let pill = app.clone();
+    let shown = app.run_on_main_thread(move || {
+        if let Err(error) = windows::open_pill(&pill) {
+            tracing::warn!(%error, "could not show the recording pill");
+        }
+    });
+    if let Err(error) = shown {
+        tracing::warn!(%error, "could not show the recording pill");
+    }
+    Ok(RecordingStatus { project: root, seconds: 0.0, stops_after_seconds: limit.as_secs_f64() })
+}
+
+/// The recording `owner` started, while it runs.
+pub fn agent_status<R: Runtime>(app: &AppHandle<R>, owner: &Owner) -> Option<RecordingStatus> {
+    let state = app.state::<Recordings>();
+    let slot = state.0.lock().ok()?;
+    let session = slot.as_ref()?;
+    let (_, limit) = session.agent.as_ref().filter(|(o, _)| o == owner)?;
+    Some(RecordingStatus {
+        project: session.root.clone(),
+        seconds: (session.started.elapsed().as_secs_f64() * 10.0).round() / 10.0,
+        stops_after_seconds: limit.as_secs_f64(),
+    })
+}
+
+/// Stops the recording `owner` started. `None` when it isn't recording (the person or the limit may have stopped
+/// it already).
+pub fn stop_for_agent<R: Runtime>(
+    app: &AppHandle<R>,
+    owner: &Owner,
+    discard: bool,
+) -> Result<Option<Recorded>, String> {
+    let state = app.state::<Recordings>();
+    let session = {
+        let mut slot = state.0.lock().map_err(|_| "The recorder is busy.".to_string())?;
+        match slot.as_ref() {
+            None => return Ok(None),
+            Some(session) if session.agent.as_ref().is_some_and(|(o, _)| o == owner) => slot.take(),
+            Some(_) => return Ok(None),
+        }
+    };
+    let Some(session) = session else { return Ok(None) };
+    tray::set_recording(app, false);
+    let finished = session.end(if discard { Finish::Discard } else { Finish::Keep });
+    close_pill(app);
+    let Some(finished) = finished? else {
+        return Ok(Some(Recorded { project: None, dropped_frames: 0, warnings: Vec::new() }));
+    };
+    app.state::<Notices>().remember(&finished);
+    Ok(Some(Recorded {
+        project: Some(finished.root.clone()),
+        dropped_frames: finished.dropped,
+        warnings: finished.warnings.clone(),
+    }))
+}
+
+/// Stops the recording at `root` after `limit`, unless it ends first: dropping the returned sender wakes the timer.
+fn stop_when_due<R: Runtime>(app: &AppHandle<R>, root: PathBuf, limit: Duration) -> Sender<()> {
+    let (tx, rx) = channel::<()>();
+    let app = app.clone();
+    let started = std::thread::Builder::new().name("smx-recording-limit".into()).spawn(move || {
+        if rx.recv_timeout(limit) != Err(RecvTimeoutError::Timeout) {
+            return;
+        }
+        let state = app.state::<Recordings>();
+        let session = state.0.lock().ok().and_then(|mut slot| {
+            if slot.as_ref().is_some_and(|s| s.root == root) { slot.take() } else { None }
+        });
+        let Some(session) = session else { return };
+        tray::set_recording(&app, false);
+        match session.end(Finish::Keep) {
+            Ok(Some(finished)) => app.state::<Notices>().remember(&finished),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(%error, "the agent's recording couldn't be saved"),
+        }
+        close_pill(&app);
+    });
+    if let Err(error) = started {
+        tracing::warn!(%error, "an agent's recording won't stop by itself");
+    }
+    tx
 }
 
 /// Stops from the menu bar or the shortcut: the pill says it is saving, then the editor opens.

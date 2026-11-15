@@ -3931,6 +3931,8 @@ dependencies = [
 name = "shotmaxxing-control"
 version = "0.1.0"
 dependencies = [
+ "core-foundation",
+ "libc",
  "serde",
  "serde_json",
  "shotmaxxing-core",
@@ -3963,6 +3965,7 @@ dependencies = [
  "objc2-foundation",
  "serde",
  "serde_json",
+ "shotmaxxing-agent",
  "shotmaxxing-capture",
  "shotmaxxing-control",
  "shotmaxxing-core",

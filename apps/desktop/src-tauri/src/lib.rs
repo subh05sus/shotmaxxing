@@ -107,6 +107,12 @@ pub fn run() {
             app.state::<recording::Recordings>().finish_on_quit();
             app.state::<export::Exports>().cancel_all();
         }
+        // The take card can't be closed while it asks or a take plays: it comes straight back.
+        RunEvent::WindowEvent { label, event: WindowEvent::Destroyed, .. }
+            if label == "take" && app.state::<takes::Takes>().is_live() =>
+        {
+            app.state::<takes::Takes>().keep_shown(app);
+        }
         RunEvent::WindowEvent { event: WindowEvent::Destroyed, .. } if app.webview_windows().is_empty() => {
             if !app.state::<system::MenuBarIcon>().hidden() {
                 windows::set_dock_visible(app, false);
