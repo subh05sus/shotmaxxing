@@ -1098,6 +1098,8 @@ export class EditorState {
       } else {
         t = this.time + dt * this.rate * (this.clipAt(this.time)?.speed ?? 1);
       }
+      // A video that hasn't started moving yet still reads where it was sent, so the playhead waits there too.
+      t = Math.max(0, t);
       // Skip removed parts.
       if (!this.clipAt(t)) {
         const next = this.project.clips
@@ -1106,8 +1108,8 @@ export class EditorState {
         t = next ? next.start : this.project.duration;
         if (video && next) video.currentTime = t;
       }
-      if (t >= this.project.duration || t <= 0) {
-        this.time = Math.min(this.project.duration, Math.max(0, t));
+      if (t >= this.project.duration || video?.ended) {
+        this.time = Math.min(this.project.duration, t);
         this.pause();
         return;
       }
