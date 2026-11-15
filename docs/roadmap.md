@@ -64,8 +64,9 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [x] Safety stops (Esc three times, the person moving the mouse, password fields) and hand-off (⌥⌘Return)
 - [x] Take card in the app, and a per-session consent prompt
 - [x] Agents' takes, recordings and looks run in the app with its own permissions, after the person allows them;
-      the take card names the caller as the system reports it (peer process, host app, macOS code signature)
-- [ ] Check the caller's app signature on Windows too (including Store apps' catalog signatures)
+      the take card names the caller as the system reports it (peer process, host app, its code signature)
+- [x] Check the caller's app signature on Windows too: Authenticode, the program's own or in Windows's catalogs
+- [ ] Windows: check the package signature of Store and MSIX apps whose programs aren't signed themselves
 - [ ] macOS virtual display
 - [x] One-click connect for Claude Code, Claude Desktop, Codex, Cursor, VS Code, Windsurf, OpenCode, Gemini CLI
 - [x] Agent skill ([skills/shotmaxxing](../skills/shotmaxxing/SKILL.md))

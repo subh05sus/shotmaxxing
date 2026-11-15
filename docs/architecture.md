@@ -198,8 +198,9 @@ What makes a take look human and stay safe:
   performing. It asks the person on the take card once per agent session before it sees or records the screen, and
   before every take. The card names the caller from the connection itself: the peer process (the socket's
   `LOCAL_PEERPID` on macOS, the pipe's client process on Windows), the agent that started it, the app that runs in
-  and, on macOS, that app's code signature (named only when Apple vouches for the signer: Apple's own code, the Mac
-  App Store or a Developer ID, never a self-signed or development certificate, which anyone can get in any name).
+  and that app's code signature. On macOS a signer is named only when Apple vouches for it (Apple's own code, the
+  Mac App Store or a Developer ID, never a self-signed or development certificate, which anyone can get in any name);
+  on Windows when the program's Authenticode signature, its own or a system catalog's, checks out to a trusted root.
   Typing into password fields and deleting files outside projects are always blocked. A Stop control is always on
   screen, and pressing Esc three times aborts any take.
 - **Hand-off.** When a step needs a person (signing in, a CAPTCHA), the take pauses and the take card asks the

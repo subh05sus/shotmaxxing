@@ -1,6 +1,6 @@
 //! Who is on the other end of a connection, as the system reports it: the process that connected, the agent that
-//! started it, and the app that agent runs in, with that app's signature on macOS. None of it comes from what the
-//! other side says about itself, so the take card can name the caller truthfully.
+//! started it, and the app that agent runs in, with that app's signature (macOS and Windows). None of it comes from
+//! what the other side says about itself, so the take card can name the caller truthfully.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,8 +19,8 @@ pub struct Caller {
     /// Who signed that app, when its signature checks out and Apple vouches for the signer: "Apple", "the Mac App
     /// Store", or the name on the developer's Developer ID.
     pub signer: Option<String>,
-    /// Whether the app's signature was checked at all. Only macOS checks it so far, so elsewhere a missing signer
-    /// says nothing about the app.
+    /// Whether the app's signature was checked at all. It isn't on Linux, nor on Windows for an app from a package
+    /// (the Store, MSIX) whose program isn't signed itself: then a missing signer says nothing about the app.
     pub checked: bool,
 }
 
@@ -30,6 +30,18 @@ impl Caller {
         let name = self.program.to_ascii_lowercase();
         name.strip_suffix(".exe").unwrap_or(&name) == "shotmaxxing"
     }
+}
+
+/// What an app's signature says.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+enum Signature {
+    /// It checks out, and the system vouches for who signed it.
+    By(String),
+    /// Checked: it's unsigned, doesn't check out, or nobody the system vouches for signed it.
+    Nobody,
+    /// Not checked.
+    Unknown,
 }
 
 /// A running process: its program and the process that started it.
@@ -56,8 +68,11 @@ pub fn identify(pid: u32) -> Option<Caller> {
     }
     caller.agent = ancestors.first().map(|(_, path)| file_name(path));
     if let Some((app, app_pid)) = imp::host_app(&ancestors) {
-        caller.signer = imp::signer(app_pid);
-        caller.checked = cfg!(target_os = "macos");
+        match imp::signature(app_pid) {
+            Signature::By(signer) => (caller.checked, caller.signer) = (true, Some(signer)),
+            Signature::Nobody => caller.checked = true,
+            Signature::Unknown => {}
+        }
         caller.app = Some(app);
     }
     Some(caller)
@@ -93,7 +108,7 @@ mod imp {
     use core_foundation::number::CFNumber;
     use core_foundation::string::{CFString, CFStringRef};
 
-    use super::Process;
+    use super::{Process, Signature};
 
     pub(super) fn peer_pid(stream: &UnixStream) -> Option<u32> {
         let mut pid: libc::pid_t = 0;
@@ -197,6 +212,10 @@ mod imp {
     pub(super) const DEVELOPER_ID: &str = "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists \
                                 and certificate leaf[field.1.2.840.113635.100.6.1.13] exists";
 
+    pub(super) fn signature(pid: u32) -> Signature {
+        signer(pid).map_or(Signature::Nobody, Signature::By)
+    }
+
     /// Who signed the running process `pid`, if its signature checks out and Apple vouches for the signer: "Apple"
     /// for Apple's own code, "the Mac App Store" for apps from it, otherwise the name on the developer's Developer
     /// ID. `None` when it's unsigned, signed ad hoc, signed by anyone else, or doesn't check out.
@@ -280,12 +299,32 @@ mod imp {
 #[allow(unsafe_code)]
 mod imp {
     use std::collections::HashMap;
+    use std::iter::once;
+    use std::mem::size_of;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 
-    use windows_sys::Win32::Foundation::{FILETIME, HANDLE};
-    use windows_sys::Win32::Storage::FileSystem::{
-        GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
+    use windows_sys::Win32::Foundation::{
+        APPMODEL_ERROR_NO_PACKAGE, FILETIME, GENERIC_READ, HANDLE, INVALID_HANDLE_VALUE,
     };
+    use windows_sys::Win32::Security::Cryptography::Catalog::{
+        CATALOG_INFO, CryptCATAdminAcquireContext2, CryptCATAdminCalcHashFromFileHandle2,
+        CryptCATAdminEnumCatalogFromHash, CryptCATAdminReleaseCatalogContext, CryptCATAdminReleaseContext,
+        CryptCATCatalogInfoFromContext,
+    };
+    use windows_sys::Win32::Security::Cryptography::{
+        BCRYPT_SHA256_ALGORITHM, CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
+    };
+    use windows_sys::Win32::Security::WinTrust::{
+        DRIVER_ACTION_VERIFY, WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_CATALOG_INFO, WINTRUST_DATA,
+        WINTRUST_FILE_INFO, WTD_CACHE_ONLY_URL_RETRIEVAL, WTD_CHOICE_CATALOG, WTD_CHOICE_FILE,
+        WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE,
+        WTHelperGetProvSignerFromChain, WTHelperProvDataFromStateData, WinVerifyTrust,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GetFileVersionInfoSizeW, GetFileVersionInfoW,
+        OPEN_EXISTING, VerQueryValueW,
+    };
+    use windows_sys::Win32::Storage::Packaging::Appx::GetPackageFullName;
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
     };
@@ -294,7 +333,7 @@ mod imp {
         QueryFullProcessImageNameW,
     };
 
-    use super::Process;
+    use super::{Process, Signature};
 
     /// Every running process's parent and program name, from one snapshot.
     fn snapshot() -> HashMap<u32, (u32, String)> {
@@ -452,10 +491,206 @@ mod imp {
         (!description.is_empty()).then_some(description)
     }
 
-    /// Signatures aren't checked on Windows yet (that needs catalog signatures too, for apps from the Store), so the
-    /// card names the app without vouching for it.
-    pub(super) fn signer(_pid: u32) -> Option<String> {
-        None
+    /// What the running process `pid`'s program's signature says: its own (Authenticode), or else one of the
+    /// system's catalogs, which sign most of Windows's own programs. Only a signature that checks out to a root
+    /// Windows trusts names a signer.
+    pub(super) fn signature(pid: u32) -> Signature {
+        // A program that can't be read can't be vouched for (it may have quit as soon as it started the agent).
+        let Some(path) = full_path(pid) else { return Signature::Nobody };
+        match signer_of(&path) {
+            Some(signer) => Signature::By(signer),
+            // A package's own signature vouches for the programs in it, and isn't checked here: such an app gets
+            // neither the shield nor the warning.
+            None if packaged(pid) => Signature::Unknown,
+            None => Signature::Nobody,
+        }
+    }
+
+    pub(super) fn signer_of(path: &str) -> Option<String> {
+        let path = wide(path);
+        file_signer(&path).or_else(|| catalog_signer(&path))
+    }
+
+    /// A NUL-terminated wide string.
+    pub(super) fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(once(0)).collect()
+    }
+
+    /// A check WinVerifyTrust is to make: no windows, and no waiting on the network for revocation lists (macOS
+    /// doesn't either, by default).
+    fn trust_data(choice: u32) -> WINTRUST_DATA {
+        WINTRUST_DATA {
+            cbStruct: size_of::<WINTRUST_DATA>() as u32,
+            dwUIChoice: WTD_UI_NONE,
+            fdwRevocationChecks: WTD_REVOKE_NONE,
+            dwUnionChoice: choice,
+            dwProvFlags: WTD_CACHE_ONLY_URL_RETRIEVAL,
+            ..Default::default()
+        }
+    }
+
+    /// Makes the check, and names who signed when it checks out.
+    fn verify(data: &mut WINTRUST_DATA) -> Option<String> {
+        let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+        data.dwStateAction = WTD_STATEACTION_VERIFY;
+        // SAFETY: `data` describes one file or catalog member, with the structures it points to alive for the call.
+        let status = unsafe { WinVerifyTrust(std::ptr::null_mut(), &mut action, (&raw mut *data).cast()) };
+        let signer = if status == 0 { signer_name(data.hWVTStateData) } else { None };
+        data.dwStateAction = WTD_STATEACTION_CLOSE;
+        // SAFETY: frees the state the check above kept, whatever it found.
+        unsafe { WinVerifyTrust(std::ptr::null_mut(), &mut action, (&raw mut *data).cast()) };
+        signer
+    }
+
+    /// The name on the certificate that made the signature a check kept: e.g. "Microsoft Corporation".
+    fn signer_name(state: HANDLE) -> Option<String> {
+        // SAFETY: reads the state a successful check kept, before it's freed; the helpers point into it.
+        let signer = unsafe {
+            let provider = WTHelperProvDataFromStateData(state);
+            if provider.is_null() {
+                return None;
+            }
+            WTHelperGetProvSignerFromChain(provider, 0, 0, 0)
+        };
+        // SAFETY: a signer the state holds, if any; its chain starts with the signing certificate.
+        let leaf = unsafe {
+            let signer = signer.as_ref()?;
+            if signer.csCertChain == 0 {
+                return None;
+            }
+            signer.pasCertChain.as_ref()?.pCert
+        };
+        if leaf.is_null() {
+            return None;
+        }
+        let mut name = [0u16; 256];
+        // SAFETY: the buffer holds as many characters as said.
+        let len = unsafe {
+            CertGetNameStringW(
+                leaf,
+                CERT_NAME_SIMPLE_DISPLAY_TYPE,
+                0,
+                std::ptr::null(),
+                name.as_mut_ptr(),
+                name.len() as u32,
+            )
+        } as usize;
+        // The length counts the closing NUL.
+        let name =
+            String::from_utf16_lossy(&name[..len.saturating_sub(1).min(name.len())]).trim().to_string();
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// Who signed the program at `path` (NUL-terminated) itself.
+    fn file_signer(path: &[u16]) -> Option<String> {
+        let mut file = WINTRUST_FILE_INFO {
+            cbStruct: size_of::<WINTRUST_FILE_INFO>() as u32,
+            pcwszFilePath: path.as_ptr(),
+            ..Default::default()
+        };
+        let mut data = trust_data(WTD_CHOICE_FILE);
+        data.Anonymous.pFile = &mut file;
+        verify(&mut data)
+    }
+
+    /// Who signed the system catalog that lists the program at `path` (NUL-terminated), if one does.
+    pub(super) fn catalog_signer(path: &[u16]) -> Option<String> {
+        // SAFETY: opens the program to read it, leaving it open to everyone else; closed when the handle drops.
+        let raw = unsafe {
+            CreateFileW(
+                path.as_ptr(),
+                GENERIC_READ,
+                FILE_SHARE_READ,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
+        };
+        if raw.is_null() || raw == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        // SAFETY: a handle just opened, owned here.
+        let file = unsafe { OwnedHandle::from_raw_handle(raw as RawHandle) };
+        // Newer catalogs list programs by their SHA-256 hash, older ones by SHA-1 (the default).
+        [BCRYPT_SHA256_ALGORITHM, std::ptr::null()]
+            .into_iter()
+            .find_map(|algorithm| catalog_member(path, &file, algorithm))
+    }
+
+    fn catalog_member(path: &[u16], file: &OwnedHandle, algorithm: *const u16) -> Option<String> {
+        let mut admin: isize = 0;
+        // SAFETY: opens the system's catalogs for one hash algorithm; released below.
+        if unsafe {
+            CryptCATAdminAcquireContext2(&mut admin, &DRIVER_ACTION_VERIFY, algorithm, std::ptr::null(), 0)
+        } == 0
+        {
+            return None;
+        }
+        let handle = file.as_raw_handle() as HANDLE;
+        let found = (|| {
+            let mut size = 0u32;
+            // SAFETY: asks for the size of the program's hash first...
+            unsafe {
+                CryptCATAdminCalcHashFromFileHandle2(admin, handle, &mut size, std::ptr::null_mut(), 0)
+            };
+            if size == 0 {
+                return None;
+            }
+            let mut hash = vec![0u8; size as usize];
+            // SAFETY: ...then the hash, into a buffer of that size.
+            if unsafe { CryptCATAdminCalcHashFromFileHandle2(admin, handle, &mut size, hash.as_mut_ptr(), 0) }
+                == 0
+            {
+                return None;
+            }
+            // SAFETY: looks the hash up among the catalogs; the context found is released below.
+            let catalog = unsafe {
+                CryptCATAdminEnumCatalogFromHash(admin, hash.as_ptr(), size, 0, std::ptr::null_mut())
+            };
+            if catalog == 0 {
+                return None;
+            }
+            let mut info = CATALOG_INFO { cbStruct: size_of::<CATALOG_INFO>() as u32, ..Default::default() };
+            // SAFETY: reads the found catalog's path into `info`.
+            let signer = if unsafe { CryptCATCatalogInfoFromContext(catalog, &mut info, 0) } != 0 {
+                // A catalog names its members by their hash, in capitals.
+                let tag: String = hash.iter().map(|byte| format!("{byte:02X}")).collect();
+                let tag = wide(&tag);
+                let mut member = WINTRUST_CATALOG_INFO {
+                    cbStruct: size_of::<WINTRUST_CATALOG_INFO>() as u32,
+                    pcwszCatalogFilePath: info.wszCatalogFile.as_ptr(),
+                    pcwszMemberTag: tag.as_ptr(),
+                    pcwszMemberFilePath: path.as_ptr(),
+                    hMemberFile: handle,
+                    pbCalculatedFileHash: hash.as_mut_ptr(),
+                    cbCalculatedFileHash: size,
+                    hCatAdmin: admin,
+                    ..Default::default()
+                };
+                let mut data = trust_data(WTD_CHOICE_CATALOG);
+                data.Anonymous.pCatalog = &mut member;
+                verify(&mut data)
+            } else {
+                None
+            };
+            // SAFETY: releases the catalog context found above.
+            unsafe { CryptCATAdminReleaseCatalogContext(admin, catalog, 0) };
+            signer
+        })();
+        // SAFETY: releases the catalogs opened above.
+        unsafe { CryptCATAdminReleaseContext(admin, 0) };
+        found
+    }
+
+    /// Whether the process runs from a package: an app from the Store, or one installed with MSIX.
+    fn packaged(pid: u32) -> bool {
+        let Some(process) = open(pid) else { return false };
+        let mut len = 0u32;
+        // SAFETY: asks only how long the package's name is; a process outside any package says it has none.
+        let status =
+            unsafe { GetPackageFullName(process.as_raw_handle() as HANDLE, &mut len, std::ptr::null_mut()) };
+        status != APPMODEL_ERROR_NO_PACKAGE
     }
 }
 
@@ -484,8 +719,8 @@ mod imp {
         None
     }
 
-    pub(super) fn signer(_pid: u32) -> Option<String> {
-        None
+    pub(super) fn signature(_pid: u32) -> super::Signature {
+        super::Signature::Unknown
     }
 }
 
@@ -505,8 +740,8 @@ mod imp {
         None
     }
 
-    pub(super) fn signer(_pid: u32) -> Option<String> {
-        None
+    pub(super) fn signature(_pid: u32) -> super::Signature {
+        super::Signature::Unknown
     }
 }
 
@@ -555,6 +790,24 @@ mod tests {
         );
         assert_eq!(developer("Microsoft Corporation"), "Microsoft Corporation");
         assert_eq!(developer("Acme (Europe) Ltd"), "Acme (Europe) Ltd");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_programs_are_named_by_who_signed_them() {
+        let system = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let program = |name: &str| format!(r"{system}\System32\{name}");
+        // Windows's own programs are signed by Microsoft, most of them in the system's catalogs, not by themselves.
+        let signer = imp::signer_of(&program("cmd.exe"));
+        assert!(signer.as_deref().is_some_and(|s| s.starts_with("Microsoft")), "cmd.exe: {signer:?}");
+        let listed = ["cmd.exe", "notepad.exe", "conhost.exe", "ntdll.dll", "kernel32.dll"]
+            .into_iter()
+            .filter_map(|name| imp::catalog_signer(&imp::wide(&program(name))))
+            .inspect(|signer| assert!(signer.starts_with("Microsoft"), "catalog signer: {signer}"))
+            .count();
+        assert!(listed > 0, "none of Windows's programs was found in its catalogs");
+        // This test isn't signed, by itself or in any catalog, and doesn't run from a package.
+        assert_eq!(imp::signature(std::process::id()), Signature::Nobody);
     }
 
     #[cfg(target_os = "macos")]

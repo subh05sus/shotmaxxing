@@ -537,7 +537,7 @@ export interface TakeCaller {
   app: string | null;
   /** Who signed that app, if Apple vouches for them: "Apple", "the Mac App Store" or a Developer ID's name. */
   signer: string | null;
-  /** Whether the signature was checked at all (macOS only, so far). */
+  /** Whether the signature was checked: not on Linux, nor for a packaged Windows app whose program isn't signed. */
   checked: boolean;
 }
 
