@@ -26,7 +26,7 @@ apply to every screen, component and animation. A change that breaks one needs a
 | Slow in and slow out | Nothing moves at constant speed. Use springs or `cubic-bezier(0.2, 0, 0, 1)`, never `linear` (except progress bars). |
 | Arcs | Things that travel far, such as a clip flying to the export queue or the cursor in agent takes, follow a curve, not a straight line. |
 | Secondary action | A small flourish supports the main one: the check draws after Saved, and the export count rolls as the bar fills. |
-| Timing | Every UI animation finishes within **300 ms**. Exits are about two thirds the length of entrances. |
+| Timing | Every UI animation finishes within **300 ms**. Exits are about two thirds the length of entrances. One exception: a tab's sliding thumb lands in about 200 ms and then settles a few pixels by 360 ms. |
 | Exaggeration | Moments that matter land clearly: the first export gets confetti, and a successful agent take gets a short shine. |
 | Solid drawing | Flat surfaces get depth through layered shadows and light edges, so floating things clearly sit above content. |
 | Appeal | The sum of the details: aligned edges, consistent radii, considered words, every state designed. |
@@ -68,6 +68,16 @@ apply to every screen, component and animation. A change that breaks one needs a
 - **Safe area.** Keep content out of window corners and away from the macOS traffic lights and Windows caption
   buttons. Floating cards keep at least 12 px from window edges.
 
+**Shape**
+- **Capsules for choices.** Tabs and segmented controls are capsules on both systems: the track and its sliding
+  thumb have fully round ends.
+
+**Icons**
+- **One set, one weight.** Icons come from the free [Pikaicons](https://pikaicons.com/free-icons) in their Stroke
+  style. Where Pika has no icon for an idea, the free [Hugeicons](https://hugeicons.com) stroke-rounded set fills in.
+  Both are MIT licensed, drawn on a 24 px grid and coloured with `currentColor`, and both are drawn at a stroke of
+  1.75 so they read as one set.
+
 **Colour**
 - **OKLCH.** All colour tokens are defined in OKLCH, so hover, pressed and disabled steps change lightness evenly in
   both themes, and accent tints stay the same perceived brightness.
@@ -85,6 +95,8 @@ apply to every screen, component and animation. A change that breaks one needs a
 **Motion**
 - **Origin-aware animation.** Menus, popovers and sheets grow from the control that opened them.
 - **Stagger.** Groups enter one after another, 30–40 ms apart, capped at 8 items so a list never drags.
+- **Tabs.** Switching tabs slides the thumb on a spring that overshoots by about 6% and settles; the label it lands
+  on pops slightly, and a pressed tab squishes to 0.96. Only transforms move, and Reduce Motion leaves a fade.
 - **Interruptible animation.** Every animation can be reversed mid-way. Springs retarget from their current
   position, and nothing blocks input while it moves.
 - **Shared element transitions.** A Library thumbnail grows into the editor canvas when a project opens. The
