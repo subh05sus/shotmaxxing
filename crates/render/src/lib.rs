@@ -43,7 +43,11 @@ pub fn find_pauses(root: &Path) -> Result<Vec<(f64, f64)>, RenderError> {
     {
         macos::voice::find_pauses(root)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        win::voice::find_pauses(root)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         // Without a voice there are no pauses to find, on any system.
         let (_, project) = shotmaxxing_core::bundle::ProjectBundle::open(root)
@@ -63,7 +67,11 @@ pub fn clean_voice(root: &Path, progress: &mut dyn FnMut(f64) -> bool) -> Result
     {
         macos::voice::clean_voice(root, progress)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        win::voice::clean_voice(root, progress)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (root, progress);
         Err(RenderError::Unsupported)
@@ -143,7 +151,11 @@ pub fn audio_seconds(path: &Path) -> Option<f64> {
     {
         macos::audio_seconds(path)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        win::audio_seconds(path)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = path;
         None

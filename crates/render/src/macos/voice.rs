@@ -9,12 +9,10 @@ use objc2::{AllocAnyThread, msg_send, sel};
 use objc2_av_foundation::{AVAssetReader, AVAssetReaderTrackOutput, AVMediaTypeVideo, AVURLAsset};
 use objc2_avf_audio::{AVAudioCommonFormat, AVAudioFile, AVAudioPCMBuffer};
 use objc2_foundation::{NSDictionary, NSNumber, NSString, NSURL, ns_string};
-use shotmaxxing_core::bundle::ProjectBundle;
-use shotmaxxing_core::project::{Project, TrackKind};
 
 use super::decode::system;
-use crate::voice::{Activity, Cleaner, Meter, pause_cuts, quiet_spans};
-use crate::{CLEAN_MIC, RenderError};
+use crate::RenderError;
+use crate::voice::{self, MonoReader, MonoWriter, VoiceSystem};
 
 /// Frames per buffer: about two thirds of a second at 48 kHz.
 const CHUNK: u32 = 32_768;
@@ -53,14 +51,18 @@ impl AudioReader {
             })
         }
     }
+}
 
-    /// Frames in the file.
+impl MonoReader for AudioReader {
+    fn rate(&self) -> u32 {
+        self.rate
+    }
+
     fn length(&self) -> u64 {
         // SAFETY: reading the file's length is a pure query.
         unsafe { self.file.length() }.max(1) as u64
     }
 
-    /// The next buffer of sound, mixed down to one channel; `None` at the end.
     fn next(&mut self) -> Result<Option<&[f32]>, RenderError> {
         // SAFETY: reading into a buffer made for this file's format; the channel pointers are valid for
         // `frameLength` floats each until the next read.
@@ -140,7 +142,9 @@ impl AudioWriter {
             Ok(Self { file: Some(file), buffer })
         }
     }
+}
 
+impl MonoWriter for AudioWriter {
     fn write(&mut self, samples: &[f32]) -> Result<(), RenderError> {
         let Some(file) = &self.file else { return Ok(()) };
         for chunk in samples.chunks(CHUNK as usize) {
@@ -158,7 +162,7 @@ impl AudioWriter {
     }
 
     /// Closes the file, which writes its index, so it's complete on disk.
-    fn finish(mut self) {
+    fn finish(mut self) -> Result<(), RenderError> {
         if let Some(file) = self.file.take() {
             // SAFETY: `close` exists from macOS 15; earlier, releasing the last reference closes the file.
             unsafe {
@@ -168,6 +172,7 @@ impl AudioWriter {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -207,77 +212,30 @@ fn frame_times(path: &Path) -> Result<Vec<f64>, RenderError> {
     }
 }
 
-fn open(root: &Path) -> Result<(PathBuf, Project), RenderError> {
-    let (bundle, project) = ProjectBundle::open(root).map_err(|e| RenderError::Project(e.to_string()))?;
-    Ok((bundle.root().to_path_buf(), project))
+/// AVFoundation's sound files and recordings, for the voice tools.
+struct Mac;
+
+impl VoiceSystem for Mac {
+    type Reader = AudioReader;
+    type Writer = AudioWriter;
+
+    fn open(&self, path: &Path) -> Result<AudioReader, RenderError> {
+        AudioReader::open(path)
+    }
+
+    fn create(&self, path: &Path, rate: u32) -> Result<AudioWriter, RenderError> {
+        AudioWriter::create(path, rate)
+    }
+
+    fn frame_times(&self, path: &Path) -> Result<Vec<f64>, RenderError> {
+        frame_times(path)
+    }
 }
 
 pub fn find_pauses(root: &Path) -> Result<Vec<(f64, f64)>, RenderError> {
-    let (root, project) = open(root)?;
-    let Some(mic) = project.tracks.iter().find(|t| t.kind == TrackKind::Microphone) else {
-        return Ok(Vec::new());
-    };
-    let spans = autoreleasepool(|_| -> Result<_, RenderError> {
-        let mut reader = AudioReader::open(&root.join(&mic.path))?;
-        let mut meter = Meter::new(reader.rate);
-        while let Some(chunk) = reader.next()? {
-            meter.push(chunk);
-        }
-        Ok(quiet_spans(&meter.finish()))
-    })?;
-    if spans.is_empty() {
-        return Ok(Vec::new());
-    }
-    let (cursor, events) = crate::model::read_telemetry(&root);
-    let inputs: Vec<f64> = events.iter().map(|e| e.t_us() as f64 / 1e6).collect();
-    let frames = match project.tracks.iter().find(|t| t.kind == TrackKind::Screen) {
-        Some(screen) => frame_times(&root.join(&screen.path))?,
-        None => Vec::new(),
-    };
-    let activity = Activity { inputs: &inputs, cursor: &cursor, frames: &frames };
-    let duration = project.duration_us() as f64 / 1e6;
-    Ok(pause_cuts(&spans, mic.offset_us as f64 / 1e6, duration, &|a, b| activity.busy(a, b)))
+    autoreleasepool(|_| voice::find_pauses_with(&Mac, root))
 }
 
 pub fn clean_voice(root: &Path, progress: &mut dyn FnMut(f64) -> bool) -> Result<PathBuf, RenderError> {
-    let (root, project) = open(root)?;
-    let mic = project
-        .tracks
-        .iter()
-        .find(|t| t.kind == TrackKind::Microphone)
-        .ok_or_else(|| RenderError::Project("this take was recorded without a microphone".into()))?;
-    let target = root.join(CLEAN_MIC);
-    // Written under a hidden name and renamed when complete, so a half-written file is never played.
-    let temp = target.with_file_name(".microphone-clean.partial.m4a");
-    let result = autoreleasepool(|_| -> Result<(), RenderError> {
-        let mut reader = AudioReader::open(&root.join(&mic.path))?;
-        let total = reader.length() as f64;
-        let mut writer = AudioWriter::create(&temp, reader.rate)?;
-        let mut cleaner = Cleaner::new(reader.rate);
-        let (mut out, mut done) = (Vec::new(), 0usize);
-        while let Some(chunk) = reader.next()? {
-            done += chunk.len();
-            cleaner.push(chunk, &mut out);
-            writer.write(&out)?;
-            out.clear();
-            if !progress((done as f64 / total).min(0.99)) {
-                return Err(RenderError::Cancelled);
-            }
-        }
-        cleaner.finish(&mut out);
-        writer.write(&out)?;
-        writer.finish();
-        Ok(())
-    });
-    match result {
-        Ok(()) => {
-            std::fs::rename(&temp, &target)?;
-            progress(1.0);
-            Ok(target)
-        }
-        Err(error) => {
-            let _ = std::fs::remove_file(&temp);
-            Err(error)
-        }
-    }
+    autoreleasepool(|_| voice::clean_voice_with(&Mac, root, progress))
 }

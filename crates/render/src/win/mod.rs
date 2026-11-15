@@ -6,6 +6,7 @@ mod decode;
 mod encode;
 mod sound;
 mod text;
+pub mod voice;
 
 use std::io::Write;
 use std::path::Path;
@@ -20,6 +21,12 @@ use self::encode::VideoWriter;
 use crate::model::RenderProject;
 use crate::scene::{Layout, frame_at};
 use crate::{ExportOptions, Format, RenderError, animated, mix, soft};
+
+/// How long the sound file at `path` plays, in seconds.
+pub fn audio_seconds(path: &Path) -> Option<f64> {
+    let seconds = sound::AudioFile::open(path).ok().flatten()?.seconds();
+    (seconds.is_finite() && seconds > 0.0).then_some(seconds)
+}
 
 fn system(error: windows::core::Error) -> RenderError {
     RenderError::System(error.message())

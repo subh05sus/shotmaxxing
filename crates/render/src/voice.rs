@@ -8,13 +8,19 @@
 //! - a soft limiter keeps peaks under full scale.
 //!
 //! Everything streams: memory stays flat however long the take is, and the output is exactly as long as the input,
-//! so the voice stays in sync with the picture.
+//! so the voice stays in sync with the picture. Each system only lends its own sound files and video reader; the
+//! rest is the same everywhere.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use realfft::num_complex::Complex32;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
+use shotmaxxing_core::bundle::ProjectBundle;
+use shotmaxxing_core::project::TrackKind;
 use shotmaxxing_core::telemetry::CursorSample;
+
+use crate::{CLEAN_MIC, RenderError};
 
 /// Keeps peaks under full scale without the harshness of clipping: untouched below the knee, rounded off above.
 pub fn soft_limit(x: f32) -> f32 {
@@ -431,6 +437,115 @@ impl Cleaner {
         out.truncate(start + missing.min(out.len() - start));
         self.leveller.run(&mut out[start..]);
         self.given += out.len() - start;
+    }
+}
+
+// Running the tools on a project -------------------------------------------------------------------------------
+
+/// Sound read a buffer at a time, mixed down to one channel.
+pub(crate) trait MonoReader {
+    /// Frames a second.
+    fn rate(&self) -> u32;
+    /// About how many frames there are, for progress.
+    fn length(&self) -> u64;
+    /// The next buffer of sound; `None` at the end.
+    fn next(&mut self) -> Result<Option<&[f32]>, RenderError>;
+}
+
+/// A compressed one-channel sound file, written a buffer at a time.
+pub(crate) trait MonoWriter {
+    fn write(&mut self, samples: &[f32]) -> Result<(), RenderError>;
+    /// Completes the file on disk.
+    fn finish(self) -> Result<(), RenderError>;
+}
+
+/// What each system lends the voice tools: its sound files, and when a screen recording stored its frames.
+pub(crate) trait VoiceSystem {
+    type Reader: MonoReader;
+    type Writer: MonoWriter;
+    fn open(&self, path: &Path) -> Result<Self::Reader, RenderError>;
+    fn create(&self, path: &Path, rate: u32) -> Result<Self::Writer, RenderError>;
+    /// When each frame of a video was stored, in seconds from the first, read without decoding any.
+    fn frame_times(&self, path: &Path) -> Result<Vec<f64>, RenderError>;
+}
+
+/// [`crate::find_pauses`], with `system`'s files.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+pub(crate) fn find_pauses_with(
+    system: &impl VoiceSystem,
+    root: &Path,
+) -> Result<Vec<(f64, f64)>, RenderError> {
+    let (bundle, project) = ProjectBundle::open(root).map_err(|e| RenderError::Project(e.to_string()))?;
+    let root = bundle.root();
+    let Some(mic) = project.tracks.iter().find(|t| t.kind == TrackKind::Microphone) else {
+        return Ok(Vec::new());
+    };
+    let mut reader = system.open(&root.join(&mic.path))?;
+    let mut meter = Meter::new(reader.rate());
+    while let Some(chunk) = reader.next()? {
+        meter.push(chunk);
+    }
+    let spans = quiet_spans(&meter.finish());
+    if spans.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (cursor, events) = crate::model::read_telemetry(root);
+    let inputs: Vec<f64> = events.iter().map(|e| e.t_us() as f64 / 1e6).collect();
+    let frames = match project.tracks.iter().find(|t| t.kind == TrackKind::Screen) {
+        Some(screen) => system.frame_times(&root.join(&screen.path))?,
+        None => Vec::new(),
+    };
+    let activity = Activity { inputs: &inputs, cursor: &cursor, frames: &frames };
+    let duration = project.duration_us() as f64 / 1e6;
+    Ok(pause_cuts(&spans, mic.offset_us as f64 / 1e6, duration, &|a, b| activity.busy(a, b)))
+}
+
+/// [`crate::clean_voice`], with `system`'s files.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+pub(crate) fn clean_voice_with(
+    system: &impl VoiceSystem,
+    root: &Path,
+    progress: &mut dyn FnMut(f64) -> bool,
+) -> Result<PathBuf, RenderError> {
+    let (bundle, project) = ProjectBundle::open(root).map_err(|e| RenderError::Project(e.to_string()))?;
+    let root = bundle.root();
+    let mic = project
+        .tracks
+        .iter()
+        .find(|t| t.kind == TrackKind::Microphone)
+        .ok_or_else(|| RenderError::Project("this take was recorded without a microphone".into()))?;
+    let target = root.join(CLEAN_MIC);
+    // Written under a hidden name and renamed when complete, so a half-written file is never played.
+    let temp = target.with_file_name(".microphone-clean.partial.m4a");
+    let mut clean = || -> Result<(), RenderError> {
+        let mut reader = system.open(&root.join(&mic.path))?;
+        let total = reader.length().max(1) as f64;
+        let mut writer = system.create(&temp, reader.rate())?;
+        let mut cleaner = Cleaner::new(reader.rate());
+        let (mut out, mut done) = (Vec::new(), 0usize);
+        while let Some(chunk) = reader.next()? {
+            done += chunk.len();
+            cleaner.push(chunk, &mut out);
+            writer.write(&out)?;
+            out.clear();
+            if !progress((done as f64 / total).min(0.99)) {
+                return Err(RenderError::Cancelled);
+            }
+        }
+        cleaner.finish(&mut out);
+        writer.write(&out)?;
+        writer.finish()
+    };
+    match clean() {
+        Ok(()) => {
+            std::fs::rename(&temp, &target)?;
+            progress(1.0);
+            Ok(target)
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp);
+            Err(error)
+        }
     }
 }
 
