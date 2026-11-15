@@ -211,6 +211,9 @@ pub enum ToApp {
     RecordingStatus,
     /// Stops this session's recording: [`FromApp::Recorded`].
     StopRecording { discard: bool },
+    /// Opens a saved project (its folder) in the editor: [`FromApp::Opened`]. Nothing is filmed or driven, so the
+    /// app doesn't ask the person.
+    Open { project: PathBuf },
 }
 
 /// From the app to the command.
@@ -241,6 +244,8 @@ pub enum FromApp {
     Recording { status: Option<RecordingStatus> },
     /// The session's recording ended.
     Recorded { recorded: Recorded },
+    /// The project is open in the editor.
+    Opened,
     /// The request couldn't be done, or the person said no: why, in a sentence.
     Failed { message: String },
 }
@@ -1070,6 +1075,17 @@ mod tests {
 
     fn script() -> TakeScript {
         TakeScript::parse(r#"{"app":"TextEdit","beats":[{"type":{"text":"hi"}}]}"#).unwrap()
+    }
+
+    #[test]
+    fn opening_a_project_is_one_request_and_one_answer() {
+        let mut out = Vec::new();
+        write_message(&mut out, &ToApp::Open { project: PathBuf::from("/Movies/Demo.smx") }).unwrap();
+        write_message(&mut out, &FromApp::Opened).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "{\"type\":\"open\",\"project\":\"/Movies/Demo.smx\"}\n{\"type\":\"opened\"}\n"
+        );
     }
 
     #[test]

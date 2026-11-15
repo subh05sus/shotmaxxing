@@ -8,6 +8,7 @@
 //! the card, where Stop and Hand back reach it straight away.
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -17,6 +18,7 @@ use shotmaxxing_capture::Target;
 use shotmaxxing_control::{
     Caller, FromApp, PROTOCOL, Peer, Performed, Picture, Sender, Server, TakeRequest, TakeResult, ToApp,
 };
+use shotmaxxing_core::take::OutputMode;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::{recording, windows};
@@ -26,6 +28,9 @@ const ASK_SECONDS: u64 = 120;
 
 /// The widest picture of a window sent to an agent.
 const PICTURE_WIDTH: u32 = 1280;
+
+/// How long a finished take's card shows it's done before the take opens in the editor.
+const SEEN: Duration = Duration::from_millis(1500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -265,10 +270,26 @@ fn serve<R: Runtime>(app: &AppHandle<R>, mut peer: Peer) {
                 None => FromApp::Recording { status: None },
             })
         }
+        ToApp::Open { project } => open_project(app, &project),
         _ => Err("That isn't something the Shotmaxxing app does.".into()),
     };
     conn.send(&answer.unwrap_or_else(|message| FromApp::Failed { message }));
     conn.reply.close();
+}
+
+/// Opens a saved project in the editor. Nothing is filmed or driven, so it doesn't ask.
+fn open_project<R: Runtime>(app: &AppHandle<R>, project: &Path) -> Result<FromApp, String> {
+    if let Err(error) = shotmaxxing_core::bundle::ProjectBundle::open(project) {
+        return Err(format!("Shotmaxxing can't open {} as a project: {error}", project.display()));
+    }
+    let (handle, project) = (app.clone(), project.to_path_buf());
+    app.run_on_main_thread(move || {
+        if let Err(error) = windows::open_project(&handle, &project) {
+            tracing::warn!(%error, "couldn't open the project in the editor");
+        }
+    })
+    .map_err(|_| "Shotmaxxing couldn't open the editor.".to_string())?;
+    Ok(FromApp::Opened)
 }
 
 /// Reads an app's controls, and takes a picture of its window.
@@ -323,6 +344,8 @@ fn film<R: Runtime>(app: &AppHandle<R>, conn: &mut Conn, take: TakeRequest) {
     }
     let flags = Flags::default();
     takes.start(app, id, flags.clone());
+    // A script asks for the editor unless it says otherwise.
+    let opens_editor = take.script.output.mode == OutputMode::Editor;
 
     // The take plays on a thread of its own, and this one keeps listening for the agent calling it off.
     let performer = {
@@ -346,8 +369,12 @@ fn film<R: Runtime>(app: &AppHandle<R>, conn: &mut Conn, take: TakeRequest) {
         match conn.rx.recv() {
             Ok(Event::Message(ToApp::Cancel)) => flags.cancel.store(true, Ordering::SeqCst),
             Ok(Event::Message(ToApp::Finished { result })) => {
+                let open = result.project.clone().filter(|_| opens_editor && result.stopped.is_none());
                 takes.finish(app, id, result);
                 finished = true;
+                if let Some(project) = open {
+                    takes.open_when_seen(app, id, project);
+                }
             }
             Ok(Event::Message(_) | Event::Answer(_)) => {}
             Ok(Event::Gone) | Err(_) => break,
@@ -535,6 +562,26 @@ impl Takes {
             card.waiting = None;
             card.result = Some(result);
         });
+    }
+
+    /// Opens a finished take in the editor, as its script asked, once the card has shown it's done, then closes the
+    /// card. If the editor can't open, the card stays with its own Open in editor button.
+    fn open_when_seen<R: Runtime>(&self, app: &AppHandle<R>, id: u64, project: PathBuf) {
+        let app = app.clone();
+        let opening = std::thread::Builder::new().name("open take".into()).spawn(move || {
+            std::thread::sleep(SEEN);
+            let handle = app.clone();
+            let opened = app.run_on_main_thread(move || match windows::open_project(&handle, &project) {
+                Ok(()) => handle.state::<Takes>().forget(&handle, id),
+                Err(error) => tracing::warn!(%error, "couldn't open the take in the editor"),
+            });
+            if let Err(error) = opened {
+                tracing::warn!(%error, "couldn't open the take in the editor");
+            }
+        });
+        if let Err(error) = opening {
+            tracing::warn!(%error, "couldn't open the take in the editor");
+        }
     }
 
     /// The take ended without the command finishing it: from what the app knows, and why it stopped, if it did.

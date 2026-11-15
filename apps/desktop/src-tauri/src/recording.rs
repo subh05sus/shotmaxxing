@@ -478,7 +478,7 @@ pub fn stop_and_edit<R: Runtime>(app: &AppHandle<R>) {
         let opened = match result {
             Ok(Ok(Some(finished))) => {
                 app.state::<Notices>().remember(&finished);
-                windows::open_editor(&app, &encode_component(&finished.root.to_string_lossy()))
+                windows::open_project(&app, &finished.root)
             }
             Ok(Ok(None)) => Ok(()),
             Ok(Err(error)) => {
@@ -515,24 +515,11 @@ fn close_pill<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// The same encoding as JavaScript's `encodeURIComponent`, so editor routes match whichever side opened them.
-fn encode_component(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{Target, encode_component, expand_home, parse_source, tildify};
+    use super::{Target, expand_home, parse_source, tildify};
 
     #[test]
     fn folders_round_trip_through_the_short_form() {
@@ -549,12 +536,6 @@ mod tests {
         let inside = home.join("Movies").join("Shotmaxxing");
         assert_eq!(tildify(&inside, Some(home)), format!("~{sep}Movies{sep}Shotmaxxing"));
         assert_eq!(tildify(Path::new("/Volumes/Work"), Some(home)), "/Volumes/Work");
-    }
-
-    #[test]
-    fn encodes_like_encode_uri_component() {
-        assert_eq!(encode_component("/Users/a b/Rec (1).smx"), "%2FUsers%2Fa%20b%2FRec%20(1).smx");
-        assert_eq!(encode_component("Café"), "Caf%C3%A9");
     }
 
     #[test]

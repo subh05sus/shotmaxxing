@@ -1,6 +1,8 @@
 //! Every window the app opens, with its size and native look. Each window loads the same UI bundle at a different
 //! route, so it only builds the screen it shows.
 
+use std::path::Path;
+
 use tauri::webview::WebviewWindowBuilder;
 use tauri::window::{Effect, EffectState, EffectsBuilder};
 use tauri::{AppHandle, LogicalSize, Manager, Runtime, WebviewUrl, WebviewWindow};
@@ -89,6 +91,24 @@ pub fn open_editor<R: Runtime>(app: &AppHandle<R>, project: &str) -> tauri::Resu
         .center();
     standard(builder).build()?;
     Ok(())
+}
+
+/// Opens a saved project (its folder) in the editor.
+pub fn open_project<R: Runtime>(app: &AppHandle<R>, root: &Path) -> tauri::Result<()> {
+    open_editor(app, &encode_component(&root.to_string_lossy()))
+}
+
+/// The same encoding as JavaScript's `encodeURIComponent`, so editor routes match whichever side opened them.
+fn encode_component(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 pub fn open_record<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -195,7 +215,13 @@ fn sanitize_label(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_label;
+    use super::{encode_component, sanitize_label};
+
+    #[test]
+    fn encodes_like_encode_uri_component() {
+        assert_eq!(encode_component("/Users/a b/Rec (1).smx"), "%2FUsers%2Fa%20b%2FRec%20(1).smx");
+        assert_eq!(encode_component("Café"), "Caf%C3%A9");
+    }
 
     #[test]
     fn labels_are_safe() {

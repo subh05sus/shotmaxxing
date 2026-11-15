@@ -921,6 +921,21 @@ fn reach_app(state: &State, launch: Launch) -> Result<Client, String> {
     Ok(client)
 }
 
+/// Opens a saved project in the app's editor, starting the app first when it isn't running. For `shotmaxxing open`,
+/// and for takes run in a terminal whose script asks for the editor.
+pub fn open_in_editor(project: &Path) -> Result<(), String> {
+    let project =
+        std::path::absolute(project).map_err(|e| format!("couldn't find {}: {e}", project.display()))?;
+    let state = State::default();
+    if let Ok(mut client) = state.client.lock() {
+        *client = Some("Shotmaxxing CLI".into());
+    }
+    match ask_app(&state, ToApp::Open { project }, &AtomicBool::new(false), Launch::Yes)? {
+        FromApp::Opened => Ok(()),
+        other => Err(unexpected(&other)),
+    }
+}
+
 /// Opens the app and waits until it listens.
 fn open_app() -> Result<Client, String> {
     start_app()?;
@@ -1131,6 +1146,9 @@ fn perform_take(
         "handed_over": performed.handed_over,
     });
     report["warnings"] = json!(performed.warnings);
+    if performed.stopped.is_none() && script.output.mode == OutputMode::Editor {
+        report["note"] = json!("Shotmaxxing is opening it in the editor for the person.");
+    }
     if performed.stopped.is_none() && script.output.mode == OutputMode::Video {
         progress(0.9, "Exporting the video");
         let (format, size, fps, aspect) = preset_export(script.output.preset);

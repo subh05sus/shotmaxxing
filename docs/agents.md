@@ -103,7 +103,8 @@ while it records:
 
 3. `perform_take` with `{ "script": …, "dry_run": true }` shows the timeline. Then run it without `dry_run`.
 4. The take card asks you first, listing every step. Once you allow it, the card follows the take live.
-5. The reply has the project, how far the take got and, for `mode: video`, the exported file.
+5. The reply has the project, how far the take got and, for `mode: video`, the exported file. A finished take opens
+   in the editor unless the script says `mode: video` or `mode: project`.
 
 Targets can be any of these:
 
@@ -167,5 +168,6 @@ The same work is available from the terminal, where it runs with the terminal's 
 - `shotmaxxing info`
 - `shotmaxxing zoom`
 - `shotmaxxing take validate`
+- `shotmaxxing open`, which opens a project in the app's editor (opening the app first if it isn't running)
 
 Add `--json` for machine-readable output.

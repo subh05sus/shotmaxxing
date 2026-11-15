@@ -221,6 +221,38 @@ fn without_the_app_the_tools_that_need_it_say_so() {
     assert!(result["content"][0]["text"].as_str().is_some_and(|t| t.contains("isn't open")), "{result}");
 }
 
+/// `shotmaxxing open` asks the app to open the project in its editor, by its full path.
+#[test]
+fn opens_a_project_in_the_apps_editor() {
+    use shotmaxxing_control::{FromApp, ToApp};
+    let dir = tempfile::tempdir().unwrap();
+    let socket = shotmaxxing_control::scratch_address(dir.path());
+    let requests = fake_app(&socket, |_| FromApp::Opened);
+    let open = |socket: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_shotmaxxing"))
+            .args(["open", "Demo.smx"])
+            .current_dir(dir.path())
+            .env("SHOTMAXXING_CONTROL_SOCKET", socket)
+            .output()
+            .unwrap()
+    };
+    let opened = open(&socket);
+    assert!(opened.status.success(), "{}", String::from_utf8_lossy(&opened.stderr));
+    assert!(String::from_utf8_lossy(&opened.stdout).contains("Opened Demo.smx"));
+    let (client, _, request) =
+        requests.recv_timeout(std::time::Duration::from_secs(5)).expect("the app was never asked");
+    assert_eq!(client, "Shotmaxxing CLI");
+    // By its full path, which may come through a link (`/var` is `/private/var` on macOS).
+    let ToApp::Open { project } = request else { panic!("expected Open, got {request:?}") };
+    assert!(project.is_absolute() && project.ends_with("Demo.smx"), "{project:?}");
+    assert_eq!(project.parent().unwrap().canonicalize().unwrap(), dir.path().canonicalize().unwrap());
+
+    // With no app at the socket it says so, and doesn't start one.
+    let closed = open(&dir.path().join("nobody.sock"));
+    assert!(!closed.status.success());
+    assert!(String::from_utf8_lossy(&closed.stderr).contains("isn't open"), "{closed:?}");
+}
+
 #[test]
 fn speaks_mcp() {
     let mut server = Server::start();

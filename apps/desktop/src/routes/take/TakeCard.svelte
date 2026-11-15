@@ -28,6 +28,7 @@
     answerTake,
     closeThisWindow,
     dismissTake,
+    editorTarget,
     handBackTake,
     handOff,
     isTauri,
@@ -224,7 +225,7 @@
     const r = target.getBoundingClientRect();
     confetti({ x: r.left + r.width / 2, y: r.top });
     if (live && card) await dismissTake(card.id);
-    setTimeout(() => void handOff('editor', project), 500);
+    setTimeout(() => void handOff('editor', editorTarget(project)), 500);
   }
 
   async function close() {

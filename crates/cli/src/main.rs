@@ -11,7 +11,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use shotmaxxing_capture::{CURSOR_FILE, DeviceChoice, EVENTS_FILE, ProjectOptions, ProjectRecording, Target};
 use shotmaxxing_core::bundle::ProjectBundle;
 use shotmaxxing_core::project::{Project, TrackKind, ZoomDepth};
-use shotmaxxing_core::take::TakeScript;
+use shotmaxxing_core::take::{OutputMode, TakeScript};
 use shotmaxxing_core::telemetry::{decode_cursor, read_events};
 use shotmaxxing_core::timeparse::{format_timecode, parse_duration_us};
 use shotmaxxing_core::zoom::{ZoomInput, plan_zooms};
@@ -54,6 +54,11 @@ enum Command {
         project: PathBuf,
         #[arg(long, value_enum, default_value_t = Depth::Standard)]
         depth: Depth,
+    },
+    /// Open a project in the Shotmaxxing editor, opening the app first if it isn't running.
+    Open {
+        /// A .smx project folder.
+        project: PathBuf,
     },
     /// Check or describe take scripts.
     #[command(subcommand)]
@@ -212,6 +217,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Record(args) => record(args, cli.json),
         Command::Export(args) => export(args, cli.json),
         Command::Info { project } => info(&project, cli.json),
+        Command::Open { project } => open_in_editor(&project, cli.json),
         Command::Zoom { project, depth } => zoom(&project, depth.into(), cli.json),
         Command::Take(TakeCommand::Validate { file }) => validate(&file, cli.json),
         Command::Take(TakeCommand::Prepare { app, window }) => {
@@ -583,16 +589,30 @@ fn run_take(
         }
     })?;
     let root = take.finished.root.clone();
-    if json {
-        let report = serde_json::json!({ "project": root, "performance": take.performed, "warnings": take.finished.warnings });
-        println!("{report}");
-    } else {
+    if !json {
         if let Some(reason) = &take.performed.stopped {
             println!("Stopped: {reason}");
         }
         print_summary(&root, &take.finished.project);
     }
-    if take.performed.stopped.is_none() && script.output.mode == shotmaxxing_core::take::OutputMode::Video {
+    // A script asks for the editor unless it says otherwise, and the editor is in the app.
+    let opened = (take.performed.stopped.is_none() && script.output.mode == OutputMode::Editor)
+        .then(|| mcp::open_in_editor(&root));
+    if json {
+        let report = serde_json::json!({
+            "project": root,
+            "performance": take.performed,
+            "warnings": take.finished.warnings,
+            "opened_in_editor": matches!(opened, Some(Ok(()))),
+        });
+        println!("{report}");
+    }
+    match &opened {
+        Some(Ok(())) if !json => println!("Opened it in the Shotmaxxing editor."),
+        Some(Err(error)) => eprintln!("Couldn't open it in the editor: {error}"),
+        _ => {}
+    }
+    if take.performed.stopped.is_none() && script.output.mode == OutputMode::Video {
         let gif = script.output.preset == Some(shotmaxxing_core::project::ExportPreset::Gif);
         let args = ExportArgs {
             project: root,
@@ -604,6 +624,16 @@ fn run_take(
             at: 0.0,
         };
         export(args, json)?;
+    }
+    Ok(())
+}
+
+fn open_in_editor(project: &Path, json: bool) -> Result<()> {
+    mcp::open_in_editor(project).map_err(|e| anyhow::anyhow!("couldn't open {}: {e}", project.display()))?;
+    if json {
+        println!("{}", serde_json::json!({ "opened": std::path::absolute(project)? }));
+    } else {
+        println!("Opened {} in the Shotmaxxing editor.", project.display());
     }
     Ok(())
 }
