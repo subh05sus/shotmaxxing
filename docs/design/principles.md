@@ -12,22 +12,24 @@ apply to every screen, component and animation. A change that breaks one needs a
   and Acrylic), and only on chrome and floating controls.
 - **Low power and Reduce Motion drop everything to fades.** Low power mode turns on automatically when the machine
   is hot or on battery.
-- **Pixels stay native.** Video frames are drawn by the Rust compositor, never by the web UI layer.
+- **Pixels stay out of the UI's code.** Video frames never travel through JavaScript or the bridge: the editor
+  shows the recording with the webview's own hardware-decoded video player, and the export draws every frame in the
+  Rust compositor.
 
 ## Motion: the twelve principles, applied
 
 | Principle | How we use it |
 | --- | --- |
 | Squash and stretch | A pressed button scales to 0.97, and a clicked cursor squashes briefly. Small amounts only. |
-| Anticipation | Big moves wind up first. The Record button dips before the countdown, and a panel nudges back 2 px before it slides open. |
+| Anticipation | Big moments get a beat of warning: the record countdown says 3, 2, 1 before filming starts, and a pressed tab squishes before it springs back. |
 | Staging | One focal point per moment. When a sheet opens, everything behind it dims. A coach mark spotlights one control. |
 | Pose to pose | We define start and end states and let the browser interpolate with springs and CSS transitions, with no hand-built frame loops. |
-| Follow through | A settling panel overshoots by a few pixels and comes to rest. Zoom blocks land on the timeline and settle. |
+| Follow through | The label or icon just picked pops a little past full size, then settles back. |
 | Slow in and slow out | Nothing moves at constant speed. Use springs or `cubic-bezier(0.2, 0, 0, 1)`, never `linear` (except progress bars). |
-| Arcs | Things that travel far, such as a clip flying to the export queue or the cursor in agent takes, follow a curve, not a straight line. |
-| Secondary action | A small flourish supports the main one: the check draws after Saved, and the export count rolls as the bar fills. |
+| Arcs | Things that travel far follow a curve, not a straight line: the pointer in an agent's take moves in gentle arcs. |
+| Secondary action | A small flourish supports the main one: the check beside Saved draws itself. |
 | Timing | Every UI animation finishes within **300 ms**. Exits are about two thirds the length of entrances. One exception: a tab's sliding thumb lands in about 200 ms and then settles a few pixels by 360 ms. |
-| Exaggeration | Moments that matter land clearly: the first export gets confetti, and a successful agent take gets a short shine. |
+| Exaggeration | Moments that matter land clearly: the first export gets confetti, once. |
 | Solid drawing | Flat surfaces get depth through layered shadows and light edges, so floating things clearly sit above content. |
 | Appeal | The sum of the details: aligned edges, consistent radii, considered words, every state designed. |
 

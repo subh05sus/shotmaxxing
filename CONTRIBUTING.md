@@ -63,7 +63,9 @@ went without failing the build, since hosted runners may lack a screen to captur
 
 - **Idle means idle.** Nothing may run while the app is idle: no timers that never stop, no animation loops, no
   polling without a reason. Recording quality is never traded for UI polish.
-- **Pixels stay native.** Video frames never pass through the web view. The UI sends intent; the core does the work.
+- **Pixels stay out of the UI's code.** Video frames never travel through JavaScript or the bridge: the editor
+  shows the recording with the webview's hardware-decoded video player, and the export draws in the Rust compositor.
+  The UI sends intent; the core does the work.
 - **Motion animates transform and opacity only,** stays at or under 300 ms, and falls back to fades with Reduce Motion
   or Low power. `scripts/design-guard.mjs` checks this and a few other rules. Fix the design rather than silencing
   the guard.
