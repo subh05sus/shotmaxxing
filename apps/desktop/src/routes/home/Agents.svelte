@@ -1,15 +1,5 @@
 <script lang="ts">
-  import {
-    Bot,
-    Clapperboard,
-    Copy,
-    Hand,
-    Lock,
-    Play,
-    ShieldCheck,
-    Sparkles,
-    Wand,
-  } from '@shotmaxxing/ui/icons';
+  import { Ai, Bot, Clapperboard, Copy, Hand, Lock, Play, ShieldCheck, Wand } from '@shotmaxxing/ui/icons';
   import {
     Button,
     CheckDraw,
@@ -170,7 +160,7 @@
     <aside class="flex flex-col gap-6 lg:pt-[calc(var(--text-caption--line-height)+6px)]">
       <section class="rounded-card border border-border bg-surface p-4 shadow-[var(--elev-1)]">
         <h3 class="flex items-center gap-2 text-callout font-semibold">
-          <Icon icon={Sparkles} size={15} class="text-accent-text" aria-hidden="true" /> Try asking
+          <Icon icon={Ai} size={15} class="text-accent-text" aria-hidden="true" /> Try asking
         </h3>
         <ul class="mt-3 flex flex-col gap-2">
           {#each STARTER_PROMPTS as prompt (prompt)}

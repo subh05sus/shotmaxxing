@@ -2,8 +2,9 @@
  * Every icon in the app, named for what it means here, so changing a drawing never touches a screen.
  *
  * The free Pikaicons (https://pikaicons.com, MIT) come first, in their Stroke style. Where Pika has no drawing for an
- * idea, the free Hugeicons (https://hugeicons.com, MIT) fill in with their stroke-rounded style. Both are drawn on a
- * 24 px grid in currentColor, and `Icon` draws them at one weight so they read as one set.
+ * idea, the free Hugeicons (https://hugeicons.com, MIT) fill in with their stroke-rounded style, as they do for the
+ * drawings the owner picked (the AI mark). Both are drawn on a 24 px grid in currentColor, and `Icon` draws them at
+ * one weight so they read as one set.
  */
 
 /** An icon's drawing: SVG elements as [tag, attributes, children], the shape both sets publish. */
@@ -14,13 +15,13 @@ export type IconNode = readonly [
 ];
 export type IconData = readonly IconNode[];
 
+import { AiMagicIcon } from '@hugeicons/core-free-icons';
 import {
   CopyIcon,
   DeleteDustbin01Icon,
   DownloadDownIcon,
   RefreshIcon,
   SearchIcon,
-  SparkleAi01Icon,
 } from '@pikaicons/core-free';
 
 /** Icons that act out what they do, once, when their button is hovered (see motion.css). */
@@ -30,7 +31,7 @@ export const iconActs = new Map<IconData, 'spin' | 'tilt' | 'pop' | 'search' | '
   [CopyIcon, 'pop'],
   [DownloadDownIcon, 'pop'],
   [SearchIcon, 'search'],
-  [SparkleAi01Icon, 'spark'],
+  [AiMagicIcon, 'spark'],
 ]);
 
 /** The record mark, the app's own: a solid dot in the colour of the text around it. */
@@ -64,7 +65,6 @@ export {
   SearchIcon as Search,
   Settings01Icon as Settings,
   ShieldCheckIcon as ShieldCheck,
-  SparkleAi01Icon as Sparkles,
   SunIcon as Sun,
   ThreeDotsMenuHorizontalIcon as Ellipsis,
   UserIcon as UserRound,
@@ -72,14 +72,16 @@ export {
   VolumeTwoIcon as Volume2,
 } from '@pikaicons/core-free';
 
-// Ideas the free Pika set has no drawing for.
+// Ideas the free Pika set has no drawing for, and the owner's picks.
 export {
+  /** The one mark for AI: the editor's AI tool and every AI action. Never decoration. */
+  AiMagicIcon as Ai,
   ArrowDataTransferVerticalIcon as ArrowDownUp,
   ArrowDownLeft01Icon as ArrowDownLeft,
   ArrowDownRight01Icon as ArrowDownRight,
   ArrowUpLeft01Icon as ArrowUpLeft,
   ArrowUpRight01Icon as ArrowUpRight,
-  AudioWave01Icon as AudioLines,
+  AudioWave02Icon as AudioLines,
   BlurIcon as Blur,
   BookOpen01Icon as BookOpen,
   BrowserIcon as AppWindow,
@@ -88,7 +90,7 @@ export {
   ComputerIcon as Monitor,
   ComputerVideoIcon as MonitorDot,
   CropIcon as Crop,
-  Cursor01Icon as MousePointer2,
+  Cursor02Icon as MousePointer2,
   DashboardSpeed01Icon as Gauge,
   Film01Icon as Film,
   HandIcon as Hand,

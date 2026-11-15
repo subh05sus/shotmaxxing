@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import {
+    Ai,
     AudioLines,
+    BookOpen,
     ChevronLeft,
     CircleAlert,
     Download,
@@ -13,7 +15,6 @@
     Redo2,
     Scissors,
     Search,
-    Sparkles,
     Undo2,
     Video,
     X,
@@ -87,7 +88,7 @@
     { id: 'annotate', label: 'Annotate', icon: Pencil, chord: '4' },
     { id: 'camera', label: 'Camera', icon: Video, chord: '5' },
     { id: 'audio', label: 'Audio', icon: AudioLines, chord: '6' },
-    { id: 'ai', label: 'AI', icon: Sparkles, chord: '7' },
+    { id: 'ai', label: 'AI', icon: Ai, chord: '7' },
   ];
 
   const requestedTool = route.query.get('tool') as ToolId | null;
@@ -292,7 +293,7 @@
         id: 'ed-tour',
         title: 'Start the editor tour',
         group: 'Help',
-        icon: Sparkles,
+        icon: BookOpen,
         chord: 'mod+shift+t',
         run: () => startTour(),
       },
@@ -324,7 +325,7 @@
         id: 'ed-captions',
         title: 'Generate captions',
         group: 'AI',
-        icon: Sparkles,
+        icon: Ai,
         keywords: 'subtitles whisper transcribe',
         run: () => (ed.tool = 'ai'),
       },

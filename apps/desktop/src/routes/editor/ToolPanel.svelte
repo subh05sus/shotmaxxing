@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    Ai,
     ArrowDownLeft,
     ArrowDownRight,
     ArrowUpLeft,
@@ -10,7 +11,6 @@
     Lock,
     Music,
     RefreshCw,
-    Sparkles,
     Type,
     WandSparkles,
     X,
@@ -640,7 +640,7 @@
               >
             {:else}
               <div class="flex flex-col items-start gap-1.5">
-                <Button size="sm" icon={Sparkles} onclick={generateCaptions}>Generate captions</Button>
+                <Button size="sm" icon={Ai} onclick={generateCaptions}>Generate captions</Button>
                 <span class="text-caption text-fg-subtle">The first time downloads a 140 MB model.</span>
               </div>
             {/if}
@@ -680,7 +680,7 @@
       </section>
       <section class="mt-2 rounded-[10px] border border-border p-3">
         <h3 class="flex items-center gap-2 text-callout font-semibold">
-          <Icon icon={Sparkles} size={15} aria-hidden="true" /> Cut silences
+          <Icon icon={Ai} size={15} aria-hidden="true" /> Cut silences
         </h3>
         <p class="mt-1 text-footnote text-fg-muted">
           {#if p.audio.silence}
