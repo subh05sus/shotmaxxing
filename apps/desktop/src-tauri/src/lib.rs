@@ -107,17 +107,15 @@ pub fn run() {
             app.state::<recording::Recordings>().finish_on_quit();
             app.state::<export::Exports>().cancel_all();
         }
-        RunEvent::WindowEvent { event: WindowEvent::Destroyed, .. } => {
-            if app.webview_windows().is_empty() {
-                if !app.state::<system::MenuBarIcon>().hidden() {
-                    windows::set_dock_visible(app, false);
-                } else {
-                    // Without a menu bar icon the app must stay findable: macOS keeps the Dock icon, and on Windows
-                    // closing the last window ends the app (a recording keeps going until it is stopped).
-                    #[cfg(not(target_os = "macos"))]
-                    if !app.state::<recording::Recordings>().is_recording() {
-                        app.exit(0);
-                    }
+        RunEvent::WindowEvent { event: WindowEvent::Destroyed, .. } if app.webview_windows().is_empty() => {
+            if !app.state::<system::MenuBarIcon>().hidden() {
+                windows::set_dock_visible(app, false);
+            } else {
+                // Without a menu bar icon the app must stay findable: macOS keeps the Dock icon, and on Windows
+                // closing the last window ends the app (a recording keeps going until it is stopped).
+                #[cfg(not(target_os = "macos"))]
+                if !app.state::<recording::Recordings>().is_recording() {
+                    app.exit(0);
                 }
             }
         }

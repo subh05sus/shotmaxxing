@@ -3,10 +3,10 @@
 
 use tauri::webview::WebviewWindowBuilder;
 use tauri::window::{Effect, EffectState, EffectsBuilder};
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Runtime, WebviewUrl, WebviewWindow};
+use tauri::{AppHandle, LogicalSize, Manager, Runtime, WebviewUrl, WebviewWindow};
 
 #[cfg(target_os = "macos")]
-use tauri::TitleBarStyle;
+use tauri::{LogicalPosition, TitleBarStyle};
 
 /// Shows or hides the Dock icon on macOS: visible while any window is open, hidden when the app is only in the
 /// menu bar. Other platforms always show the app in the taskbar while a window is open.

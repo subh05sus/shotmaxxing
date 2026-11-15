@@ -9,8 +9,9 @@
 //! - the frame rate is variable: a still screen produces no frames;
 //! - the real cursor is hidden in the capture and recorded as data instead.
 //!
-//! macOS uses ScreenCaptureKit and AVAssetWriter. Windows support (Windows Graphics Capture and Media Foundation)
-//! is in progress; until it lands, [`Recorder::start`] returns [`CaptureError::Unsupported`] there.
+//! macOS uses ScreenCaptureKit and AVAssetWriter. Windows uses Windows Graphics Capture and Media Foundation for the
+//! picture and low-level hooks for the input; its sound and camera tracks come next, and until then a recording there
+//! says so in its warnings.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
@@ -31,9 +32,14 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos as imp;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+mod win;
+#[cfg(target_os = "windows")]
+use win as imp;
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod unsupported;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use unsupported as imp;
 
 #[derive(Debug, thiserror::Error)]
