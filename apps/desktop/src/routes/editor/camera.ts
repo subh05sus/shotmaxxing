@@ -1,7 +1,8 @@
 /**
- * Preview maths for the editor, matching crates/core (camera.rs and cursor.rs): zoom regions blend in log space with
- * smootherstep, neighbouring zooms glide into each other instead of zooming out and back in, and the viewport never
- * leaves the frame. The native compositor uses the Rust versions; these keep the browser preview honest.
+ * Preview maths for the editor, matching the export's (the camera in crates/render/src/scene.rs, the cursor in
+ * crates/core/src/cursor.rs): zoom regions blend in log space with smootherstep, neighbouring zooms glide into each
+ * other instead of zooming out and back in, the camera never jumps, and the viewport never leaves the frame. The
+ * native compositor uses the Rust versions; these keep the browser preview honest.
  */
 
 import type { ZoomBlock } from '../../lib/sample';
