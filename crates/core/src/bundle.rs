@@ -12,12 +12,13 @@
 //! Saves are atomic: the new `project.json` is written to a temporary file, flushed to disk, then renamed over the
 //! old one. A crash mid-save leaves the previous version intact.
 
-use crate::project::{PROJECT_SCHEMA_VERSION, Project};
+use crate::project::{PROJECT_SCHEMA_VERSION, Project, TrackKind};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 pub const EXTENSION: &str = "smx";
@@ -25,6 +26,8 @@ const PROJECT_FILE: &str = "project.json";
 const SUBDIRS: [&str; 4] = ["media", "telemetry", "cache", "history"];
 /// Version history keeps this many snapshots; older ones are pruned.
 const MAX_SNAPSHOTS: usize = 100;
+/// A music copy this new may belong to an import that hasn't been saved into the project yet.
+const MUSIC_GRACE: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Error)]
 pub enum BundleError {
@@ -189,6 +192,46 @@ impl ProjectBundle {
         Ok(())
     }
 
+    /// Deletes the music copies (`media/music.mp3`, `media/music 2.m4a`…) that neither the project nor any version in
+    /// its history plays, and returns their names. Copies are kept while undo may need them: replacing music keeps
+    /// the old copy, and the open editor's undo history isn't on disk. So this runs when a project is opened, skips
+    /// copies made in the last few minutes, and deletes nothing if any version can't be read.
+    pub fn forget_unused_music(&self) -> Result<Vec<String>, BundleError> {
+        let music = |project: &Project| -> Vec<String> {
+            project.tracks.iter().filter(|t| t.kind == TrackKind::Music).map(|t| t.path.clone()).collect()
+        };
+        let (_, current) = Self::open(&self.root)?;
+        let mut used: HashSet<String> = music(&current).into_iter().collect();
+        // Every file in history/, read here directly: `history()` skips the ones it can't read, and those might
+        // still play a copy.
+        for entry in fs::read_dir(self.history_dir())? {
+            let name = entry?.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".json") {
+                continue;
+            }
+            let Ok(project) = self.load_snapshot(&name) else { return Ok(Vec::new()) };
+            used.extend(music(&project));
+        }
+        let mut removed = Vec::new();
+        let Ok(entries) = fs::read_dir(self.media_dir()) else { return Ok(removed) };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !is_music_copy(&name) || used.contains(&format!("media/{name}")) {
+                continue;
+            }
+            let recent = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|at| at.elapsed().map_or(true, |age| age < MUSIC_GRACE))
+                .unwrap_or(true);
+            if !recent && fs::remove_file(entry.path()).is_ok() {
+                removed.push(name);
+            }
+        }
+        removed.sort();
+        Ok(removed)
+    }
+
     /// Deletes everything in `cache/`. It is rebuilt on demand.
     pub fn clear_cache(&self) -> Result<(), BundleError> {
         let cache = self.cache_dir();
@@ -198,6 +241,18 @@ impl ProjectBundle {
         fs::create_dir_all(cache)?;
         Ok(())
     }
+}
+
+/// Whether `name` is one of the copies `import_music` makes: `music.<ext>` or `music <n>.<ext>`.
+fn is_music_copy(name: &str) -> bool {
+    let Some((stem, ext)) = name.rsplit_once('.') else { return false };
+    let number = stem.strip_prefix("music");
+    !ext.is_empty()
+        && ext.chars().all(|c| c.is_ascii_alphanumeric())
+        && number.is_some_and(|n| {
+            n.is_empty()
+                || n.strip_prefix(' ').is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()))
+        })
 }
 
 /// Upgrades older project JSON to the current schema. Version 1 is current, so this is the identity for now;
@@ -280,6 +335,73 @@ mod tests {
         assert!(matches!(ProjectBundle::open(dir.path()), Err(BundleError::NotAProject(_))));
         fs::write(dir.path().join("project.json"), r#"{"schema_version": 999}"#).unwrap();
         assert!(matches!(ProjectBundle::open(dir.path()), Err(BundleError::TooNew { found: 999 })));
+    }
+
+    #[test]
+    fn only_music_copies_nothing_plays_are_forgotten() {
+        use crate::project::MediaTrack;
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project { name: "Song".into(), ..Default::default() };
+        let bundle = ProjectBundle::create(dir.path(), &mut project).unwrap();
+        let track = |path: &str| MediaTrack {
+            id: path.into(),
+            kind: TrackKind::Music,
+            path: path.into(),
+            duration_us: 1_000_000,
+            offset_us: 0,
+            volume: 1.0,
+            muted: false,
+            name: None,
+        };
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        for name in ["music.mp3", "music 2.m4a", "music 3.wav", "music 4.mp3", "screen.mp4", "musicbox.mp3"] {
+            let path = bundle.media_dir().join(name);
+            fs::write(&path, b"x").unwrap();
+            File::options().write(true).open(&path).unwrap().set_modified(old).unwrap();
+        }
+        // A copy made a moment ago may be an import that isn't saved into the project yet.
+        fs::write(bundle.media_dir().join("music 5.mp3"), b"x").unwrap();
+
+        // An earlier version plays music.mp3; the project now plays music 2.m4a.
+        project.tracks.push(track("media/music.mp3"));
+        bundle.snapshot(&project, "Added music").unwrap();
+        project.tracks = vec![track("media/music 2.m4a")];
+        bundle.save(&mut project).unwrap();
+
+        assert_eq!(bundle.forget_unused_music().unwrap(), ["music 3.wav", "music 4.mp3"]);
+        for kept in ["music.mp3", "music 2.m4a", "music 5.mp3", "screen.mp4", "musicbox.mp3"] {
+            assert!(bundle.media_dir().join(kept).exists(), "{kept} should stay");
+        }
+
+        // A version that can't be read might play anything, so nothing more is deleted.
+        fs::write(bundle.media_dir().join("music 6.mp3"), b"x").unwrap();
+        File::options()
+            .write(true)
+            .open(bundle.media_dir().join("music 6.mp3"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        fs::write(bundle.history_dir().join("1-damaged.json"), b"{ not json").unwrap();
+        assert!(bundle.forget_unused_music().unwrap().is_empty());
+        assert!(bundle.media_dir().join("music 6.mp3").exists());
+    }
+
+    #[test]
+    fn music_copies_are_recognised_by_name() {
+        for yes in ["music.mp3", "music 2.m4a", "music 10.flac"] {
+            assert!(is_music_copy(yes), "{yes}");
+        }
+        for no in [
+            "musicbox.mp3",
+            "music 2b.mp3",
+            "music .mp3",
+            "music",
+            "screen.mp4",
+            "my music.mp3",
+            "music.m4a.tmp~",
+        ] {
+            assert!(!is_music_copy(no), "{no}");
+        }
     }
 
     #[test]
