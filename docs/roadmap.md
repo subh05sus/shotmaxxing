@@ -13,6 +13,9 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 ## Milestone 1: Record and play back
 
 - [x] macOS capture: ScreenCaptureKit → VideoToolbox HEVC → fragmented MP4
+- [x] Window takes keep their menus: the window's app is recorded on its display, cropped to the window and
+      following it, so a dropdown shows at full size instead of shrinking the picture; with Stage Manager on, a
+      parked window comes back to the stage first, and the picker shows parked windows by their app's icon
 - [ ] Windows capture: Windows.Graphics.Capture → Media Foundation → fragmented MP4 (the picture, the pointer path,
       clicks, shortcuts, the computer's sound without Shotmaxxing's own (Windows 11 and later), microphones, the
       camera and the source picker's thumbnails are written and await testing on Windows)

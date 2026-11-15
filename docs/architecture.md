@@ -77,7 +77,8 @@ These are the rules the code is reviewed against.
 - **Nothing else runs while recording.** No live preview, no analysis, no thumbnails. The only UI is a small native
   pill. Analysis (auto zoom, silence detection) runs after stopping and takes about a second.
 - **Capture at the right size.** We capture at the display's native pixel size and never upscale. For window
-  recordings, only the window's pixels are encoded.
+  recordings, only the window's pixels are encoded: its app's windows on the display, cropped to the window (the
+  crop follows it), so a menu that opens over it shows at full size rather than shrinking the picture.
 
 ### Editing and preview
 
