@@ -217,8 +217,8 @@ out afterwards) and **computer-use mode** (record an agent's own computer-use ac
   moment before the activity and holds through it, easing in before and out after, so the picture is still while
   things happen; nearby zooms glide from one to the next, and the camera never jumps. Only what happens on the
   recorded area counts: a click beside a recorded window, typing into another app, or a moment too near the end to
-  zoom into (the click that stops the take) makes no zoom, and clicks on Shotmaxxing's own windows, which are never
-  in the video, aren't recorded at all.
+  zoom into (the click that stops the take) makes no zoom, and clicks on Shotmaxxing's own windows and menu-bar
+  icon, which are never in the video, aren't recorded at all.
 - **Cursor** is redrawn from telemetry: size, smoothing, native styles, snap-to-click, click effects, motion blur,
   arcs, loop and spotlight.
 - **Local AI helpers** (captions with Whisper, voice cleanup, silence cutting) run on device, only when asked, and
