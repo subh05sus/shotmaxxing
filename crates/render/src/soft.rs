@@ -102,23 +102,28 @@ impl<'a> Compositor<'a> {
         // A rectangle of the camera layer (frame pixels) where it lands in the output.
         let cam = |x: f64, y: f64, w: f64, h: f64| (v.tx + s * x, v.ty + s * y, s * w, s * h);
 
-        if s == 1.0 && v.tx == 0.0 && v.ty == 0.0 {
-            self.out.data_mut().copy_from_slice(self.background.data());
-        } else {
-            self.out.fill(Color::BLACK);
-            let paint = PixmapPaint {
-                quality: FilterQuality::Bilinear,
-                blend_mode: BlendMode::Source,
-                ..PixmapPaint::default()
-            };
-            let t = Transform::from_row(s as f32, 0.0, 0.0, s as f32, v.tx as f32, v.ty as f32);
-            self.out.draw_pixmap(0, 0, self.background.as_ref(), &paint, t, None);
-        }
-
-        // The recording, in its rounded window.
+        // The recording's window, where the camera puts it.
         let win = l.window;
         let area = cam(win.x, win.y, win.width, win.height);
         let radius = l.radius * s;
+
+        if s == 1.0 && v.tx == 0.0 && v.ty == 0.0 {
+            self.out.data_mut().copy_from_slice(self.background.data());
+        } else {
+            // Zoomed in, the window covers most of the frame: the background is only drawn around it.
+            let t = Transform::from_row(s as f32, 0.0, 0.0, s as f32, v.tx as f32, v.ty as f32);
+            let shader =
+                Pattern::new(self.background.as_ref(), SpreadMode::Pad, FilterQuality::Bilinear, 1.0, t);
+            let paint =
+                Paint { shader, blend_mode: BlendMode::Source, anti_alias: false, ..Paint::default() };
+            for (left, top, right, bottom) in around(area, radius, l.width, l.height) {
+                if let Some(band) = Rect::from_ltrb(left as f32, top as f32, right as f32, bottom as f32) {
+                    self.out.fill_rect(band, &paint, Transform::identity(), None);
+                }
+            }
+        }
+
+        // The recording, in its rounded window.
         let picture = self.screen.fit(screen, area.2);
         fill(&mut self.out, picture, area, area, radius, None);
 
@@ -238,6 +243,28 @@ impl<'a> Compositor<'a> {
             fill(&mut self.out, picture, (px, py, cw * k, ch * k), shape, corner, None);
         }
     }
+}
+
+/// The parts of a `width` × `height` frame that the rounded window over `area` doesn't surely cover, as left, top,
+/// right and bottom edges: bands above and below it (through its corners) and beside it. Each reaches a pixel into
+/// the window, so its soft edge has background behind it.
+fn around(area: Area, radius: f64, width: f64, height: f64) -> Vec<(f64, f64, f64, f64)> {
+    let (x0, y0, x1, y1) = (area.0, area.1, area.0 + area.2, area.1 + area.3);
+    let r = radius.min(area.2 / 2.0).min(area.3 / 2.0).max(0.0);
+    let clip = |(l, t, r, b): (f64, f64, f64, f64)| {
+        let (l, t) = (l.floor().max(0.0), t.floor().max(0.0));
+        let (r, b) = (r.ceil().min(width), b.ceil().min(height));
+        (r > l && b > t).then_some((l, t, r, b))
+    };
+    [
+        (0.0, 0.0, width, y0 + r + 1.0),
+        (0.0, y1 - r - 1.0, width, height),
+        (0.0, y0 + r, x0 + 1.0, y1 - r),
+        (x1 - 1.0, y0 + r, width, y1 - r),
+    ]
+    .into_iter()
+    .filter_map(clip)
+    .collect()
 }
 
 /// A sprite's size in the frame at zoom 1.
@@ -520,6 +547,62 @@ mod tests {
         // The copies are reused.
         assert_eq!(halves.0.len(), 2);
         assert_eq!(halves.fit(picture.as_ref(), 1300.0).width(), 1440);
+    }
+
+    /// How long a 1080p frame takes: a Retina recording, zoomed in, with the cursor moving. Run it with
+    /// `cargo test --release -p shotmaxxing-render --lib draws_frames -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "measures speed"]
+    fn draws_frames_quickly() {
+        use shotmaxxing_core::geometry::{Point, Size};
+        use shotmaxxing_core::telemetry::CursorSample;
+
+        let blank = shotmaxxing_core::project::Project::default();
+        let mut project = RenderProject::from_parts(std::path::Path::new("/nowhere"), &blank, &[], &[]);
+        project.capture = Size::new(1440.0, 900.0);
+        project.zooms =
+            vec![crate::model::Zoom { start: 1.0, end: 9.0, scale: 2.0, focus: Point::new(700.0, 400.0) }];
+        project.path = (0..300)
+            .map(|i| CursorSample {
+                t_us: i * 33_333,
+                x: 200.0 + 3.0 * i as f64,
+                y: 300.0 + i as f64,
+                ..CursorSample::default()
+            })
+            .collect();
+        let layout = Layout::new(&project, 1920, 1080);
+        let mut compositor = Compositor::new(&project, layout, |_, _, _, _| None).unwrap();
+        let mut screen = Pixmap::new(2880, 1800).unwrap();
+        for (i, px) in screen.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            let v = (i * 2654435761 % 251) as u8;
+            *px = [v, v / 2, 255 - v, 255];
+        }
+        for (label, from) in [("still", 0.0), ("zoomed", 4.0)] {
+            let started = std::time::Instant::now();
+            for i in 0..30 {
+                let frame = crate::scene::frame_at(&project, &layout, from + f64::from(i) / 60.0);
+                compositor.compose(&frame, screen.as_ref(), None);
+            }
+            let ms = started.elapsed().as_secs_f64() * 1000.0 / 30.0;
+            eprintln!("{label}: {ms:.1} ms a frame");
+        }
+    }
+
+    #[test]
+    fn the_background_is_drawn_only_around_the_window() {
+        // A window in the middle: bands above and below through its corners, and strips beside it.
+        let bands = around((100.0, 50.0, 200.0, 100.0), 10.0, 400.0, 200.0);
+        assert_eq!(
+            bands,
+            vec![
+                (0.0, 0.0, 400.0, 61.0),
+                (0.0, 139.0, 400.0, 200.0),
+                (0.0, 60.0, 101.0, 140.0),
+                (299.0, 60.0, 400.0, 140.0),
+            ]
+        );
+        // Zoomed past the frame's edges, nothing of the background shows.
+        assert!(around((-50.0, -50.0, 500.0, 300.0), 10.0, 400.0, 200.0).is_empty());
     }
 
     #[test]
