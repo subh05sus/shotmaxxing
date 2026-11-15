@@ -58,7 +58,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast
       # Recording needs a desktop that can be captured and Media Foundation's encoder, which hosted runners may
       # lack: this reports how it went without failing the build.
       - if: runner.os == 'Windows'

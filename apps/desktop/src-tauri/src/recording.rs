@@ -379,7 +379,10 @@ mod tests {
         assert_eq!(expand_home("~", Some(home)), PathBuf::from("/Users/me/"));
         assert_eq!(expand_home("/Volumes/Work", Some(home)), PathBuf::from("/Volumes/Work"));
         assert_eq!(expand_home("~other/x", Some(home)), PathBuf::from("~other/x"));
-        assert_eq!(tildify(Path::new("/Users/me/Movies/Shotmaxxing"), Some(home)), "~/Movies/Shotmaxxing");
+        // Shown with the system's own separator: `~/Movies/Shotmaxxing` here, `~\Movies\Shotmaxxing` on Windows.
+        let sep = std::path::MAIN_SEPARATOR;
+        let inside = home.join("Movies").join("Shotmaxxing");
+        assert_eq!(tildify(&inside, Some(home)), format!("~{sep}Movies{sep}Shotmaxxing"));
         assert_eq!(tildify(Path::new("/Volumes/Work"), Some(home)), "/Volumes/Work");
     }
 
