@@ -266,8 +266,11 @@ export class EditorState {
   camera = $state<{ url: string; offset: number } | null>(null);
   /** A voice tool at work: making the cleaned-up voice, or finding pauses. */
   voiceBusy = $state<'cleanup' | 'silence' | null>(null);
-  /** A voice-over being recorded: where on the finished video it starts. Everything else is muted meanwhile. */
-  voiceOver = $state<{ start: number } | null>(null);
+  /**
+   * A voice-over being recorded: where on the finished video it starts, and when it began (`performance.now()`).
+   * Everything else is muted meanwhile.
+   */
+  voiceOver = $state<{ start: number; began: number } | null>(null);
   /** A voice-over is starting or finishing. */
   voiceOverBusy = $state(false);
   /** Captions being made: where the job is, and how far through that stage (0 to 1). */
@@ -563,7 +566,7 @@ export class EditorState {
       if (this.time >= this.project.duration - 0.05) this.seek(0);
       this.rate = 1;
       await startVoiceOver(this.path ?? '', microphone);
-      this.voiceOver = { start: this.outputTimeAt(this.time) };
+      this.voiceOver = { start: this.outputTimeAt(this.time), began: performance.now() };
       this.voiceOverBusy = false;
       this.play();
     } catch (error) {
@@ -591,6 +594,12 @@ export class EditorState {
       if (!keep) {
         await discardVoiceOver();
         toast('Voice-over thrown away.');
+        return;
+      }
+      // One that stopped within half a second holds nothing to keep.
+      if (performance.now() - recording.began < 500) {
+        await discardVoiceOver();
+        toast('The voice-over stopped at once, so it wasn’t kept.');
         return;
       }
       const file = await stopVoiceOver();
