@@ -1,9 +1,10 @@
-//! Exporting on Windows: Media Foundation reads the recording, the portable compositor draws each frame, and Media
-//! Foundation encodes the video, on the graphics card where it can. GIFs and stills share the drawing. Sound comes
-//! next; until then a Windows export is silent.
+//! Exporting on Windows: Media Foundation reads the recording, the portable compositor draws each frame, the
+//! portable mixer lays out the sound, and Media Foundation encodes both, the video on the graphics card where it
+//! can. GIFs and stills share the drawing.
 
 mod decode;
 mod encode;
+mod sound;
 mod text;
 
 use std::io::Write;
@@ -18,7 +19,7 @@ use self::decode::Decoder;
 use self::encode::VideoWriter;
 use crate::model::RenderProject;
 use crate::scene::{Layout, frame_at};
-use crate::{ExportOptions, Format, RenderError, animated, soft};
+use crate::{ExportOptions, Format, RenderError, animated, mix, soft};
 
 fn system(error: windows::core::Error) -> RenderError {
     RenderError::System(error.message())
@@ -142,12 +143,30 @@ fn export_video(
     } else {
         crate::default_bitrate(options.width, options.height, job.fps, options.format)
     };
-    let mut writer = VideoWriter::new(temp, options.width, options.height, job.fps, options.format, bitrate)?;
+    let mut mixer = mix::Mixer::new(project, &mut |path| sound::AudioFile::open(path))?;
+    let (width, height, fps) = (options.width, options.height, job.fps);
+    let mut writer = VideoWriter::new(temp, width, height, fps, options.format, bitrate, mixer.is_some())?;
+    // The sound goes in alongside the pictures, up to the end of each frame.
+    let mut heard = 0u64;
     for i in 0..job.total {
         if !progress(i as f64 / job.total as f64) {
             return Err(RenderError::Cancelled);
         }
         writer.write(job.draw(i)?)?;
+        if let Some(mixer) = &mut mixer {
+            let until = (u128::from(i + 1) * u128::from(mix::RATE) / u128::from(fps)) as u64;
+            while heard < until {
+                let Some(pcm) = mixer.next((until - heard).min(4800) as usize)? else { break };
+                heard += (pcm.len() / 2) as u64;
+                writer.write_sound(pcm)?;
+            }
+        }
+    }
+    // Whatever rounding left of the sound.
+    if let Some(mixer) = &mut mixer {
+        while let Some(pcm) = mixer.next(4800)? {
+            writer.write_sound(pcm)?;
+        }
     }
     writer.finish()?;
     Ok(job.total)
@@ -220,7 +239,7 @@ mod tests {
     /// recording, with the exporter's own writer.
     fn record(path: &Path, width: u32, height: u32, frames: u64) -> Result<(), RenderError> {
         start()?;
-        let mut writer = VideoWriter::new(path, width, height, 30, Format::H264, 2e6)?;
+        let mut writer = VideoWriter::new(path, width, height, 30, Format::H264, 2e6, false)?;
         let mut frame = Pixmap::new(width, height).unwrap();
         let mut light = Paint::default();
         light.set_color(Color::from_rgba8(240, 240, 240, 255));
@@ -270,8 +289,22 @@ mod tests {
             muted: false,
             name: None,
         }];
+        // Music under it, so the video gets a sound track.
+        project.tracks.push(MediaTrack {
+            id: "music".into(),
+            kind: TrackKind::Music,
+            path: "media/music.wav".into(),
+            duration_us: 2_000_000,
+            offset_us: 0,
+            volume: 0.8,
+            muted: false,
+            name: None,
+        });
         let bundle = ProjectBundle::create(dir.path(), &mut project).unwrap();
         std::fs::copy(&source, bundle.media_dir().join("screen.mp4")).unwrap();
+        let tone: Vec<f32> =
+            (0..96_000).map(|i| 0.3 * (i as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin()).collect();
+        std::fs::write(bundle.media_dir().join("music.wav"), crate::click::wav(&tone, 48_000)).unwrap();
         bundle.save(&mut project).unwrap();
         let root = bundle.root().to_path_buf();
         let options = |format: Format, name: &str| ExportOptions {
@@ -289,6 +322,8 @@ mod tests {
         let (count, size) = frames_in(&video.output);
         assert_eq!(size, (1280, 720));
         assert!((59..=61).contains(&count), "{count} frames");
+        let heard = sound::AudioFile::open(&video.output).unwrap().expect("the export has no sound");
+        assert!((heard.seconds() - 2.0).abs() < 0.2, "{} s of sound", heard.seconds());
 
         let gif = ExportOptions { width: 320, height: 180, fps: 10, ..options(Format::Gif, "Export.gif") };
         crate::export(&root, &gif, &mut |_| true).unwrap();

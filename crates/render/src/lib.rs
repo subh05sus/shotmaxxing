@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod animated;
 pub mod click;
+// Mixes the sound where the system has no mixer of its own.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod mix;
 mod model;
 pub mod scene;
 // Systems without an exporter of their own yet don't draw.

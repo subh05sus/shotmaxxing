@@ -5,16 +5,19 @@ use std::path::Path;
 
 use tiny_skia::Pixmap;
 use windows::Win32::Media::MediaFoundation::{
-    IMFSinkWriter, MF_MT_AVG_BITRATE, MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
-    MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SINK_WRITER_DISABLE_THROTTLING, MF_TRANSCODE_CONTAINERTYPE,
+    IMFSinkWriter, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, MF_MT_AUDIO_BITS_PER_SAMPLE,
+    MF_MT_AUDIO_BLOCK_ALIGNMENT, MF_MT_AUDIO_NUM_CHANNELS, MF_MT_AUDIO_SAMPLES_PER_SECOND, MF_MT_AVG_BITRATE,
+    MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE,
+    MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS,
+    MF_SINK_WRITER_DISABLE_THROTTLING, MF_TRANSCODE_CONTAINERTYPE, MFAudioFormat_AAC, MFAudioFormat_PCM,
     MFCreateAttributes, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFCreateSinkWriterFromURL,
-    MFMediaType_Video, MFTranscodeContainerType_MPEG4, MFVideoFormat_H264, MFVideoFormat_HEVC,
-    MFVideoFormat_RGB32, MFVideoInterlace_Progressive, eAVEncH264VProfile_High,
+    MFMediaType_Audio, MFMediaType_Video, MFTranscodeContainerType_MPEG4, MFVideoFormat_H264,
+    MFVideoFormat_HEVC, MFVideoFormat_RGB32, MFVideoInterlace_Progressive, eAVEncH264VProfile_High,
 };
 use windows::core::HSTRING;
 
 use super::system;
+use crate::mix::RATE;
 use crate::{Format, RenderError};
 
 fn pack(high: u32, low: u32) -> u64 {
@@ -28,6 +31,9 @@ pub struct VideoWriter {
     height: u32,
     fps: u32,
     written: u64,
+    /// The sound's stream, when there is sound, and the frames of it written so far.
+    sound: Option<u32>,
+    heard: u64,
 }
 
 impl VideoWriter {
@@ -38,6 +44,7 @@ impl VideoWriter {
         fps: u32,
         format: Format,
         bitrate: f64,
+        sound: bool,
     ) -> Result<Self, RenderError> {
         let hevc = format == Format::Hevc;
         let refused = |_| {
@@ -88,8 +95,9 @@ impl VideoWriter {
             // The rows run top to bottom. RGB is taken as bottom to top unless the stride says otherwise.
             input.SetUINT32(&MF_MT_DEFAULT_STRIDE, width * 4).map_err(system)?;
             writer.SetInputMediaType(stream, &input, None).map_err(refused)?;
+            let sound = if sound { Some(add_sound(&writer)?) } else { None };
             writer.BeginWriting().map_err(refused)?;
-            Ok(Self { writer, stream, width, height, fps, written: 0 })
+            Ok(Self { writer, stream, width, height, fps, written: 0, sound, heard: 0 })
         }
     }
 
@@ -128,10 +136,69 @@ impl VideoWriter {
         Ok(())
     }
 
+    /// Adds the next stretch of sound: 48 kHz interleaved stereo, as 16-bit PCM for the AAC encoder.
+    pub fn write_sound(&mut self, pcm: &[f32]) -> Result<(), RenderError> {
+        let Some(stream) = self.sound else { return Ok(()) };
+        let frames = (pcm.len() / 2) as u64;
+        if frames == 0 {
+            return Ok(());
+        }
+        let length = (pcm.len() * 2) as u32;
+        let time = |frame: u64| (i128::from(frame) * 10_000_000 / i128::from(RATE)) as i64;
+        let (at, end) = (time(self.heard), time(self.heard + frames));
+        // SAFETY: the buffer is locked while it is filled, with exactly its length.
+        unsafe {
+            let buffer = MFCreateMemoryBuffer(length).map_err(system)?;
+            let mut data = std::ptr::null_mut();
+            buffer.Lock(&mut data, None, None).map_err(system)?;
+            let out = std::slice::from_raw_parts_mut(data.cast::<i16>(), pcm.len());
+            for (o, &s) in out.iter_mut().zip(pcm) {
+                *o = (s.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+            }
+            buffer.Unlock().map_err(system)?;
+            buffer.SetCurrentLength(length).map_err(system)?;
+            let sample = MFCreateSample().map_err(system)?;
+            sample.AddBuffer(&buffer).map_err(system)?;
+            sample.SetSampleTime(at).map_err(system)?;
+            sample.SetSampleDuration(end - at).map_err(system)?;
+            self.writer.WriteSample(stream, &sample).map_err(|e| {
+                RenderError::System(format!("the sound couldn't be encoded: {}", e.message()))
+            })?;
+        }
+        self.heard += frames;
+        Ok(())
+    }
+
     /// Finishes the file. Dropping the writer without this leaves an unplayable file to delete.
     pub fn finish(self) -> Result<(), RenderError> {
         // SAFETY: finishes the file; the writer isn't used again.
         unsafe { self.writer.Finalize() }
             .map_err(|e| RenderError::System(format!("the video couldn't be finished: {}", e.message())))
+    }
+}
+
+/// Adds an AAC stereo stream at 192 kbps, fed with 16-bit PCM, and says which stream it is.
+fn add_sound(writer: &IMFSinkWriter) -> Result<u32, RenderError> {
+    let refused = |_| RenderError::Project("this computer can't encode AAC sound".into());
+    // SAFETY: Media Foundation calls with valid objects.
+    unsafe {
+        let output = MFCreateMediaType().map_err(system)?;
+        output.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).map_err(system)?;
+        output.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_AAC).map_err(system)?;
+        output.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16).map_err(system)?;
+        output.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, RATE).map_err(system)?;
+        output.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2).map_err(system)?;
+        output.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 24_000).map_err(system)?;
+        let stream = writer.AddStream(&output).map_err(refused)?;
+        let input = MFCreateMediaType().map_err(system)?;
+        input.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).map_err(system)?;
+        input.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_PCM).map_err(system)?;
+        input.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16).map_err(system)?;
+        input.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, RATE).map_err(system)?;
+        input.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2).map_err(system)?;
+        input.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, 4).map_err(system)?;
+        input.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, RATE * 4).map_err(system)?;
+        writer.SetInputMediaType(stream, &input, None).map_err(refused)?;
+        Ok(stream)
     }
 }

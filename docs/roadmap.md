@@ -33,8 +33,8 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [ ] Voice-over recorded in the editor
 - [x] Webcam bubble
 - [x] Export: MP4 (H.264, HEVC) and GIF, with the sound mixed
-- [ ] Windows export: MP4, GIF and PNG through Media Foundation and the portable compositor are written and await
-      testing on Windows; the sound mix is next
+- [ ] Windows export: MP4 (with the sound mixed), GIF and PNG through Media Foundation, the portable compositor
+      and the portable mixer are written and await testing on Windows
 - [x] Background export queue (exports wait in line and render one at a time)
 - [x] Autosave and version history
 - [x] Styled stills: any frame as a PNG, from the editor, the CLI and MCP
