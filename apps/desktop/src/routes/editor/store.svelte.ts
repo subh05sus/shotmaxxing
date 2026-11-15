@@ -167,6 +167,18 @@ function sampleProject(): Project {
 
 const DEPTH_SCALE = { subtle: 1.45, standard: 1.9, bold: 2.6 };
 
+/** A recorded sound in the preview, on the screen's timeline. */
+interface Sound {
+  kind: string;
+  el: HTMLAudioElement;
+  offset: number;
+  raw: string;
+  /** The microphone's cleaned-up copy, once made. */
+  clean: string | null;
+  /** Set up the first time this sound is turned past 100%, which only Web Audio can play. */
+  gain: { source: MediaElementAudioSourceNode; node: GainNode } | null;
+}
+
 export class EditorState {
   project = $state<Project>(sampleProject());
   /** Where the project lives on disk; `null` for the built-in sample. */
@@ -208,7 +220,7 @@ export class EditorState {
   #video: HTMLVideoElement | null = null;
   #cameraVideo: HTMLVideoElement | null = null;
   /** The recorded sound, each on the screen's timeline. The microphone may also have a cleaned-up copy. */
-  #sounds: { kind: string; el: HTMLAudioElement; offset: number; raw: string; clean: string | null }[] = [];
+  #sounds: Sound[] = [];
   /** The music's player, and the file it's for. It follows the project, so undo and redo bring it back. */
   #music: HTMLAudioElement | null = null;
   #musicFile: string | null = null;
@@ -244,9 +256,11 @@ export class EditorState {
         } else {
           const el = new Audio();
           el.preload = 'auto';
+          // Asked for with CORS, which the app's file server answers, so Web Audio may raise its level.
+          el.crossOrigin = 'anonymous';
           el.src = url;
           const clean = track.cleaned ? await mediaUrl(track.cleaned) : null;
-          this.#sounds.push({ kind: track.kind, el, offset, raw: url, clean });
+          this.#sounds.push({ kind: track.kind, el, offset, raw: url, clean, gain: null });
         }
       }
       this.cursorPath = loaded.cursor.map((c) => ({ t: c.t_us / 1e6, x: c.x, y: c.y }));
@@ -319,8 +333,7 @@ export class EditorState {
           : sound.kind === 'system_audio'
             ? this.project.audio.system
             : 1;
-      // Browsers stop at 100%; the export applies louder settings in full.
-      sound.el.volume = Math.min(1, Math.max(0, level));
+      this.#setLevel(sound, Math.max(0, level));
       this.#follow(sound.el, sound.offset, t, speed);
     }
     if (this.#cameraVideo && this.camera) this.#follow(this.#cameraVideo, this.camera.offset, t, speed);
@@ -464,11 +477,34 @@ export class EditorState {
     });
   }
 
+  /**
+   * Plays a sound at `level`, where 1 is as recorded. Media elements stop at 100%, so louder settings (the sliders
+   * go to 150%, as the export does) pass through a gain node, made once for that sound and kept after.
+   */
+  #setLevel(sound: Sound, level: number): void {
+    if (level > 1 && !sound.gain) {
+      try {
+        this.#audio ??= new AudioContext();
+        const source = this.#audio.createMediaElementSource(sound.el);
+        const node = this.#audio.createGain();
+        source.connect(node).connect(this.#audio.destination);
+        sound.gain = { source, node };
+        if (this.playing && this.#audio.state === 'suspended') void this.#audio.resume();
+      } catch {
+        // No Web Audio here: the preview stops at 100%, and the export still applies the full level.
+      }
+    }
+    sound.el.volume = Math.min(1, level);
+    if (sound.gain) sound.gain.node.gain.value = Math.max(1, level);
+  }
+
   #releaseSounds(): void {
     for (const sound of this.#sounds) {
       sound.el.pause();
       sound.el.removeAttribute('src');
       sound.el.load();
+      sound.gain?.source.disconnect();
+      sound.gain?.node.disconnect();
     }
     this.#sounds = [];
     this.#releaseMusic();
@@ -585,6 +621,8 @@ export class EditorState {
     if (this.playing) return;
     if (this.time >= this.project.duration - 0.05) this.time = 0;
     this.playing = true;
+    // A suspended audio context mutes the sounds routed through it.
+    if (this.#audio?.state === 'suspended' && this.#sounds.some((s) => s.gain)) void this.#audio.resume();
     this.#last = performance.now();
     const video = this.#video;
     if (video) {
