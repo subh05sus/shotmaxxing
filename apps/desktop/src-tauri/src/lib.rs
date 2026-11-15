@@ -55,6 +55,7 @@ pub fn run() {
             tray::create(handle)?;
             shortcuts::register(handle)?;
             takes::listen(handle);
+            windows::restore_theme(handle);
             windows::open_home(handle, None)?;
             Ok(())
         })
@@ -70,6 +71,7 @@ pub fn run() {
             commands::open_window,
             commands::reveal_in_folder,
             commands::show_error,
+            windows::set_app_theme,
             packs::list_packs,
             packs::add_pack,
             packs::remove_pack,

@@ -27,7 +27,7 @@
   import { go, route, startRouter } from './lib/router.svelte';
   import { persist, settings } from './lib/settings.svelte';
   import { allCommands, registerCommands, ui } from './lib/commands.svelte';
-  import { isTauri, openWindow, platform, powerStatus, setMenuBarIcon } from './lib/native';
+  import { isTauri, openWindow, platform, powerStatus, setAppTheme, setMenuBarIcon } from './lib/native';
   import WindowChrome from './routes/WindowChrome.svelte';
   import Onboarding from './routes/onboarding/Onboarding.svelte';
   import Home from './routes/home/Home.svelte';
@@ -93,6 +93,11 @@
     // Save every settings change.
     JSON.stringify(settings);
     persist();
+  });
+
+  $effect(() => {
+    // The native parts (the sidebar's material, menus, dialogs) follow the chosen theme, not only the system's.
+    if (isTauri) setAppTheme(settings.theme).catch(() => {});
   });
 
   $effect(() => {

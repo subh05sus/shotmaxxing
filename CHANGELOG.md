@@ -9,6 +9,8 @@ can change how things work.
   Background tool, a look applies its settings in one click, and projects keep a copy of the wallpaper they use.
   `shotmaxxing pack check` and `pack list` check and list packs, and agents can choose pack wallpapers.
   [How to make one](docs/content-packs.md).
+- **Fixed:** with the Light theme on a Mac in Dark Mode, the sidebar stayed dark and its labels were unreadable. The
+  window material, menus and dialogs now follow the theme chosen in Settings, from the first frame of the next launch.
 
 ## 0.1.0 (2026-11-16)
 

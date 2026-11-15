@@ -720,6 +720,16 @@ export function chooseMusic(project: string): Promise<MusicFile | null> {
 /** What the browser preview and the sample project "pick". */
 export const SAMPLE_MUSIC: MusicFile = { path: 'media/music.mp3', name: 'Sunrise drive.mp3', seconds: 154 };
 
+// Theme --------------------------------------------------------------------------------------------------------
+
+/**
+ * Makes the native parts (the sidebar's material, menus, dialogs) follow the theme chosen in the app rather than the
+ * system's, and remembers it so the next launch starts in it.
+ */
+export function setAppTheme(theme: 'system' | 'light' | 'dark'): Promise<void> {
+  return call('set_app_theme', { theme }, () => undefined);
+}
+
 // Content packs ------------------------------------------------------------------------------------------------
 
 /** A content pack's wallpaper. A project names it `<pack>.<id>` and keeps a copy of its CSS. */

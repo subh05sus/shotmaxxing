@@ -76,6 +76,41 @@ fn standard<'a, R: Runtime, M: Manager<R>>(
     builder
 }
 
+/// Where the theme chosen in Settings is remembered, in the app's config folder, so the next launch starts in it.
+const THEME_FILE: &str = "theme";
+
+/// The native appearance for a theme setting: `None` follows the system.
+fn native_theme(setting: &str) -> Option<tauri::Theme> {
+    match setting {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    }
+}
+
+/// Starts the app in the theme it was left in, before any window opens, so the sidebar's material doesn't flash in
+/// the system's appearance first.
+pub fn restore_theme<R: Runtime>(app: &AppHandle<R>) {
+    let Ok(dir) = app.path().app_config_dir() else { return };
+    if let Ok(setting) = std::fs::read_to_string(dir.join(THEME_FILE)) {
+        app.set_theme(native_theme(setting.trim()));
+    }
+}
+
+/// Makes the app's native parts follow the theme chosen in Settings: `system`, `light` or `dark`. The window
+/// material, menus and dialogs otherwise follow the system, so a Light UI on a Mac in Dark Mode put dark text on a
+/// dark sidebar.
+#[tauri::command]
+pub fn set_app_theme<R: Runtime>(app: AppHandle<R>, theme: String) -> Result<(), String> {
+    if !["system", "light", "dark"].contains(&theme.as_str()) {
+        return Err(format!("there's no theme called “{theme}”"));
+    }
+    app.set_theme(native_theme(&theme));
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(THEME_FILE), theme).map_err(|e| e.to_string())
+}
+
 /// Native translucent material behind the window: the sidebar material on macOS, Mica on Windows 11. The UI
 /// paints its own content areas and leaves the sidebar clear, so the material shows only there.
 fn with_material<'a, R: Runtime, M: Manager<R>>(
