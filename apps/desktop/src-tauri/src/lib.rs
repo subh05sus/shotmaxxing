@@ -56,7 +56,8 @@ pub fn run() {
             shortcuts::register(handle)?;
             takes::listen(handle);
             windows::restore_theme(handle);
-            windows::open_home(handle, None)?;
+            // "launch" tells the UI the app has just started, for the logo's short build.
+            windows::open_home(handle, Some("launch"))?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

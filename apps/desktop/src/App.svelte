@@ -28,6 +28,8 @@
   import { persist, settings } from './lib/settings.svelte';
   import { allCommands, registerCommands, ui } from './lib/commands.svelte';
   import { focusHomeSearch } from './lib/search.svelte';
+  import { playIris } from './lib/iris.svelte';
+  import IrisOverlay from './components/IrisOverlay.svelte';
   import { isTauri, openWindow, platform, powerStatus, setAppTheme, setMenuBarIcon } from './lib/native';
   import WindowChrome from './routes/WindowChrome.svelte';
   import Onboarding from './routes/onboarding/Onboarding.svelte';
@@ -72,7 +74,12 @@
     checkPower();
     const powerTimer = setInterval(checkPower, 30_000);
 
-    if (!location.hash || location.hash === '#/' || location.hash === '#') {
+    if (location.hash === '#/launch') {
+      // The app has just started: the logo builds itself quickly and opens onto the first page. Setup's welcome
+      // has the full build instead (routes/onboarding).
+      if (settings.onboardingDone || settings.onboardingStep > 0) playIris('launch');
+      go(settings.onboardingDone ? 'home/library' : 'onboarding');
+    } else if (!location.hash || location.hash === '#/' || location.hash === '#') {
       go(settings.onboardingDone ? 'home/library' : 'onboarding');
     }
 
@@ -248,3 +255,4 @@
 <CommandPalette bind:open={ui.palette} commands={allCommands()} />
 <ShortcutSheet bind:open={ui.shortcuts} groups={shortcutGroups} />
 <Toaster />
+<IrisOverlay />

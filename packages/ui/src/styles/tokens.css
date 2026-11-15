@@ -165,6 +165,7 @@
 
 :root,
 :root[data-theme='light'] {
+  --scene-glow: oklch(0.87 0.21 128 / 0.2);
   color-scheme: light;
   --bg: oklch(0.975 0.003 264);
   --surface: oklch(1 0 0);
@@ -211,6 +212,7 @@
 /* ---------------------------------------------------------------- Dark (its own palette, not an inversion) */
 
 :root[data-theme='dark'] {
+  --scene-glow: oklch(0.87 0.21 128 / 0.16);
   color-scheme: dark;
   --bg: oklch(0.215 0.004 264);
   --surface: oklch(0.245 0.005 264);
@@ -270,6 +272,9 @@
 
 /* Fixed colours for small controls, the stage and the browser-preview window frame. */
 :root {
+  /* The app icon's tile, top to bottom (sampled from the icon), for the logo that builds itself at launch. */
+  --icon-tile-top: oklch(0.969 0.084 117);
+  --icon-tile-bottom: oklch(0.835 0.209 128);
   --knob: oklch(1 0 0);
   --knob-shadow: 0 1px 2px oklch(0 0 0 / 0.25), 0 0 0 0.5px oklch(0 0 0 / 0.08);
   --thumb-shadow: 0 0 0 0.5px oklch(0 0 0 / 0.18), 0 1px 3px oklch(0 0 0 / 0.3);

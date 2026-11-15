@@ -5,6 +5,13 @@ can change how things work.
 
 ## Unreleased
 
+- **The logo builds itself on the first launch:** a point of lime light draws the ring, the blades swing in and
+  click shut, light fills the icon, and the view flies through the lens onto the welcome. Any key or click skips it;
+  Reduce Motion gets a fade, and Low Power Mode goes straight to the welcome. Every later start plays a short version.
+- **Setup is a set of full-window scenes:** each step has big type and one action, the view pans from one step to the
+  next, and dots replace the stepper. The welcome plays a 10-second show of a sign-up page recording itself (a click,
+  an auto zoom that says why, the take saved). Each permission acts out what it allows, and agents that aren't
+  installed share one line instead of a row each. Finishing closes the shutter and opens it on the Library.
 - **Content packs:** add wallpapers and looks from a JSON file in Settings → Content packs. They show in the editor's
   Background tool, a look applies its settings in one click, and projects keep a copy of the wallpaper they use.
   `shotmaxxing pack check` and `pack list` check and list packs, and agents can choose pack wallpapers.

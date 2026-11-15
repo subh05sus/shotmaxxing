@@ -29,8 +29,9 @@ export function go(path: string): void {
   const target = next.replace(/^#\/?/, '');
   const [kind, project] = target.split('?')[0].split('/');
   const [here, shown] = route.path;
-  // Only the Home window starts with no page (and moves to its first one in place, without coming forward).
-  const inHome = !here || here === 'home' || here === 'onboarding';
+  // Only the Home window starts with no page, or with `launch` when the app has just started, and moves to its
+  // first one in place, without coming forward.
+  const inHome = !here || here === 'launch' || here === 'home' || here === 'onboarding';
   if (isTauri && (kind === 'home' || kind === 'onboarding') && !inHome)
     return void openWindow('home', target);
   if (isTauri && kind === 'editor' && (here !== 'editor' || shown !== project))

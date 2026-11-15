@@ -79,6 +79,7 @@ export {
   ArrowDataTransferVerticalIcon as ArrowDownUp,
   ArrowDownLeft01Icon as ArrowDownLeft,
   ArrowDownRight01Icon as ArrowDownRight,
+  ArrowRight02Icon as ArrowRight,
   ArrowUpLeft01Icon as ArrowUpLeft,
   ArrowUpRight01Icon as ArrowUpRight,
   AudioWave02Icon as AudioLines,
