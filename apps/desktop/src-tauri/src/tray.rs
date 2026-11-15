@@ -1,25 +1,51 @@
 //! The menu bar item (system tray on Windows): the app's home while no window is open.
 
+use shotmaxxing_capture::LeftOut;
 use shotmaxxing_core::geometry::Rect;
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Runtime};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::{recording, windows};
 
-/// Where the menu-bar icon is on the desktop, in points, so a recording can leave out a click on it (opening its
-/// menu to stop the take). It isn't among the window server's windows, so it can't be told by its window as the
-/// pill can.
-pub fn area<R: Runtime>(app: &AppHandle<R>) -> Vec<Rect> {
-    let Some(rect) = app.tray_by_id("main").and_then(|tray| tray.rect().ok().flatten()) else {
-        return Vec::new();
-    };
-    // The frame comes in pixels at its display's scale: the main display's, which has the menu bar.
+/// Where the menu-bar icon is on the desktop, so recordings leave out a click on it (opening its menu to stop the
+/// take). It isn't among the window server's windows, so it can't be told by its window as the pill can. And it
+/// moves: over a full-screen app the menu bar usually slides in only when the pointer goes up, and other items come
+/// and go beside it. So the icon's own events keep this current, since the pointer always passes over the icon
+/// before clicking it.
+#[derive(Default)]
+pub struct IconArea(LeftOut);
+
+/// The icon's place, read now, for a recording about to start. The icon's events keep it current after that.
+pub fn area<R: Runtime>(app: &AppHandle<R>) -> LeftOut {
+    let shared = app.state::<IconArea>().0.clone();
+    // No frame when the icon is hidden in Settings: then there's nothing to click.
+    let rect = app.tray_by_id("main").and_then(|tray| tray.rect().ok().flatten());
+    shared.set(rect.map(|rect| vec![points(app, rect)]).unwrap_or_default());
+    shared
+}
+
+/// A frame from the tray, in pixels at its display's scale (the main display's, which has the menu bar), in points.
+fn points<R: Runtime>(app: &AppHandle<R>, rect: tauri::Rect) -> Rect {
     let scale = app.primary_monitor().ok().flatten().map_or(1.0, |monitor| monitor.scale_factor());
     let position = rect.position.to_logical::<f64>(scale);
     let size = rect.size.to_logical::<f64>(scale);
-    vec![Rect::new(position.x, position.y, size.width, size.height)]
+    Rect::new(position.x, position.y, size.width, size.height)
+}
+
+/// Keeps [`IconArea`] where the icon is, from the icon's own events (the pointer entering, moving over or clicking
+/// it), which carry its frame at that moment.
+fn follow<R: Runtime>(app: &AppHandle<R>, event: TrayIconEvent) {
+    let rect = match event {
+        TrayIconEvent::Enter { rect, .. }
+        | TrayIconEvent::Move { rect, .. }
+        | TrayIconEvent::Leave { rect, .. }
+        | TrayIconEvent::Click { rect, .. }
+        | TrayIconEvent::DoubleClick { rect, .. } => rect,
+        _ => return,
+    };
+    app.state::<IconArea>().0.set(vec![points(app, rect)]);
 }
 
 /// Builds the menu for the current state: while recording, the first items stop or discard the take.
@@ -76,6 +102,7 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .tooltip("Shotmaxxing")
         .menu(&menu(app, false)?)
         .show_menu_on_left_click(true)
+        .on_tray_icon_event(|tray, event| follow(tray.app_handle(), event))
         .on_menu_event(|app, event| {
             let result = match event.id().as_ref() {
                 "record" => windows::open_record(app, None),

@@ -50,7 +50,7 @@ pub struct ProjectOptions {
     pub microphone: DeviceChoice,
     pub camera: DeviceChoice,
     /// Places whose clicks are Shotmaxxing's own: see [`RecordOptions::left_out`].
-    pub left_out: Vec<shotmaxxing_core::geometry::Rect>,
+    pub left_out: crate::LeftOut,
 }
 
 impl ProjectOptions {
@@ -63,7 +63,7 @@ impl ProjectOptions {
             system_audio: false,
             microphone: DeviceChoice::Off,
             camera: DeviceChoice::Off,
-            left_out: Vec::new(),
+            left_out: crate::LeftOut::default(),
         }
     }
 }

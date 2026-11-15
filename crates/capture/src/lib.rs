@@ -16,8 +16,10 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
+use shotmaxxing_core::geometry::{Point, Rect};
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent};
 
 mod clipboard;
@@ -223,9 +225,31 @@ pub struct RecordOptions {
     pub microphone: Option<DeviceRecording>,
     /// Record a camera into an `.mp4` file.
     pub camera: Option<DeviceRecording>,
-    /// Places on the desktop, in points, that are Shotmaxxing's own though no window of its is there: its menu-bar
-    /// icon. Clicks there are left out of the telemetry, like clicks on its windows (macOS).
-    pub left_out: Vec<shotmaxxing_core::geometry::Rect>,
+    /// Places on the desktop whose clicks are Shotmaxxing's own: see [`LeftOut`].
+    pub left_out: LeftOut,
+}
+
+/// Places on the desktop, in points, that are Shotmaxxing's own though no window of its is there: its menu-bar icon.
+/// Clicks there are left out of the telemetry, like clicks on its windows (macOS). Shared, so the app can keep them
+/// where the icon is while a recording runs: over a full-screen app the menu bar usually slides in only when the
+/// pointer goes up, and other items come and go beside the icon.
+#[derive(Clone, Debug, Default)]
+pub struct LeftOut(Arc<Mutex<Vec<Rect>>>);
+
+impl LeftOut {
+    pub fn new(areas: Vec<Rect>) -> Self {
+        Self(Arc::new(Mutex::new(areas)))
+    }
+
+    /// Puts the places where they are now, for every recording that shares them.
+    pub fn set(&self, areas: Vec<Rect>) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = areas;
+    }
+
+    /// Whether `point` is in one of the places.
+    pub fn contains(&self, point: Point) -> bool {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).iter().any(|area| area.contains(point))
+    }
 }
 
 impl RecordOptions {
@@ -239,7 +263,7 @@ impl RecordOptions {
             system_audio: None,
             microphone: None,
             camera: None,
-            left_out: Vec::new(),
+            left_out: LeftOut::default(),
         }
     }
 }
@@ -449,5 +473,25 @@ mod tests {
         assert_eq!(styled.canvas.background, look.background);
         assert_eq!((styled.canvas.padding, styled.canvas.corner_radius), (0.12, 20.0));
         assert_eq!(styled.canvas.aspect, shotmaxxing_core::project::AspectRatio::Original);
+    }
+}
+
+#[cfg(test)]
+mod left_out_tests {
+    use super::*;
+
+    #[test]
+    fn places_move_for_every_recording_that_shares_them() {
+        let app = LeftOut::new(vec![Rect::new(880.0, 0.0, 30.0, 33.0)]);
+        let recording = app.clone();
+        assert!(recording.contains(Point::new(890.0, 12.0)));
+        // macOS's own recording item pushes the icon 30 points to the left.
+        app.set(vec![Rect::new(850.0, 0.0, 30.0, 33.0)]);
+        assert!(!recording.contains(Point::new(890.0, 12.0)));
+        assert!(recording.contains(Point::new(860.0, 12.0)));
+        // Hidden in Settings: nothing to leave out.
+        app.set(Vec::new());
+        assert!(!recording.contains(Point::new(860.0, 12.0)));
+        assert!(!LeftOut::default().contains(Point::new(0.0, 0.0)));
     }
 }

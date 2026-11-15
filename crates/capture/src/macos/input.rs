@@ -50,7 +50,7 @@ struct TapState {
     /// Processes whose windows are never in a take (Shotmaxxing's own)...
     left_out: Vec<i32>,
     /// ...and places that are its own without a window: its menu-bar icon.
-    areas: Vec<Rect>,
+    areas: crate::LeftOut,
     /// Whether the left and the right button's last press was on one of those windows, so its release is left out too.
     dropped: [AtomicBool; 2],
 }
@@ -122,7 +122,7 @@ pub struct Telemetry {
 
 impl Telemetry {
     /// `left_out`: places on the desktop whose clicks are Shotmaxxing's own, as [`crate::RecordOptions::left_out`].
-    pub fn start(origin: Origin, _started: f64, left_out: Vec<Rect>) -> Self {
+    pub fn start(origin: Origin, _started: f64, left_out: crate::LeftOut) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
 
         let places = match origin {
@@ -338,7 +338,7 @@ unsafe extern "C-unwind" fn tap_callback(
             // Shotmaxxing's own windows (the recording pill, its menu-bar icon's menu) are never in a take, so a
             // click on them isn't either: it would ripple on, and be zoomed into, nothing. Nor is one on its
             // menu-bar icon (opening the menu to stop the take).
-            let ours = state.areas.iter().any(|area| area.contains(Point::new(p.x, p.y)))
+            let ours = state.areas.contains(Point::new(p.x, p.y))
                 || window::owner_at(p).is_some_and(|pid| state.left_out.contains(&pid));
             state.dropped[usize::from(right)].store(ours, Ordering::Relaxed);
             if ours {

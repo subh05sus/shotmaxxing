@@ -44,6 +44,7 @@ pub fn run() {
         .manage(recording::Recordings::default())
         .manage(recording::Notices::default())
         .manage(system::MenuBarIcon::default())
+        .manage(tray::IconArea::default())
         .manage(export::Exports::default())
         .manage(takes::Takes::default())
         .manage(voice_over::VoiceOvers::default())

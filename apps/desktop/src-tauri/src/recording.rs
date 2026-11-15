@@ -8,9 +8,8 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel, sync_channel}
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use shotmaxxing_capture::{DeviceChoice, FinishedProject, ProjectOptions, ProjectRecording, Target};
+use shotmaxxing_capture::{DeviceChoice, FinishedProject, LeftOut, ProjectOptions, ProjectRecording, Target};
 use shotmaxxing_control::{RecordRequest, Recorded, RecordingStatus};
-use shotmaxxing_core::geometry::Rect;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::{takes, tray, windows};
@@ -169,7 +168,7 @@ fn start_session(
     source: String,
     name: String,
     options: StartOptions,
-    left_out: Vec<Rect>,
+    left_out: LeftOut,
 ) -> Result<(Session, PathBuf), String> {
     let target = parse_source(&source)?;
     let mut capture = ProjectOptions::new(target);
