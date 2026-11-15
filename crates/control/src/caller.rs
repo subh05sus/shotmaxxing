@@ -16,11 +16,13 @@ pub struct Caller {
     pub agent: Option<String>,
     /// The app all of this runs in, e.g. "Terminal" or "Visual Studio Code".
     pub app: Option<String>,
-    /// Who signed that app, when its signature checks out and Apple vouches for the signer: "Apple", "the Mac App
-    /// Store", or the name on the developer's Developer ID.
+    /// Who signed that app, when its signature checks out and the system vouches for the signer. On macOS "Apple",
+    /// "the Mac App Store", or the name on the developer's Developer ID; on Windows the name on the program's
+    /// certificate, or for an app from a package "the Microsoft Store", "Microsoft" (part of Windows), or the
+    /// publisher of a package signed by a certificate this computer trusts.
     pub signer: Option<String>,
-    /// Whether the app's signature was checked at all. It isn't on Linux, nor on Windows for an app from a package
-    /// (the Store, MSIX) whose program isn't signed itself: then a missing signer says nothing about the app.
+    /// Whether the app's signature was checked at all. It isn't on Linux, nor for a package Windows can't say the
+    /// origin of: then a missing signer says nothing about the app.
     pub checked: bool,
 }
 
@@ -42,6 +44,45 @@ enum Signature {
     Nobody,
     /// Not checked.
     Unknown,
+}
+
+/// What a package's signature says, from where Windows says the package came from (`GetStagedPackageOrigin`'s
+/// `PackageOrigin`) and the publisher it names, the subject of the certificate that signs it. A program in a package
+/// (from the Microsoft Store, or an MSIX) is usually not signed itself: the package's signature vouches for it.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn package_signature(origin: i32, publisher: Option<&str>) -> Signature {
+    match origin {
+        // PackageOrigin_Unknown.
+        0 => Signature::Unknown,
+        // PackageOrigin_Inbox: part of Windows.
+        2 => Signature::By("Microsoft".into()),
+        // PackageOrigin_Store: the Microsoft Store signed it.
+        3 => Signature::By("the Microsoft Store".into()),
+        // PackageOrigin_LineOfBusiness: installed by an organisation, signed by a certificate this computer trusts.
+        6 => publisher.and_then(common_name).map_or(Signature::Nobody, Signature::By),
+        // Unsigned, or a developer's own build, signed or not: nobody Windows vouches for.
+        _ => Signature::Nobody,
+    }
+}
+
+/// The common name in a certificate's subject: "Contoso Ltd" from `CN=Contoso Ltd, O=Contoso, C=US`. A value in
+/// quotes may hold commas.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn common_name(subject: &str) -> Option<String> {
+    let (mut parts, mut part, mut quoted) = (Vec::new(), String::new(), false);
+    for c in subject.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            ',' if !quoted => parts.push(std::mem::take(&mut part)),
+            _ => part.push(c),
+        }
+    }
+    parts.push(part);
+    parts
+        .iter()
+        .find_map(|part| part.trim().strip_prefix("CN="))
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
 }
 
 /// A running process: its program and the process that started it.
@@ -304,7 +345,7 @@ mod imp {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 
     use windows_sys::Win32::Foundation::{
-        APPMODEL_ERROR_NO_PACKAGE, FILETIME, GENERIC_READ, HANDLE, INVALID_HANDLE_VALUE,
+        APPMODEL_ERROR_NO_PACKAGE, ERROR_SUCCESS, FILETIME, GENERIC_READ, HANDLE, INVALID_HANDLE_VALUE,
     };
     use windows_sys::Win32::Security::Cryptography::Catalog::{
         CATALOG_INFO, CryptCATAdminAcquireContext2, CryptCATAdminCalcHashFromFileHandle2,
@@ -324,7 +365,10 @@ mod imp {
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GetFileVersionInfoSizeW, GetFileVersionInfoW,
         OPEN_EXISTING, VerQueryValueW,
     };
-    use windows_sys::Win32::Storage::Packaging::Appx::GetPackageFullName;
+    use windows_sys::Win32::Storage::Packaging::Appx::{
+        GetPackageFullName, GetPackageId, GetStagedPackageOrigin, PACKAGE_ID, PackageOrigin,
+        PackageOrigin_Unknown,
+    };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
     };
@@ -333,7 +377,7 @@ mod imp {
         QueryFullProcessImageNameW,
     };
 
-    use super::{Process, Signature};
+    use super::{Process, Signature, package_signature};
 
     /// Every running process's parent and program name, from one snapshot.
     fn snapshot() -> HashMap<u32, (u32, String)> {
@@ -499,10 +543,11 @@ mod imp {
         let Some(path) = full_path(pid) else { return Signature::Nobody };
         match signer_of(&path) {
             Some(signer) => Signature::By(signer),
-            // A package's own signature vouches for the programs in it, and isn't checked here: such an app gets
-            // neither the shield nor the warning.
-            None if packaged(pid) => Signature::Unknown,
-            None => Signature::Nobody,
+            // A program in a package is vouched for by the package's signature instead.
+            None => match package(pid) {
+                Some((origin, publisher)) => package_signature(origin, publisher.as_deref()),
+                None => Signature::Nobody,
+            },
         }
     }
 
@@ -684,13 +729,51 @@ mod imp {
     }
 
     /// Whether the process runs from a package: an app from the Store, or one installed with MSIX.
-    fn packaged(pid: u32) -> bool {
-        let Some(process) = open(pid) else { return false };
+    /// Where the package the process `pid` runs from came from (a `PackageOrigin`), and the publisher it names.
+    /// `None` when the process isn't in a package.
+    fn package(pid: u32) -> Option<(PackageOrigin, Option<String>)> {
+        let process = open(pid)?;
+        let handle = process.as_raw_handle() as HANDLE;
         let mut len = 0u32;
         // SAFETY: asks only how long the package's name is; a process outside any package says it has none.
-        let status =
-            unsafe { GetPackageFullName(process.as_raw_handle() as HANDLE, &mut len, std::ptr::null_mut()) };
-        status != APPMODEL_ERROR_NO_PACKAGE
+        if unsafe { GetPackageFullName(handle, &mut len, std::ptr::null_mut()) } == APPMODEL_ERROR_NO_PACKAGE
+        {
+            return None;
+        }
+        let mut name = vec![0u16; len as usize + 1];
+        let mut origin = PackageOrigin_Unknown;
+        // SAFETY: the buffer holds `len` characters and the name's NUL; the origin is written into `origin`.
+        let named = unsafe { GetPackageFullName(handle, &mut len, name.as_mut_ptr()) } == ERROR_SUCCESS;
+        if !named || unsafe { GetStagedPackageOrigin(name.as_ptr(), &mut origin) } != ERROR_SUCCESS {
+            origin = PackageOrigin_Unknown;
+        }
+        Some((origin, publisher(handle)))
+    }
+
+    /// The publisher the package of `process` names: the subject of the certificate that signs it.
+    fn publisher(process: HANDLE) -> Option<String> {
+        let mut len = 0u32;
+        // SAFETY: asks only how much room the package's identity takes.
+        unsafe { GetPackageId(process, &mut len, std::ptr::null_mut()) };
+        if (len as usize) < size_of::<PACKAGE_ID>() {
+            return None;
+        }
+        // The identity's strings follow it in the same buffer; u64s keep its pointers aligned.
+        let mut buffer = vec![0u64; (len as usize).div_ceil(8)];
+        // SAFETY: the buffer holds `len` bytes.
+        if unsafe { GetPackageId(process, &mut len, buffer.as_mut_ptr().cast()) } != ERROR_SUCCESS {
+            return None;
+        }
+        // SAFETY: the buffer starts with the PACKAGE_ID just written, whose strings point into the buffer and end
+        // with a NUL; a name is read only up to 1024 characters.
+        unsafe {
+            let id = &*buffer.as_ptr().cast::<PACKAGE_ID>();
+            if id.publisher.is_null() {
+                return None;
+            }
+            let end = (0..1024).find(|&i| *id.publisher.add(i) == 0)?;
+            Some(String::from_utf16_lossy(std::slice::from_raw_parts(id.publisher, end)))
+        }
     }
 }
 
@@ -765,6 +848,36 @@ fn developer(summary: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_packages_origin_says_who_vouches_for_it() {
+        assert_eq!(
+            package_signature(3, Some("CN=33F0F141-36F3-4EC2")),
+            Signature::By("the Microsoft Store".into())
+        );
+        assert_eq!(package_signature(2, None), Signature::By("Microsoft".into()));
+        assert_eq!(
+            package_signature(6, Some("CN=Contoso Ltd, O=Contoso, C=US")),
+            Signature::By("Contoso Ltd".into())
+        );
+        assert_eq!(
+            package_signature(6, None),
+            Signature::Nobody,
+            "a trusted package with no publisher to name"
+        );
+        for unvouched in [1, 4, 5, 42] {
+            assert_eq!(package_signature(unvouched, Some("CN=Me")), Signature::Nobody);
+        }
+        assert_eq!(package_signature(0, Some("CN=Contoso")), Signature::Unknown);
+    }
+
+    #[test]
+    fn a_subjects_common_name_is_read_with_quotes() {
+        assert_eq!(common_name("CN=Contoso Ltd, O=Contoso, C=US").as_deref(), Some("Contoso Ltd"));
+        assert_eq!(common_name("O=Contoso, CN=\"Contoso, Inc.\", C=US").as_deref(), Some("Contoso, Inc."));
+        assert_eq!(common_name("O=Contoso, C=US"), None);
+        assert_eq!(common_name("CN= , O=Contoso"), None);
+    }
 
     #[test]
     fn this_process_is_named_by_the_system() {
