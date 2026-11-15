@@ -19,7 +19,6 @@
   import {
     Advanced,
     Button,
-    CheckDraw,
     Icon,
     IconButton,
     InfoTip,
@@ -30,8 +29,8 @@
     Spinner,
     StatusDot,
     Switch,
-    toast,
   } from '@shotmaxxing/ui';
+  import { languageName, width } from '../../lib/captions';
   import { timecode } from '../../lib/format';
   import { settings } from '../../lib/settings.svelte';
   import { WALLPAPERS } from '../../lib/wallpapers';
@@ -59,21 +58,38 @@
   );
   const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-  let captionProgress = $state(0);
   const silenceSeconds = $derived(p.audio.silences.reduce((sum, s) => sum + s.end - s.start, 0));
-  function generateCaptions() {
-    ed.change('Generate captions', () => (p.captions.state = 'busy'));
-    captionProgress = 0;
-    const started = performance.now();
-    const timer = setInterval(() => {
-      captionProgress = Math.min(1, (performance.now() - started) / 2600);
-      if (captionProgress >= 1) {
-        clearInterval(timer);
-        ed.change('Captions ready', () => (p.captions.state = 'ready'));
-        toast('Captions ready: 6 lines, checked against your audio', { tone: 'success' });
-      }
-    }, 120);
-  }
+
+  // Captions: made from the take's microphone and any voice-overs.
+  const voice = $derived(p.has.mic || p.audio.voiceOvers.length > 0);
+  const captionJob = $derived(ed.captionJob);
+  const captionNow = $derived(ed.captionNow?.line.id);
+  const modelMb = $derived(Math.round((ed.captionModel?.bytes ?? 59_707_625) / 1e6));
+  const jobText = $derived.by(() => {
+    const job = ed.captionJob;
+    if (!job) return '';
+    const pct = `${Math.round(job.progress * 100)}%`;
+    switch (job.stage) {
+      case 'starting':
+        return 'Getting ready…';
+      case 'waiting':
+        return 'Waiting for another project’s captions…';
+      case 'download':
+        return `Downloading the speech model… ${pct}`;
+      case 'listen':
+        return 'Listening to the voice…';
+      case 'transcribe':
+        return `Transcribing… ${pct}`;
+    }
+  });
+  // Whether captions can be made here is asked once, when this panel first opens.
+  $effect(() => {
+    if (ed.tool === 'ai' && !ed.captionModel) void ed.checkCaptionModel();
+  });
+
+  /** A message from the app as a sentence. */
+  const sentence = (text: string) =>
+    `${text.charAt(0).toUpperCase()}${text.slice(1)}${/[.!?]$/.test(text) ? '' : '.'}`;
 </script>
 
 <aside
@@ -677,109 +693,174 @@
           <Button class="mt-2.5" size="sm" onclick={() => void ed.addMusic()}>Add music…</Button>
         {/if}
       </section>
-    {:else if !p.has.mic}
-      <p class="flex items-center gap-1.5 rounded-[8px] bg-fill px-2.5 py-2 text-footnote text-fg-muted">
-        <Icon icon={Lock} size={13} aria-hidden="true" /> Everything here runs on this computer. Nothing is uploaded.
-      </p>
-      <p class="mt-3 text-footnote text-fg-muted">
-        Captions, voice cleanup and cutting silences work on your voice. This take was recorded without a
-        microphone.
-      </p>
     {:else}
       <p class="flex items-center gap-1.5 rounded-[8px] bg-fill px-2.5 py-2 text-footnote text-fg-muted">
         <Icon icon={Lock} size={13} aria-hidden="true" /> Everything here runs on this computer. Nothing is uploaded.
       </p>
-      <section class="mt-3 rounded-[10px] border border-border p-3">
-        <h3 class="flex items-center gap-2 text-callout font-semibold">
-          <Icon icon={Captions} size={15} aria-hidden="true" /> Captions
-        </h3>
-        {#if ed.path}
+      <section class="mt-3 rounded-[10px] border border-border p-3" aria-labelledby="captions-title">
+        <div class="flex items-center gap-2">
+          <h3 id="captions-title" class="flex flex-1 items-center gap-2 text-callout font-semibold">
+            <Icon icon={Captions} size={15} aria-hidden="true" /> Captions
+          </h3>
+          {#if p.captions.lines.length && !captionJob}
+            <Switch
+              checked={p.captions.show}
+              label="Show captions"
+              onchange={(v) => ed.change(v ? 'Show captions' : 'Hide captions', () => (p.captions.show = v))}
+            />
+          {/if}
+        </div>
+        {#if captionJob}
+          <div class="mt-2.5 flex items-center gap-2" role="status">
+            {#if captionJob.stage === 'download' || captionJob.stage === 'transcribe'}
+              <ProgressRing value={captionJob.progress} label={jobText} />
+            {:else}
+              <Spinner size={16} label={jobText} />
+            {/if}
+            <span class="min-w-0 flex-1 text-footnote text-fg-muted tabular">{jobText}</span>
+            <Button size="sm" variant="ghost" onclick={() => ed.cancelCaptions()}>Cancel</Button>
+          </div>
+          {#if captionJob.stage === 'download'}
+            <p class="mt-1.5 text-caption text-fg-subtle">
+              Only this once: {modelMb} MB, kept on this computer.
+            </p>
+          {/if}
+        {:else if p.captions.lines.length}
           <p class="mt-1 text-footnote text-fg-muted">
-            Coming soon: your words transcribed on this computer and timed to the video.
+            {p.captions.lines.length}
+            {p.captions.lines.length === 1 ? 'line' : 'lines'}{p.captions.language
+              ? `, in ${languageName(p.captions.language)}`
+              : ''}. Fix any word below; clear a line to remove it.
           </p>
+          <div class="mt-2.5">
+            <Segmented
+              label="Caption style"
+              size="sm"
+              value={p.captions.style}
+              onchange={(v) => ed.change('Caption style', () => (p.captions.style = v))}
+              options={[
+                { value: 'bar', label: 'Bar' },
+                { value: 'bold', label: 'Bold' },
+              ]}
+            />
+          </div>
+          <ol
+            class="scroll-room -mx-1.5 mt-2 flex max-h-72 flex-col gap-0.5 overflow-y-auto"
+            aria-label="Captions"
+          >
+            {#each p.captions.lines as line (line.id)}
+              {@const at = ed.captionStart(line)}
+              <li
+                class={[
+                  'flex items-start gap-1 rounded-[8px] px-1 py-0.5',
+                  captionNow === line.id && 'bg-fill',
+                ]}
+              >
+                <button
+                  type="button"
+                  class="press ring-inside mt-0.5 w-11 shrink-0 rounded-[4px] px-1 py-0.5 text-left text-caption text-fg-subtle tabular hover:text-fg"
+                  aria-label="Go to {timecode(at)}"
+                  onclick={() => {
+                    ed.pause();
+                    ed.seek(at);
+                  }}>{timecode(at)}</button
+                >
+                <textarea
+                  class="ring-inside min-w-0 flex-1 resize-none rounded-[4px] bg-transparent px-1 py-0.5 text-footnote text-fg field-sizing-content focus:bg-fill"
+                  rows={Math.max(1, Math.ceil(width(line.text) / 28))}
+                  value={line.text}
+                  aria-label="Caption at {timecode(at)}"
+                  onfocus={() => {
+                    if (!ed.playing) ed.seek(at);
+                  }}
+                  oninput={(e) => ed.editCaption(line.id, e.currentTarget.value)}
+                  onblur={(e) => {
+                    if (!e.currentTarget.value.trim()) ed.removeCaption(line.id);
+                  }}></textarea>
+              </li>
+            {/each}
+          </ol>
+          <div class="mt-2.5 flex flex-wrap items-center gap-1.5">
+            <span class="mr-0.5 text-footnote text-fg-muted">Save subtitles</span>
+            <Button size="sm" onclick={() => void ed.saveSubtitles('srt')}>SRT…</Button>
+            <Button size="sm" onclick={() => void ed.saveSubtitles('vtt')}>WebVTT…</Button>
+          </div>
+          <div class="mt-1.5 -ml-2.5 flex flex-wrap gap-0.5">
+            <Button size="sm" variant="ghost" icon={RefreshCw} onclick={() => void ed.generateCaptions()}
+              >Make again</Button
+            >
+            <Button size="sm" variant="ghost" icon={X} onclick={() => ed.removeCaptions()}>Remove</Button>
+          </div>
+        {:else if !voice}
+          <p class="mt-1 text-footnote text-fg-muted">
+            Captions are made from your voice, and this take has none. Record a voice-over to caption it.
+          </p>
+          <Button class="mt-2.5" size="sm" icon={Mic} onclick={() => (ed.tool = 'audio')}
+            >Record a voice-over</Button
+          >
+        {:else if ed.captionModel?.unsupported}
+          <p class="mt-1 text-footnote text-fg-muted">{sentence(ed.captionModel.unsupported)}</p>
         {:else}
           <p class="mt-1 text-footnote text-fg-muted">
-            Transcribes your voice with Whisper, word by word, in 99 languages.
+            Writes down what you say and times it to the video, in 99 languages.
           </p>
-          <div class="mt-2.5 flex items-center gap-2">
-            {#if p.captions.state === 'ready'}
-              <span class="flex items-center gap-1.5 text-footnote font-semibold text-success"
-                ><CheckDraw size={14} /> 6 lines</span
+          <div class="mt-2.5 flex flex-col items-start gap-1.5">
+            <Button size="sm" icon={Ai} onclick={() => void ed.generateCaptions()}>Generate captions</Button>
+            {#if ed.captionModel && !ed.captionModel.ready}
+              <span class="text-caption text-fg-subtle"
+                >The first time, it downloads a {modelMb} MB speech model.</span
               >
-              <span class="flex-1"></span>
-              <Switch
-                checked={p.captions.show}
-                label="Show captions"
-                onchange={(v) => ed.change('Show captions', () => (p.captions.show = v))}
-              />
-            {:else if p.captions.state === 'busy'}
-              <ProgressRing value={captionProgress} label="Transcribing" />
-              <span class="text-footnote text-fg-muted tabular"
-                >Transcribing… {Math.round(captionProgress * 100)}%</span
-              >
-            {:else}
-              <div class="flex flex-col items-start gap-1.5">
-                <Button size="sm" icon={Ai} onclick={generateCaptions}>Generate captions</Button>
-                <span class="text-caption text-fg-subtle">The first time downloads a 140 MB model.</span>
-              </div>
             {/if}
           </div>
-          {#if p.captions.state === 'ready'}
-            <div class="mt-2.5">
-              <Segmented
-                label="Caption style"
-                size="sm"
-                value={p.captions.style}
-                onchange={(v) => ed.change('Caption style', () => (p.captions.style = v))}
-                options={[
-                  { value: 'bar', label: 'Bar' },
-                  { value: 'bold', label: 'Bold' },
-                ]}
-              />
-            </div>
-          {/if}
         {/if}
       </section>
-      <section class="mt-2 rounded-[10px] border border-border p-3">
-        <h3 class="flex items-center gap-2 text-callout font-semibold">
-          <Icon icon={WandSparkles} size={15} aria-hidden="true" /> Voice cleanup
-        </h3>
-        <p class="mt-1 text-footnote text-fg-muted">
-          Turns down hum, fan noise and hiss, and evens out your level.
+      {#if !p.has.mic}
+        <p class="mt-3 text-footnote text-fg-muted">
+          Voice cleanup and cutting silences work on the voice recorded with the take. This one was recorded
+          without a microphone.
         </p>
-        <div class="mt-2 flex items-center gap-2">
-          <Switch
-            bind:checked={() => p.audio.cleanup, (v) => void ed.setCleanup(v)}
-            label="Voice cleanup"
-            hideLabel={false}
-            disabled={ed.voiceBusy !== null}
-          />
-          {#if ed.voiceBusy === 'cleanup'}<Spinner size={14} label="Cleaning up the voice" />{/if}
-        </div>
-      </section>
-      <section class="mt-2 rounded-[10px] border border-border p-3">
-        <h3 class="flex items-center gap-2 text-callout font-semibold">
-          <Icon icon={Ai} size={15} aria-hidden="true" /> Cut silences
-        </h3>
-        <p class="mt-1 text-footnote text-fg-muted">
-          {#if p.audio.silence}
-            Cut {p.audio.silences.length}
-            {p.audio.silences.length === 1 ? 'pause' : 'pauses'}, {silenceSeconds.toFixed(1)} s in all. Turn it
-            off to bring them back.
-          {:else}
-            Shortens pauses over a second where nothing happens on screen.
-          {/if}
-        </p>
-        <div class="mt-2 flex items-center gap-2">
-          <Switch
-            bind:checked={() => p.audio.silence, (v) => void ed.setCutSilences(v)}
-            label="Cut silences"
-            hideLabel={false}
-            disabled={ed.voiceBusy !== null}
-          />
-          {#if ed.voiceBusy === 'silence'}<Spinner size={14} label="Looking for pauses" />{/if}
-        </div>
-      </section>
+      {:else}
+        <section class="mt-2 rounded-[10px] border border-border p-3">
+          <h3 class="flex items-center gap-2 text-callout font-semibold">
+            <Icon icon={WandSparkles} size={15} aria-hidden="true" /> Voice cleanup
+          </h3>
+          <p class="mt-1 text-footnote text-fg-muted">
+            Turns down hum, fan noise and hiss, and evens out your level.
+          </p>
+          <div class="mt-2 flex items-center gap-2">
+            <Switch
+              bind:checked={() => p.audio.cleanup, (v) => void ed.setCleanup(v)}
+              label="Voice cleanup"
+              hideLabel={false}
+              disabled={ed.voiceBusy !== null}
+            />
+            {#if ed.voiceBusy === 'cleanup'}<Spinner size={14} label="Cleaning up the voice" />{/if}
+          </div>
+        </section>
+        <section class="mt-2 rounded-[10px] border border-border p-3">
+          <h3 class="flex items-center gap-2 text-callout font-semibold">
+            <Icon icon={Ai} size={15} aria-hidden="true" /> Cut silences
+          </h3>
+          <p class="mt-1 text-footnote text-fg-muted">
+            {#if p.audio.silence}
+              Cut {p.audio.silences.length}
+              {p.audio.silences.length === 1 ? 'pause' : 'pauses'}, {silenceSeconds.toFixed(1)} s in all. Turn it
+              off to bring them back.
+            {:else}
+              Shortens pauses over a second where nothing happens on screen.
+            {/if}
+          </p>
+          <div class="mt-2 flex items-center gap-2">
+            <Switch
+              bind:checked={() => p.audio.silence, (v) => void ed.setCutSilences(v)}
+              label="Cut silences"
+              hideLabel={false}
+              disabled={ed.voiceBusy !== null}
+            />
+            {#if ed.voiceBusy === 'silence'}<Spinner size={14} label="Looking for pauses" />{/if}
+          </div>
+        </section>
+      {/if}
     {/if}
 
     {#if info.guide}

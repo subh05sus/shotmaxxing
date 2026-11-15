@@ -1,4 +1,4 @@
-//! Titles and keystrokes drawn with DirectWrite in Segoe UI Semibold, the editor's font on Windows, through
+//! Titles, captions and keystrokes drawn with DirectWrite in Segoe UI, the editor's font on Windows, through
 //! Direct2D into a bitmap in memory.
 
 use tiny_skia::{Color, IntSize, Pixmap};
@@ -12,6 +12,7 @@ use windows::Win32::Graphics::Direct2D::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_METRICS, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+    DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_EXTRA_BOLD, DWRITE_FONT_WEIGHT_MEDIUM,
     DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_LINE_METRICS, DWRITE_TEXT_METRICS, DWRITE_WORD_WRAPPING_NO_WRAP,
     DWriteCreateFactory, IDWriteFactory,
 };
@@ -21,6 +22,8 @@ use windows::Win32::Graphics::Imaging::{
 };
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::core::{BOOL, IUnknown, w};
+
+use crate::sprites::Weight;
 
 /// The editor's interface font on Windows.
 const FAMILY: windows::core::PCWSTR = w!("Segoe UI");
@@ -53,9 +56,18 @@ fn extent(write: &IDWriteFactory, size: f64) -> Option<(f64, f64)> {
     }
 }
 
-/// `text` in Segoe UI Semibold at `size` pixels, coloured `color`, on a transparent background. The box is
+/// DirectWrite's weight for the editor's: medium (`font-medium`), semibold and extra bold (`font-extrabold`).
+fn weight_of(weight: Weight) -> DWRITE_FONT_WEIGHT {
+    match weight {
+        Weight::Medium => DWRITE_FONT_WEIGHT_MEDIUM,
+        Weight::Semibold => DWRITE_FONT_WEIGHT_SEMI_BOLD,
+        Weight::Heavy => DWRITE_FONT_WEIGHT_EXTRA_BOLD,
+    }
+}
+
+/// `text` in Segoe UI at `size` pixels and `weight`, coloured `color`, on a transparent background. The box is
 /// `line_height` × `size` tall with the glyphs centred in it, like a CSS line box.
-pub fn draw(text: &str, size: f64, line_height: f64, color: Color) -> Option<Pixmap> {
+pub fn draw(text: &str, size: f64, line_height: f64, color: Color, weight: Weight) -> Option<Pixmap> {
     // SAFETY: DirectWrite, Direct2D and WIC calls with valid arguments. The bitmap outlives the render target that
     // draws into it, and its pixels are copied into a buffer of exactly its size.
     unsafe {
@@ -64,7 +76,7 @@ pub fn draw(text: &str, size: f64, line_height: f64, color: Color) -> Option<Pix
             .CreateTextFormat(
                 FAMILY,
                 None,
-                DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                weight_of(weight),
                 DWRITE_FONT_STYLE_NORMAL,
                 DWRITE_FONT_STRETCH_NORMAL,
                 size as f32,

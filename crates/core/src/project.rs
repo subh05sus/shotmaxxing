@@ -30,6 +30,8 @@ pub struct Project {
     /// Voice cleanup and cut silences.
     pub voice: VoiceSettings,
     pub captions: Vec<Caption>,
+    /// Whether captions show, and how they look.
+    pub caption_settings: CaptionSettings,
     pub export: ExportSettings,
     /// Set when an agent filmed the project.
     pub agent: Option<AgentInfo>,
@@ -54,6 +56,7 @@ impl Default for Project {
             webcam: WebcamStyle::default(),
             voice: VoiceSettings::default(),
             captions: Vec::new(),
+            caption_settings: CaptionSettings::default(),
             export: ExportSettings::default(),
             agent: None,
         }
@@ -609,10 +612,52 @@ pub struct VoiceSettings {
     pub silences: Vec<TimeRange>,
 }
 
+/// One caption: what was said, and when. Its `range` is on the recording's timeline, like titles, so it follows
+/// cuts and speed changes; a voice-over's caption is on the finished video's timeline, like the voice-over.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Caption {
     pub range: TimeRange,
     pub text: String,
+    /// The voice-over this caption transcribes, by its file (as its track names it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_over: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct CaptionSettings {
+    /// Captions show in the editor and are drawn into the export.
+    pub show: bool,
+    pub style: CaptionStyle,
+    /// The language the captions were transcribed in, as Whisper names it ("en").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+impl Default for CaptionSettings {
+    fn default() -> Self {
+        Self { show: true, style: CaptionStyle::Bar, language: None }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionStyle {
+    /// Medium text on a dark bar.
+    #[default]
+    Bar,
+    /// Larger, heavy text with a soft shadow and no bar.
+    Bold,
+}
+
+impl CaptionStyle {
+    /// The text's size, as a fraction of the frame's height.
+    pub fn size(self) -> f64 {
+        match self {
+            Self::Bar => 0.038,
+            Self::Bold => 0.05,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

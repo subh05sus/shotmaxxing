@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 shotmaxxing-core.workspace = true
 shotmaxxing-capture.workspace = true
 shotmaxxing-render.workspace = true
+shotmaxxing-captions.workspace = true
 shotmaxxing-control.workspace = true
 shotmaxxing-agent.workspace = true
 anyhow.workspace = true

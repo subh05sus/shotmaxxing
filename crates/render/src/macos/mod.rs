@@ -29,6 +29,7 @@ use objc2_core_image::{
 };
 use objc2_core_video::CVPixelBuffer;
 use objc2_foundation::{NSData, NSDictionary, NSNumber, NSString, ns_string};
+use shotmaxxing_core::captions;
 use shotmaxxing_core::geometry::Point;
 use tiny_skia::Pixmap;
 
@@ -37,7 +38,7 @@ use self::sound::Sound;
 use self::video::VideoWriter;
 use crate::model::{Bubble, RenderProject};
 use crate::scene::{Frame, Layout, frame_at};
-use crate::sprites::{self, LINE_HEIGHT, Label, Palette, Sprite};
+use crate::sprites::{self, CaptionShown, LINE_HEIGHT, Label, Palette, Sprite, Weight};
 use crate::{ExportOptions, Format, RenderError, animated, soft, wallpaper};
 
 /// A picture ready to place. `x`, `y`, `w`, `h` are in frame pixels; what they are relative to depends on the layer.
@@ -89,6 +90,8 @@ struct Compositor<'a> {
     arrows: Vec<Option<Placed>>,
     titles: Vec<Option<Placed>>,
     keys: HashMap<String, Option<Placed>>,
+    /// The caption showing, each page drawn when it first shows.
+    caption: Option<CaptionShown<Placed>>,
 }
 
 impl<'a> Compositor<'a> {
@@ -136,6 +139,7 @@ impl<'a> Compositor<'a> {
             arrows,
             titles: Vec::new(),
             keys: HashMap::new(),
+            caption: None,
         };
         compositor.titles = project.titles.iter().map(|t| compositor.title(&t.text, t.at)).collect();
         Ok(compositor)
@@ -143,14 +147,29 @@ impl<'a> Compositor<'a> {
 
     /// A title: a lime pill with a soft shadow, its top-left corner at `at` (fractions of the frame).
     fn title(&self, text: &str, at: Point) -> Option<Placed> {
-        let glyphs = text::draw(text, self.layout.text_px, LINE_HEIGHT, self.palette.accent_ink)?;
+        let glyphs =
+            text::draw(text, self.layout.text_px, LINE_HEIGHT, self.palette.accent_ink, Weight::Semibold)?;
         sprites::title(&self.layout, &glyphs, at, &self.palette).map(|label| self.label(label))
     }
 
     /// A keystroke: centred near the bottom on a dark scrim.
     fn key(&self, label: &str) -> Option<Placed> {
-        let glyphs = text::draw(label, self.layout.text_px, LINE_HEIGHT, self.palette.on_stage)?;
+        let glyphs =
+            text::draw(label, self.layout.text_px, LINE_HEIGHT, self.palette.on_stage, Weight::Semibold)?;
         sprites::key(&self.layout, &glyphs, &self.palette).map(|label| self.label(label))
+    }
+
+    /// A page of a caption, its `rows` broken as the editor breaks them, and where its top is.
+    fn caption(&self, rows: &[String]) -> Option<(Placed, f64)> {
+        let (l, style) = (self.layout, self.project.caption_style);
+        let size = sprites::caption_px(&l, style);
+        let weight = sprites::caption_weight(style);
+        let rows = rows
+            .iter()
+            .map(|row| text::draw(row, size, LINE_HEIGHT, self.palette.caption_ink, weight))
+            .collect::<Option<Vec<Pixmap>>>()?;
+        let (label, top) = sprites::caption(&l, &rows, style, &self.palette)?;
+        Some((self.label(label), top))
     }
 
     fn label(&self, label: Label) -> Placed {
@@ -452,6 +471,19 @@ impl<'a> Compositor<'a> {
                 out = Self::over(&self.place(&title.image, title.x, title.y, title.w, title.h), &out);
             }
         }
+        let mut caption_top = None;
+        if let Some(at) = frame.caption {
+            let max = captions::row_units(l.width / l.height, project.caption_style);
+            let last = self.caption.take();
+            let shown =
+                CaptionShown::next(last, at, &project.captions[at.0].text, max, |rows| self.caption(rows));
+            if let Some((caption, top)) = &shown.drawn {
+                out =
+                    Self::over(&self.place(&caption.image, caption.x, caption.y, caption.w, caption.h), &out);
+                caption_top = Some(*top);
+            }
+            self.caption = Some(shown);
+        }
         if let Some(i) = frame.key {
             let label = &project.keys[i].1;
             if !self.keys.contains_key(label) {
@@ -459,7 +491,9 @@ impl<'a> Compositor<'a> {
                 self.keys.insert(label.clone(), key);
             }
             if let Some(Some(key)) = self.keys.get(label) {
-                out = Self::over(&self.place(&key.image, key.x, key.y, key.w, key.h), &out);
+                // Above a caption, when one shows.
+                let y = caption_top.map_or(key.y, |top| key.y.min((top - 0.5 * l.text_px - key.h).round()));
+                out = Self::over(&self.place(&key.image, key.x, y, key.w, key.h), &out);
             }
         }
         if let (Some(bubble), Some(camera)) = (&project.bubble, camera) {

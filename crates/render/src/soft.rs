@@ -14,15 +14,19 @@ use tiny_skia::{
     SpreadMode, Transform,
 };
 
+use shotmaxxing_core::captions;
+
 use crate::RenderError;
 use crate::model::{Bubble, RenderProject};
 use crate::scene::{Frame, Layout};
-use crate::sprites::{self, LINE_HEIGHT, Label, Palette, Sprite, blur_alpha, rounded_rect};
+use crate::sprites::{
+    self, CaptionShown, LINE_HEIGHT, Label, Palette, Sprite, Weight, blur_alpha, rounded_rect,
+};
 use crate::wallpaper;
 
-/// Draws `text` in the system's semibold interface font, `size` pixels, centred in a `line_height` × `size` tall
-/// box, in `color` on transparent.
-pub type DrawText = fn(&str, f64, f64, Color) -> Option<Pixmap>;
+/// Draws `text` in the system's interface font, `size` pixels and the given weight, centred in a `line_height` ×
+/// `size` tall box, in `color` on transparent.
+pub type DrawText = fn(&str, f64, f64, Color, Weight) -> Option<Pixmap>;
 
 /// A rectangle of the frame: x, y, width and height in pixels.
 type Area = (f64, f64, f64, f64);
@@ -39,6 +43,8 @@ pub struct Compositor<'a> {
     arrows: Vec<Option<Sprite>>,
     titles: Vec<Option<Label>>,
     keys: HashMap<String, Option<Label>>,
+    /// The caption showing, each page drawn when it first shows.
+    caption: Option<CaptionShown<Label>>,
     out: Pixmap,
     /// The window's shape, which clips blurs and arrows, kept while the camera holds still.
     window: Option<(Area, f64, Mask)>,
@@ -71,7 +77,8 @@ impl<'a> Compositor<'a> {
             .titles
             .iter()
             .map(|t| {
-                let glyphs = text(&t.text, layout.text_px, LINE_HEIGHT, palette.accent_ink)?;
+                let glyphs =
+                    text(&t.text, layout.text_px, LINE_HEIGHT, palette.accent_ink, Weight::Semibold)?;
                 sprites::title(&layout, &glyphs, t.at, &palette)
             })
             .collect();
@@ -87,6 +94,7 @@ impl<'a> Compositor<'a> {
             arrows,
             titles,
             keys: HashMap::new(),
+            caption: None,
             out: Pixmap::new(w, h).ok_or_else(|| failed("a frame that size"))?,
             window: None,
             screen: Halves::default(),
@@ -189,21 +197,47 @@ impl<'a> Compositor<'a> {
                 draw_label(&mut self.out, title);
             }
         }
+        let mut caption_top = None;
+        if let Some(at) = frame.caption {
+            let max = captions::row_units(l.width / l.height, project.caption_style);
+            let last = self.caption.take();
+            let shown = CaptionShown::next(last, at, &project.captions[at.0].text, max, |rows| {
+                self.caption_label(rows)
+            });
+            if let Some((label, top)) = &shown.drawn {
+                draw_label(&mut self.out, label);
+                caption_top = Some(*top);
+            }
+            self.caption = Some(shown);
+        }
         if let Some(i) = frame.key {
             let label = &project.keys[i].1;
             if !self.keys.contains_key(label) {
-                let key = (self.text)(label, l.text_px, LINE_HEIGHT, self.palette.on_stage)
+                let key = (self.text)(label, l.text_px, LINE_HEIGHT, self.palette.on_stage, Weight::Semibold)
                     .and_then(|glyphs| sprites::key(&l, &glyphs, &self.palette));
                 self.keys.insert(label.clone(), key);
             }
             if let Some(Some(key)) = self.keys.get(label) {
-                draw_label(&mut self.out, key);
+                let y = caption_top.map_or(key.y, |top| sprites::key_above(key, top, &l));
+                draw_label_at(&mut self.out, key, y);
             }
         }
         if let (Some(bubble), Some(camera)) = (&project.bubble, camera) {
             self.bubble(bubble, camera, s);
         }
         &self.out
+    }
+
+    /// A page of a caption, its `rows` broken as the editor breaks them, and where its top is.
+    fn caption_label(&self, rows: &[String]) -> Option<(Label, f64)> {
+        let (l, style) = (self.layout, self.project.caption_style);
+        let size = sprites::caption_px(&l, style);
+        let weight = sprites::caption_weight(style);
+        let rows = rows
+            .iter()
+            .map(|row| (self.text)(row, size, LINE_HEIGHT, self.palette.caption_ink, weight))
+            .collect::<Option<Vec<Pixmap>>>()?;
+        sprites::caption(&l, &rows, style, &self.palette)
     }
 
     /// The camera bubble in its corner, over everything else, sized, ringed and shaded as in the editor: a ring of
@@ -296,15 +330,13 @@ fn draw(
 
 /// A title or keystroke, pixel for pixel.
 fn draw_label(out: &mut Pixmap, label: &Label) {
+    draw_label_at(out, label, label.y);
+}
+
+/// `label` with its top at `y` instead of its own.
+fn draw_label_at(out: &mut Pixmap, label: &Label, y: f64) {
     let paint = PixmapPaint::default();
-    out.draw_pixmap(
-        label.x as i32,
-        label.y as i32,
-        label.pixmap.as_ref(),
-        &paint,
-        Transform::identity(),
-        None,
-    );
+    out.draw_pixmap(label.x as i32, y as i32, label.pixmap.as_ref(), &paint, Transform::identity(), None);
 }
 
 /// Fills the rounded rectangle `shape` with `picture` stretched over `area`, its edge pixels repeated outwards, so
@@ -571,7 +603,7 @@ mod tests {
             })
             .collect();
         let layout = Layout::new(&project, 1920, 1080);
-        let mut compositor = Compositor::new(&project, layout, |_, _, _, _| None).unwrap();
+        let mut compositor = Compositor::new(&project, layout, |_, _, _, _, _| None).unwrap();
         let mut screen = Pixmap::new(2880, 1800).unwrap();
         for (i, px) in screen.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let v = (i * 2654435761 % 251) as u8;
@@ -586,6 +618,65 @@ mod tests {
             let ms = started.elapsed().as_secs_f64() * 1000.0 / 30.0;
             eprintln!("{label}: {ms:.1} ms a frame");
         }
+    }
+
+    #[test]
+    #[ignore = "writes pictures to look at"]
+    fn look_at_captions() {
+        use shotmaxxing_core::geometry::Size;
+        use shotmaxxing_core::project::CaptionStyle;
+        // Into `LOOK_DIR`, or the system's temporary folder.
+        let out = std::env::var_os("LOOK_DIR").map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+        let blank = shotmaxxing_core::project::Project::default();
+        for (name, style, (w, h), text, key) in [
+            (
+                "bar-wide",
+                CaptionStyle::Bar,
+                (1920, 1080),
+                "Start with Get started, at the top right of the page.",
+                false,
+            ),
+            ("bold-wide", CaptionStyle::Bold, (1920, 1080), "Then enter your work email.", true),
+            (
+                "bar-tall",
+                CaptionStyle::Bar,
+                (1080, 1920),
+                "Then enter your work email, and pick a password you'll remember for next time.",
+                true,
+            ),
+            (
+                "bold-tall",
+                CaptionStyle::Bold,
+                (1080, 1920),
+                "日本語の字幕もきれいに二行に分かれます。",
+                false,
+            ),
+        ] {
+            let mut project = RenderProject::from_parts(std::path::Path::new("/nowhere"), &blank, &[], &[]);
+            project.capture = Size::new(1440.0, 900.0);
+            project.duration = 10.0;
+            project.aspect = Some(f64::from(w) / f64::from(h));
+            project.caption_style = style;
+            project.captions =
+                vec![crate::model::CaptionLine { start: 0.0, end: 10.0, text: text.into(), finished: false }];
+            if key {
+                project.keystrokes = true;
+                project.keys = vec![(1.0, "⌘ K".into())];
+            }
+            let layout = Layout::new(&project, w, h);
+            let mut compositor = Compositor::new(&project, layout, crate::draw_text).unwrap();
+            let mut screen = Pixmap::new(2880, 1800).unwrap();
+            for (i, px) in screen.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                // A light page with a few darker bands, as an app would look.
+                let y = i / 2880;
+                let v = if (y / 120) % 4 == 0 { 210 } else { 246 };
+                *px = [v, v, v, 255];
+            }
+            let frame = crate::scene::frame_at(&project, &layout, 1.2);
+            let picture = compositor.compose(&frame, screen.as_ref(), None);
+            picture.save_png(out.join(format!("{name}.png"))).unwrap();
+        }
+        eprintln!("caption pictures in {}", out.display());
     }
 
     #[test]

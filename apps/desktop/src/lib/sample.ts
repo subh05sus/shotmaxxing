@@ -365,6 +365,16 @@ export interface EffectBlock {
   to?: { x: number; y: number };
 }
 
+/** The sample's captions, as transcribing its voice would make them (seconds on the recording's timeline). */
+export const SAMPLE_CAPTIONS = [
+  { start: 0.4, end: 2.8, text: 'Here’s how sign-up works in Northwind.' },
+  { start: 2.9, end: 6.4, text: 'Start with Get started, top right.' },
+  { start: 9.0, end: 14.6, text: 'Then enter your work email.' },
+  { start: 15.3, end: 18.6, text: 'Pick a password you’ll remember.' },
+  { start: 18.8, end: 23.6, text: 'Create the account, and you’re in.' },
+  { start: 30.0, end: 35.0, text: 'Pricing is one click away.' },
+];
+
 export const SAMPLE_PROJECT = {
   id: 'sample',
   title: 'Launch demo',

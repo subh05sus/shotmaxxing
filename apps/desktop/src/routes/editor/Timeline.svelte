@@ -73,14 +73,16 @@
 
   const selectedId = $derived(ed.selection?.id);
   const effectIcon = { blur: 'Blur', text: 'Title', arrow: 'Arrow' };
-  const CAPTION_BLOCKS = [
-    [0.4, 2.8],
-    [2.9, 6.4],
-    [9.0, 14.6],
-    [15.3, 18.6],
-    [18.8, 23.6],
-    [30.0, 35.0],
-  ];
+  // Captions on the recording's timeline: a voice-over's are timed on the finished video, so they're placed where
+  // that part of the video comes from.
+  const captionBlocks = $derived(
+    p.captions.lines.map((line) => {
+      const start = ed.captionStart(line);
+      const end = line.voiceOver ? ed.sourceTimeAt(line.end) : line.end;
+      return { id: line.id, start, end: Math.max(start, end), text: line.text };
+    }),
+  );
+  const captionId = $derived(ed.captionNow?.line.id);
 </script>
 
 <div class="flex shrink-0 flex-col border-t border-border bg-chrome" data-tour="timeline">
@@ -229,18 +231,29 @@
       </div>
     {/if}
 
-    {#if p.captions.state === 'ready'}
-      <div class="flex h-8 items-center">
+    {#if captionBlocks.length}
+      <div class={['flex h-8 items-center', !p.captions.show && 'opacity-50']}>
         <span class="flex w-24 shrink-0 items-center gap-1.5 pl-3 text-footnote text-fg-muted"
           ><Icon icon={Captions} size={13} aria-hidden="true" /> Captions</span
         >
         <div class="relative h-6 flex-1">
-          {#each CAPTION_BLOCKS as [s, e] (s)}
-            <span
-              class="absolute inset-y-0 rounded-[5px] bg-fill-strong"
-              style:left="{x(s)}px"
-              style:width="{x(e - s)}px"
-            ></span>
+          {#each captionBlocks as block (block.id)}
+            <button
+              type="button"
+              class={[
+                'absolute inset-y-0 overflow-hidden rounded-[5px] px-1.5 text-left text-caption whitespace-nowrap text-ellipsis outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent',
+                captionId === block.id ? 'bg-fg text-bg' : 'bg-fill-strong text-fg-muted hover:text-fg',
+              ]}
+              style:left="{x(block.start)}px"
+              style:width="{Math.max(4, x(block.end - block.start))}px"
+              title={block.text}
+              aria-label="Caption at {timecode(block.start)}: {block.text}"
+              onclick={() => {
+                ed.pause();
+                ed.seek(block.start);
+                ed.tool = 'ai';
+              }}>{block.text}</button
+            >
           {/each}
         </div>
         <div class="w-3 shrink-0"></div>

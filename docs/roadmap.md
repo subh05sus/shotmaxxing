@@ -70,7 +70,10 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 ## Milestone 4: Local AI and polish
 
 - [x] Voice cleanup and silence cutting, on device
-- [ ] On-device captions
+- [x] On-device captions: Whisper (whisper.cpp, on the GPU on Macs) transcribes the take's microphone and any
+      voice-overs on this computer, after a one-time 60 MB model download checked against a pinned hash. Captions
+      follow cuts and speed changes, every word can be fixed in the editor, they come in two styles, are drawn into
+      exports exactly as previewed, and save as SRT or WebVTT (Windows: written, awaiting testing on Windows)
 - [ ] Learn tab guides filmed by Shotmaxxing itself
 - [ ] Plugins: WASM effects and content packs
 - [ ] Signed releases, auto-updates, Homebrew, winget, Microsoft Store

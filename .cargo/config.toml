@@ -1,0 +1,5 @@
+[env]
+# whisper.cpp (captions) is built for every x86-64 processor with AVX2, not only the build machine's own, so a release
+# built on a CI runner runs on any computer from about 2013 on; the app checks for AVX2 before it transcribes. Apple
+# silicon builds for every M-series chip either way.
+GGML_NATIVE = "OFF"

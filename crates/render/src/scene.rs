@@ -201,6 +201,8 @@ pub struct Frame {
     pub arrows: Vec<usize>,
     pub titles: Vec<usize>,
     pub key: Option<usize>,
+    /// The caption showing, and how far through its time it is, from 0 to 1 (a long one shows in pages).
+    pub caption: Option<(usize, f64)>,
 }
 
 /// The frame showing the recording at `t` seconds.
@@ -248,6 +250,16 @@ pub fn frame_at(project: &RenderProject, layout: &Layout, t: f64) -> Frame {
     });
 
     let active = |start: f64, end: f64| t >= start && t <= end;
+    let caption = if project.show_captions {
+        // A voice-over's captions are timed on the finished video.
+        let out = if project.captions.iter().any(|c| c.finished) { project.export_time(t) } else { None };
+        project.captions.iter().enumerate().rev().find_map(|(i, c)| {
+            let at = if c.finished { out? } else { t };
+            (at >= c.start && at < c.end).then(|| (i, ((at - c.start) / (c.end - c.start)).clamp(0.0, 1.0)))
+        })
+    } else {
+        None
+    };
     Frame {
         view,
         cursor,
@@ -265,6 +277,7 @@ pub fn frame_at(project: &RenderProject, layout: &Layout, t: f64) -> Frame {
         } else {
             None
         },
+        caption,
     }
 }
 
@@ -303,6 +316,37 @@ mod tests {
         let zooms = [zoom(1.0, 3.0, 2.0, 400.0, 300.0), zoom(3.5, 6.0, 3.0, 1200.0, 700.0)];
         let between = camera_at(3.25, &zooms, CAPTURE, false, None);
         assert!(between.scale > 2.0 && between.scale < 3.0, "{between:?}");
+    }
+
+    #[test]
+    fn a_frame_shows_the_caption_of_its_moment_on_its_timeline() {
+        use crate::model::{CaptionLine, Clip};
+        let mut project = RenderProject::from_parts(
+            std::path::Path::new("/tmp"),
+            &shotmaxxing_core::project::Project::default(),
+            &[],
+            &[],
+        );
+        project.capture = CAPTURE;
+        project.duration = 10.0;
+        // Two seconds cut from 2 s: the recording's 5 s plays at 3 s in the finished video.
+        project.clips =
+            vec![Clip { start: 0.0, end: 2.0, speed: 1.0 }, Clip { start: 4.0, end: 10.0, speed: 1.0 }];
+        let line =
+            |start: f64, end: f64, finished: bool| CaptionLine { start, end, text: "x".into(), finished };
+        project.captions = vec![line(0.5, 1.5, false), line(4.5, 6.0, false), line(2.8, 3.2, true)];
+        let layout = Layout::new(&project, 1920, 1080);
+        let at = |t: f64| frame_at(&project, &layout, t).caption.map(|(i, _)| i);
+        assert_eq!(at(1.0), Some(0));
+        assert_eq!(at(1.5), None, "a caption ends where its range does");
+        assert_eq!(at(4.6), Some(1));
+        // The recording's 5 s is the finished video's 3 s, where the voice-over's caption wins.
+        assert_eq!(at(5.0), Some(2));
+        assert_eq!(at(9.0), None);
+        let (_, fraction) = frame_at(&project, &layout, 5.25).caption.unwrap();
+        assert!((fraction - 0.5).abs() < 1e-9, "halfway through the voice-over's caption: {fraction}");
+        project.show_captions = false;
+        assert_eq!(frame_at(&project, &layout, 1.0).caption, None, "hidden from the video");
     }
 
     #[test]

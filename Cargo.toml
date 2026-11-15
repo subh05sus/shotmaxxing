@@ -16,6 +16,7 @@ shotmaxxing-capture = { path = "crates/capture" }
 shotmaxxing-render = { path = "crates/render" }
 shotmaxxing-agent = { path = "crates/agent" }
 shotmaxxing-control = { path = "crates/control" }
+shotmaxxing-captions = { path = "crates/captions" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

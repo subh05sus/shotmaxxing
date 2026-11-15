@@ -5,6 +5,7 @@
 //! agent take card). Video pixels never pass through the web view; the UI only drives the native core.
 
 mod agents;
+mod captions;
 mod commands;
 mod export;
 mod platform;
@@ -46,6 +47,7 @@ pub fn run() {
         .manage(export::Exports::default())
         .manage(takes::Takes::default())
         .manage(voice_over::VoiceOvers::default())
+        .manage(captions::Captioning::default())
         .setup(|app| {
             let handle = app.handle();
             tray::create(handle)?;
@@ -86,6 +88,10 @@ pub fn run() {
             projects::plan_auto_zooms,
             projects::find_pauses,
             projects::clean_voice,
+            captions::caption_model,
+            captions::generate_captions,
+            captions::cancel_captions,
+            captions::save_captions,
             projects::choose_music,
             projects::rename_project,
             projects::duplicate_project,
@@ -127,6 +133,7 @@ fn on_event(app: &tauri::AppHandle, event: RunEvent) {
         RunEvent::Exit => {
             app.state::<recording::Recordings>().finish_on_quit();
             app.state::<export::Exports>().cancel_all();
+            app.state::<captions::Captioning>().cancel_all();
             app.state::<voice_over::VoiceOvers>().abandon(None);
         }
         // The take card can't be closed while it asks or a take plays: it comes straight back.

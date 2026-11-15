@@ -120,7 +120,13 @@ export interface CoreProject {
     shadow: boolean;
     [key: string]: unknown;
   };
-  captions: { range: CoreRange; text: string }[];
+  captions: { range: CoreRange; text: string; voice_over?: string }[];
+  caption_settings?: {
+    show: boolean;
+    style: 'bar' | 'bold';
+    language?: string | null;
+    [key: string]: unknown;
+  };
   voice?: { cleanup: boolean; cut_silences: boolean; silences: CoreRange[] };
   [key: string]: unknown;
 }
@@ -290,7 +296,18 @@ export function fromCore(core: CoreProject, os: Os): Project {
           seconds: sec(t.duration_us),
         })),
     },
-    captions: { state: core.captions.length ? 'ready' : 'none', style: 'bar', show: true },
+    captions: {
+      lines: core.captions.map((c, i) => ({
+        id: `k${i + 1}`,
+        start: sec(c.range.start_us),
+        end: sec(c.range.end_us),
+        text: c.text,
+        ...(c.voice_over ? { voiceOver: c.voice_over } : {}),
+      })),
+      style: core.caption_settings?.style === 'bold' ? 'bold' : 'bar',
+      show: core.caption_settings?.show ?? true,
+      language: core.caption_settings?.language ?? null,
+    },
     keystrokes: core.zoom.keystrokes,
     has: { mic: !!mic, system: !!system, camera: core.tracks.some((t) => t.kind === 'camera') },
   };
@@ -452,6 +469,16 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
       name: music.name,
     });
   }
+  // A caption's range is on the recording's timeline, or a voice-over's on the finished video's, as the editor has it.
+  core.captions = p.captions.lines.map((c) => ({
+    range: range(c.start, c.end),
+    text: c.text,
+    ...(c.voiceOver ? { voice_over: c.voiceOver } : {}),
+  }));
+  const settings = { ...(core.caption_settings ?? {}), show: p.captions.show, style: p.captions.style };
+  if (p.captions.language) settings.language = p.captions.language;
+  else delete settings.language;
+  core.caption_settings = settings;
   core.voice = {
     cleanup: p.audio.cleanup,
     cut_silences: p.audio.silence,

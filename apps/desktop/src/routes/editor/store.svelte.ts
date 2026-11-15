@@ -7,6 +7,7 @@
 import { env, toast } from '@shotmaxxing/ui';
 import { timecode } from '../../lib/format';
 import {
+  SAMPLE_CAPTIONS,
   SAMPLE_CURSOR,
   SAMPLE_KEYS,
   SAMPLE_PROJECT,
@@ -15,20 +16,30 @@ import {
 } from '../../lib/sample';
 import {
   SAMPLE_MUSIC,
+  cancelCaptions,
+  captionModel,
   chooseMusic,
   cleanVoice,
   cursorPath,
   discardVoiceOver,
   findPauses,
+  generateCaptions,
   isTauri,
   loadProject,
   mediaUrl,
+  onCaptionProgress,
   openPermissionSettings,
   planAutoZooms,
+  revealInFolder,
+  saveCaptions,
   saveProject,
   startVoiceOver,
   stopVoiceOver,
+  type CaptionModel,
+  type CaptionStage,
 } from '../../lib/native';
+import { captionAt, rowUnits, shownCaptions as captionsShown, type CaptionStyle } from '../../lib/captions';
+import { settings } from '../../lib/settings.svelte';
 import { dropRanges, keepRanges } from './clips';
 import {
   effectDefaults,
@@ -54,6 +65,19 @@ export interface Clip {
   start: number;
   end: number;
   speed: number;
+}
+
+/**
+ * A caption: what was said, and when, in seconds on the recording's timeline (so it follows cuts and speed changes,
+ * like titles); a voice-over's caption is on the finished video's timeline instead, like the voice-over.
+ */
+export interface CaptionLine {
+  id: string;
+  start: number;
+  end: number;
+  text: string;
+  /** The voice-over it transcribes, by its file. */
+  voiceOver?: string;
 }
 
 /** Narration recorded in the editor, laid on the finished video's timeline. */
@@ -132,7 +156,15 @@ export interface Project {
      */
     voiceOvers: VoiceOver[];
   };
-  captions: { state: 'none' | 'busy' | 'ready'; style: 'bar' | 'bold'; show: boolean };
+  captions: {
+    /** What was said and when, made from the voice on this computer and fixed by hand. */
+    lines: CaptionLine[];
+    style: CaptionStyle;
+    /** Shown in the editor and drawn into the export. */
+    show: boolean;
+    /** Whisper's code for the language they were made in ("en"), when known. */
+    language: string | null;
+  };
   keystrokes: boolean;
   /** Which tracks the take has, so panels only offer what exists. */
   has: { mic: boolean; system: boolean; camera: boolean };
@@ -201,7 +233,7 @@ function sampleProject(): Project {
       music: null,
       voiceOvers: [],
     },
-    captions: { state: 'none', style: 'bar', show: true },
+    captions: { lines: [], style: 'bar', show: true, language: null },
     keystrokes: true,
     has: { mic: true, system: true, camera: true },
   };
@@ -238,6 +270,17 @@ export class EditorState {
   voiceOver = $state<{ start: number } | null>(null);
   /** A voice-over is starting or finishing. */
   voiceOverBusy = $state(false);
+  /** Captions being made: where the job is, and how far through that stage (0 to 1). */
+  captionJob = $state<{ id: string; stage: CaptionStage | 'starting'; progress: number } | null>(null);
+  /** Whether captions can be made here, and whether the speech model is downloaded; null until asked. */
+  captionModel = $state<CaptionModel | null>(null);
+  /** The captions the video shows, in the order the export picks from. */
+  shownCaptions = $derived(
+    captionsShown(
+      this.project.captions.lines,
+      this.project.audio.voiceOvers.map((v) => v.path),
+    ),
+  );
   /** Players for the voice-overs, by id, and the file each is for. */
   #voices = new Map<string, { el: HTMLAudioElement; file: string }>();
   /** What was recorded besides the video, in seconds and capture points. */
@@ -714,6 +757,169 @@ export class EditorState {
     });
   }
 
+  /** Asks whether captions can be made here and whether the speech model has been downloaded. */
+  async checkCaptionModel(): Promise<void> {
+    try {
+      this.captionModel = await captionModel();
+    } catch {
+      this.captionModel = null;
+    }
+  }
+
+  /** The caption at the playhead and how far through its time it is (0 to 1), as the export picks it. */
+  get captionNow(): { line: CaptionLine; fraction: number } | null {
+    const lines = this.shownCaptions;
+    if (!lines.length || this.still) return null;
+    const out = lines.some((l) => l.voiceOver) ? this.exportTimeAt(this.time) : null;
+    return captionAt(lines, this.time, out);
+  }
+
+  /** Where a caption starts on the recording's timeline: a voice-over's is on the finished video's. */
+  captionStart(line: CaptionLine): number {
+    return line.voiceOver ? this.sourceTimeAt(line.start) : line.start;
+  }
+
+  /**
+   * Makes captions from the voice (the microphone and any voice-overs) on this computer, downloading the speech
+   * model the first time. They replace any made before, in one step that undo takes back.
+   */
+  async generateCaptions(): Promise<void> {
+    if (this.captionJob) return;
+    const id = `captions-${Date.now()}`;
+    this.captionJob = { id, stage: 'starting', progress: 0 };
+    const going = () => this.captionJob?.id === id;
+    let stop: (() => void) | null = null;
+    let made: CaptionLine[];
+    let language: string | null;
+    try {
+      if (!this.path) {
+        // The sample has no voice to listen to: it goes through the stages, then shows typical lines.
+        const stages: [CaptionStage, number][] = [
+          ['download', 1200],
+          ['listen', 400],
+          ['transcribe', 1600],
+        ];
+        for (const [stage, ms] of stages) {
+          const started = performance.now();
+          for (let at = 0; at < ms; at = performance.now() - started) {
+            if (!going()) return;
+            this.captionJob = { id, stage, progress: at / ms };
+            await new Promise((done) => setTimeout(done, 100));
+          }
+        }
+        made = SAMPLE_CAPTIONS.map((c, i) => ({ id: `k${i + 1}`, ...c }));
+        language = 'en';
+      } else {
+        // The voices are read from the saved project, so a voice-over just recorded is saved first.
+        await this.flush();
+        stop = await onCaptionProgress((job, stage, progress) => {
+          if (job === id && going()) this.captionJob = { id, stage, progress };
+        });
+        const outcome = await generateCaptions({
+          id,
+          project: this.path,
+          language: null,
+          rowUnits: rowUnits(this.#frameAspect, this.project.captions.style),
+        });
+        if (outcome.status === 'cancelled' || !going()) return;
+        const stamp = Date.now().toString(36);
+        made = outcome.captions.map((c, i) => ({
+          id: `k${stamp}-${i}`,
+          start: c.startUs / 1e6,
+          end: c.endUs / 1e6,
+          text: c.text,
+          ...(c.voiceOver ? { voiceOver: c.voiceOver } : {}),
+        }));
+        language = outcome.language;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast(`Couldn’t make captions: ${message}`, { tone: 'danger', timeout: 10000 });
+      return;
+    } finally {
+      stop?.();
+      if (going()) this.captionJob = null;
+      // The model is downloaded now, unless that's what failed.
+      void this.checkCaptionModel();
+    }
+    if (!made.length) {
+      toast('No words were heard. Is the voice silent, or muted at the source?', { timeout: 8000 });
+      return;
+    }
+    const again = this.project.captions.lines.length > 0;
+    this.change(again ? 'Make captions again' : 'Make captions', () => {
+      const captions = this.project.captions;
+      captions.lines = made;
+      captions.language = language;
+      captions.show = true;
+    });
+    toast(
+      `Captions ready: ${made.length} ${made.length === 1 ? 'line' : 'lines'}. Fix any word in the list.`,
+      {
+        tone: 'success',
+        action: { label: 'Undo', run: () => this.undo() },
+      },
+    );
+  }
+
+  /** Stops making captions. Nothing changes in the project. */
+  cancelCaptions(): void {
+    const job = this.captionJob;
+    if (!job) return;
+    this.captionJob = null;
+    if (this.path) void cancelCaptions(job.id);
+  }
+
+  /**
+   * Changes a caption's words. Clearing them all keeps the caption as it was until its box is left, which removes it
+   * (`removeCaption`), so undo brings it back in one step.
+   */
+  editCaption(id: string, text: string): void {
+    const line = this.project.captions.lines.find((l) => l.id === id);
+    if (!line || line.text === text || !text.trim()) return;
+    this.change('Edit caption', () => (line.text = text));
+  }
+
+  removeCaption(id: string): void {
+    const lines = this.project.captions.lines;
+    const index = lines.findIndex((l) => l.id === id);
+    if (index < 0) return;
+    this.change('Remove caption', () => lines.splice(index, 1));
+  }
+
+  removeCaptions(): void {
+    if (!this.project.captions.lines.length) return;
+    this.change('Remove captions', () => (this.project.captions.lines = []));
+    toast('Captions removed.', { action: { label: 'Undo', run: () => this.undo() } });
+  }
+
+  /** Saves the captions as a subtitle file, timed to the finished video, where the person picks. */
+  async saveSubtitles(format: 'srt' | 'vtt'): Promise<void> {
+    if (!this.path) {
+      toast('The sample has no folder to save into. Open a recording to save its subtitles.');
+      return;
+    }
+    try {
+      // The file is made from the saved project.
+      await this.flush();
+      const saved = await saveCaptions(this.path, this.project.title, settings.exportFolder || null, format);
+      if (!saved) return;
+      toast(`Saved ${saved.split(/[\\/]/).pop()}`, {
+        tone: 'success',
+        action: { label: 'Show', run: () => void revealInFolder(saved) },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast(`Couldn’t save the subtitles: ${message}`, { tone: 'danger', timeout: 8000 });
+    }
+  }
+
+  /** The finished frame's shape (width ÷ height), as the preview lays it out. */
+  get #frameAspect(): number {
+    const { width, height } = this.framePoints;
+    return width > 0 && height > 0 ? width / height : 16 / 9;
+  }
+
   /**
    * Plays a sound at `level`, where 1 is as recorded. Media elements stop at 100%, so louder settings (the sliders
    * go to 150%, as the export does) pass through a gain node, made once for that sound and kept after.
@@ -945,6 +1151,27 @@ export class EditorState {
     let out = 0;
     for (const c of this.project.clips) if (t > c.start) out += (Math.min(t, c.end) - c.start) / c.speed;
     return out;
+  }
+
+  /** Where moment `t` of the recording plays in the finished video, or null when it was cut. */
+  exportTimeAt(t: number): number | null {
+    let out = 0;
+    for (const c of this.project.clips) {
+      if (t >= c.start && t < c.end) return out + (t - c.start) / c.speed;
+      out += (c.end - c.start) / c.speed;
+    }
+    return null;
+  }
+
+  /** The moment of the recording that plays `out` seconds into the finished video. */
+  sourceTimeAt(out: number): number {
+    let at = 0;
+    for (const c of this.project.clips) {
+      const length = (c.end - c.start) / c.speed;
+      if (out < at + length) return c.start + Math.max(0, out - at) * c.speed;
+      at += length;
+    }
+    return this.project.clips.at(-1)?.end ?? 0;
   }
 
   /** Length after cuts and speed changes. */

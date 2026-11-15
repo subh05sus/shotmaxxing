@@ -21,6 +21,7 @@ pub mod scene;
 // Systems without an exporter of their own yet don't draw.
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod soft;
+pub mod speech;
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod sprites;
 #[cfg(any(target_os = "macos", windows))]
@@ -38,6 +39,30 @@ mod win;
 use win::draw_text;
 
 pub use model::RenderProject;
+
+/// The voices a project's captions transcribe, as 16 kHz mono: the recording's own (the microphone, or without one
+/// the computer's sound) and every voice-over. `cancel` is checked as they're read.
+pub fn speech(root: &Path, cancel: &dyn Fn() -> bool) -> Result<Vec<speech::Speech>, RenderError> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::voice::speech(root, cancel)
+    }
+    #[cfg(windows)]
+    {
+        win::voice::speech(root, cancel)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = (root, cancel);
+        Err(RenderError::Unsupported)
+    }
+}
+
+/// The captions of the project at `root` on the finished video's timeline, for a subtitle file: through cuts and
+/// speed changes, whether or not they show in the video.
+pub fn caption_cues(root: &Path) -> Result<Vec<shotmaxxing_core::captions::Cue>, RenderError> {
+    Ok(RenderProject::load(root)?.caption_cues())
+}
 
 /// Where a project's cleaned-up voice goes, next to the original.
 pub const CLEAN_MIC: &str = "media/microphone-clean.m4a";

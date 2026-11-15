@@ -1,0 +1,32 @@
+[package]
+name = "shotmaxxing-captions"
+description = "On-device captions: speech transcribed with Whisper (whisper.cpp), its model downloaded once with the system's own HTTP stack and checked against a pinned hash."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+shotmaxxing-core.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Metal runs the model on the GPU; tracing_backend keeps whisper.cpp's own logging off stdout.
+whisper-rs = { version = "0.16", features = ["metal", "tracing_backend"] }
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["block2", "NSError", "NSString", "NSURL", "NSURLResponse", "NSURLSession"] }
+
+[target.'cfg(windows)'.dependencies]
+whisper-rs = { version = "0.16", features = ["tracing_backend"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Networking_WinHttp"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

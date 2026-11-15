@@ -165,6 +165,10 @@ pub fn clean_voice(root: &Path, progress: &mut dyn FnMut(f64) -> bool) -> Result
     voice::clean_voice_with(&Windows, root, progress)
 }
 
+pub fn speech(root: &Path, cancel: &dyn Fn() -> bool) -> Result<Vec<crate::speech::Speech>, RenderError> {
+    crate::speech::speech_with(&Windows, root, cancel)
+}
+
 #[cfg(test)]
 mod tests {
     use shotmaxxing_core::bundle::ProjectBundle;

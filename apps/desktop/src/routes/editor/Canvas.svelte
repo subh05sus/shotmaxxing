@@ -2,6 +2,7 @@
   import { UserRound } from '@shotmaxxing/ui/icons';
   import { Icon } from '@shotmaxxing/ui';
   import Scene from '../../components/Scene.svelte';
+  import { CAPTION_SIZE, pageAt, pages, rowUnits } from '../../lib/captions';
   import { effectDefaults } from '../../lib/project';
   import type { EffectBlock } from '../../lib/sample';
   import { wallpaper } from '../../lib/wallpapers';
@@ -251,19 +252,23 @@
   });
   const selected = (effect: EffectBlock) => ed.selection?.kind === 'effect' && ed.selection.id === effect.id;
 
-  // The sample's captions; real projects get theirs from local transcription.
-  const CAPTIONS = [
-    { start: 0.4, end: 2.8, text: 'Here’s how sign-up works in Northwind.' },
-    { start: 2.9, end: 6.4, text: 'Start with Get started, top right.' },
-    { start: 9.0, end: 14.6, text: 'Then enter your work email.' },
-    { start: 15.3, end: 18.6, text: 'Pick a password you’ll remember.' },
-    { start: 18.8, end: 23.6, text: 'Create the account, and you’re in.' },
-    { start: 30.0, end: 35.0, text: 'Pricing is one click away.' },
-  ];
-  const caption = $derived(
-    !ed.path && p.captions.state === 'ready' && p.captions.show
-      ? CAPTIONS.find((c) => ed.time >= c.start && ed.time <= c.end)
-      : undefined,
+  // The caption showing, broken into rows as the export breaks it: a long one shows a page of two rows at a time.
+  // A caption's pages are worked out once, not every frame.
+  let paged = { key: '', list: [] as string[][] };
+  const caption = $derived.by(() => {
+    const now = p.captions.show ? ed.captionNow : null;
+    if (!now || frame.height <= 0) return null;
+    const max = rowUnits(frame.width / frame.height, p.captions.style);
+    const key = `${max}|${now.line.text}`;
+    if (paged.key !== key) paged = { key, list: pages(now.line.text, max) };
+    return paged.list[pageAt(paged.list, now.fraction)] ?? null;
+  });
+  let captionH = $state(0);
+  // A keystroke sits above the caption, half a line clear, when its usual place would overlap it.
+  const keyBottom = $derived(
+    caption && captionH > 0
+      ? Math.max(frame.height * 0.06, frame.height * 0.05 + captionH + frame.height * 0.035 * 0.5)
+      : frame.height * 0.06,
   );
 
   const key = $derived(
@@ -520,23 +525,26 @@
         >
       {/each}
 
-      {#if key}
-        <span
-          class="absolute bottom-[6%] left-1/2 -translate-x-1/2 rounded-[0.5em] bg-[var(--stage-scrim)] px-[0.8em] py-[0.35em] leading-[1.25] font-semibold whitespace-nowrap text-fg-on-stage"
-          style:font-size="{frame.height * 0.035}px">{key.label}</span
-        >
-      {/if}
-
       {#if caption}
         <span
+          bind:offsetHeight={captionH}
           class={[
-            'absolute bottom-[5%] left-1/2 max-w-[80%] -translate-x-1/2 text-center text-fg-on-stage',
+            'absolute bottom-[5%] left-1/2 flex -translate-x-1/2 flex-col items-center text-center leading-[1.25] whitespace-nowrap text-[color:var(--caption-ink)]',
             p.captions.style === 'bar'
-              ? 'rounded-[0.4em] bg-scrim px-[0.7em] py-[0.25em] font-medium'
-              : 'font-extrabold [text-shadow:0_2px_8px_var(--scrim)]',
+              ? 'rounded-[0.4em] bg-[var(--caption-scrim)] px-[0.7em] py-[0.25em] font-medium'
+              : 'font-extrabold [text-shadow:var(--caption-outline)]',
           ]}
-          style:font-size="{frame.height * (p.captions.style === 'bar' ? 0.038 : 0.05)}px"
-          >{caption.text}</span
+          style:font-size="{frame.height * CAPTION_SIZE[p.captions.style]}px"
+        >
+          {#each caption as row, i (i)}<span>{row}</span>{/each}
+        </span>
+      {/if}
+
+      {#if key}
+        <span
+          class="absolute left-1/2 -translate-x-1/2 rounded-[0.5em] bg-[var(--stage-scrim)] px-[0.8em] py-[0.35em] leading-[1.25] font-semibold whitespace-nowrap text-fg-on-stage"
+          style:bottom="{keyBottom}px"
+          style:font-size="{frame.height * 0.035}px">{key.label}</span
         >
       {/if}
 

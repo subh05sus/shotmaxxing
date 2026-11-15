@@ -239,3 +239,7 @@ pub fn find_pauses(root: &Path) -> Result<Vec<(f64, f64)>, RenderError> {
 pub fn clean_voice(root: &Path, progress: &mut dyn FnMut(f64) -> bool) -> Result<PathBuf, RenderError> {
     autoreleasepool(|_| voice::clean_voice_with(&Mac, root, progress))
 }
+
+pub fn speech(root: &Path, cancel: &dyn Fn() -> bool) -> Result<Vec<crate::speech::Speech>, RenderError> {
+    autoreleasepool(|_| crate::speech::speech_with(&Mac, root, cancel))
+}

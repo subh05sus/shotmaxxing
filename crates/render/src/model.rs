@@ -6,11 +6,12 @@
 use std::path::{Path, PathBuf};
 
 use shotmaxxing_core::bundle::ProjectBundle;
+use shotmaxxing_core::captions::{Cue, cues_of};
 use shotmaxxing_core::cursor::{PathSettings, render_path};
 use shotmaxxing_core::geometry::{Point, Rect, Size};
 use shotmaxxing_core::project::{
-    Background, ClickEffect, Corner, CursorTheme, Project, ProjectKind, TimeRange, TrackKind, ZoomMotion,
-    ZoomRegion,
+    Background, CaptionStyle, ClickEffect, Corner, CursorTheme, Project, ProjectKind, TimeRange, TrackKind,
+    ZoomMotion, ZoomRegion,
 };
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent, decode_cursor, read_events};
 
@@ -47,6 +48,16 @@ pub enum Click {
     None,
     Press,
     Ripple,
+}
+
+/// A caption to draw, timed on the timeline it was made for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CaptionLine {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+    /// A voice-over's caption: timed on the finished video, not the recording.
+    pub finished: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -147,6 +158,11 @@ pub struct RenderProject {
     pub keys: Vec<(f64, String)>,
     pub keystrokes: bool,
     pub titles: Vec<Title>,
+    /// The captions, the recording's first and then the voice-overs', each in order.
+    pub captions: Vec<CaptionLine>,
+    /// Whether they're drawn on the video; a subtitle file has them either way.
+    pub show_captions: bool,
+    pub caption_style: CaptionStyle,
     pub blurs: Vec<Blur>,
     pub arrows: Vec<Arrow>,
     /// Every sound to mix into the export, loudness included.
@@ -156,6 +172,31 @@ pub struct RenderProject {
 
 const fn sec(us: u64) -> f64 {
     us as f64 / 1_000_000.0
+}
+
+/// The captions: none for a screenshot, none without text or time, and none whose voice-over is gone. The
+/// recording's come first and the voice-overs' after, each in order, so a voice-over's caption wins when both would
+/// show.
+fn captions_of(project: &Project, still: bool) -> Vec<CaptionLine> {
+    if still {
+        return Vec::new();
+    }
+    let voice_overs: Vec<&str> =
+        project.tracks.iter().filter(|t| t.kind == TrackKind::VoiceOver).map(|t| t.path.as_str()).collect();
+    let mut lines: Vec<CaptionLine> = project
+        .captions
+        .iter()
+        .filter(|c| c.range.end_us > c.range.start_us && !c.text.trim().is_empty())
+        .filter(|c| c.voice_over.as_deref().is_none_or(|v| voice_overs.contains(&v)))
+        .map(|c| CaptionLine {
+            start: sec(c.range.start_us),
+            end: sec(c.range.end_us),
+            text: c.text.split_whitespace().collect::<Vec<_>>().join(" "),
+            finished: c.voice_over.is_some(),
+        })
+        .collect();
+    lines.sort_by(|a, b| a.finished.cmp(&b.finished).then(a.start.total_cmp(&b.start)));
+    lines
 }
 
 /// The kept parts of the recording: the gaps between cuts, each with the speed set where it starts.
@@ -382,6 +423,9 @@ impl RenderProject {
                 .iter()
                 .map(|a| Arrow { start: range(&a.range).0, end: range(&a.range).1, from: a.from, to: a.to })
                 .collect(),
+            captions: captions_of(project, still),
+            show_captions: project.caption_settings.show,
+            caption_style: project.caption_settings.style,
             sounds,
             bubble,
         }
@@ -425,6 +469,46 @@ impl RenderProject {
             at += (clip.end - clip.start) / clip.speed;
         }
         None
+    }
+
+    /// Where the moments from `start` to `end` of the recording play in the finished video, from the first kept
+    /// one to the last; cuts in between close up. `None` when all of it was cut.
+    pub fn output_span(&self, start: f64, end: f64) -> Option<(f64, f64)> {
+        let mut at = 0.0;
+        let mut span: Option<(f64, f64)> = None;
+        for clip in &self.clips {
+            let (a, b) = (start.max(clip.start), end.min(clip.end));
+            if b > a {
+                let (from, to) = (at + (a - clip.start) / clip.speed, at + (b - clip.start) / clip.speed);
+                span = Some(span.map_or((from, to), |(first, _)| (first, to)));
+            }
+            at += (clip.end - clip.start) / clip.speed;
+        }
+        span
+    }
+
+    /// The captions on the finished video's timeline, in order, for a subtitle file: one cue a page of two rows of
+    /// the file. Each ends where the next one starts if they'd overlap, as players would show both.
+    pub fn caption_cues(&self) -> Vec<Cue> {
+        let total = self.output_duration();
+        let mut cues: Vec<Cue> = self
+            .captions
+            .iter()
+            .filter_map(|c| {
+                let (start, end) =
+                    if c.finished { (c.start, c.end.min(total)) } else { self.output_span(c.start, c.end)? };
+                (end > start).then(|| cues_of(start, end, &c.text))
+            })
+            .flatten()
+            .collect();
+        cues.sort_by(|a, b| a.start.total_cmp(&b.start));
+        for i in 1..cues.len() {
+            let next = cues[i].start;
+            if next > cues[i - 1].start {
+                cues[i - 1].end = cues[i - 1].end.min(next);
+            }
+        }
+        cues
     }
 
     /// The moment `source` if it's kept, else the next moment that is (or the last one, past the end).
@@ -493,6 +577,58 @@ mod tests {
         // Just after the cut, the recording continues at 3 s, twice as fast.
         assert_eq!(render.source_time(2.5), Some(4.0));
         assert_eq!(render.source_time(6.0), None);
+    }
+
+    #[test]
+    fn captions_play_through_cuts_and_speed_in_subtitle_files() {
+        use shotmaxxing_core::project::{Caption, MediaTrack};
+        let caption = |start_ms: u64, end_ms: u64, text: &str, voice_over: Option<&str>| Caption {
+            range: range(start_ms, end_ms),
+            text: text.into(),
+            voice_over: voice_over.map(String::from),
+        };
+        let mut project = project_with(
+            vec![range(2_000, 3_000)],
+            vec![SpeedRegion { range: range(3_000, 10_000), factor: 2.0 }],
+        );
+        project.tracks.push(MediaTrack {
+            id: "voice-over-1".into(),
+            kind: TrackKind::VoiceOver,
+            path: "media/voice-over 1.m4a".into(),
+            duration_us: 2_000_000,
+            offset_us: 4_000_000,
+            volume: 1.0,
+            muted: false,
+            name: None,
+        });
+        project.captions = vec![
+            caption(1_500, 3_500, "Across  the cut", None),
+            caption(2_100, 2_900, "Cut away", None),
+            caption(500, 1_000, "  ", None),
+            caption(0, 400, "Here's how", None),
+            caption(4_000, 5_000, "Narrated later", Some("media/voice-over 1.m4a")),
+            caption(4_000, 5_000, "Its voice-over is gone", Some("media/voice-over 2.m4a")),
+        ];
+        let mut render = RenderProject::from_parts(Path::new("/tmp"), &project, &[], &[]);
+        render.clips = clips_of(&project, 10.0);
+        let texts: Vec<&str> = render.captions.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, ["Here's how", "Across the cut", "Cut away", "Narrated later"]);
+        assert!(render.captions[3].finished);
+
+        let cues = render.caption_cues();
+        let spans: Vec<(f64, f64, &str)> = cues.iter().map(|c| (c.start, c.end, c.text.as_str())).collect();
+        // 1.5 s to the cut at 2 s, then 3 s to 3.5 s twice as fast: 1.5 to 2.25 in the finished video. The cut-away
+        // caption is gone, and the voice-over's stays where it was narrated.
+        assert_eq!(
+            spans,
+            [(0.0, 0.4, "Here's how"), (1.5, 2.25, "Across the cut"), (4.0, 5.0, "Narrated later")]
+        );
+
+        // Hidden from the video, they're still there for a subtitle file.
+        project.caption_settings.show = false;
+        let hidden = RenderProject::from_parts(Path::new("/tmp"), &project, &[], &[]);
+        assert!(!hidden.show_captions);
+        assert_eq!(hidden.captions.len(), 4);
     }
 
     #[test]

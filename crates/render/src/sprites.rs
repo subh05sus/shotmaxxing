@@ -9,11 +9,24 @@ use tiny_skia::{
     RadialGradient, SpreadMode, Stroke, Transform,
 };
 
+use shotmaxxing_core::project::CaptionStyle;
+
 use crate::model::CursorLook;
 use crate::scene::Layout;
 
-/// The line box of titles and the keystroke overlay, as a multiple of the font size.
+/// The line box of titles, captions and the keystroke overlay, as a multiple of the font size.
 pub const LINE_HEIGHT: f64 = 1.25;
+
+/// How heavy a label's letters are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Weight {
+    /// Bar captions, as `font-medium` in the editor.
+    Medium,
+    /// Titles and keystrokes, as `font-semibold`.
+    Semibold,
+    /// Bold captions, as `font-extrabold`.
+    Heavy,
+}
 
 /// Converts an OKLCH colour to straight-alpha sRGB.
 pub fn oklch(l: f64, c: f64, h: f64, alpha: f64) -> Color {
@@ -43,6 +56,9 @@ pub struct Palette {
     pub scrim: Color,
     pub on_stage: Color,
     pub shadow_ink: Color,
+    /// Captions: darker than the keystroke scrim, with solid letters, so they read on any picture.
+    pub caption_scrim: Color,
+    pub caption_ink: Color,
 }
 
 impl Palette {
@@ -56,6 +72,8 @@ impl Palette {
             scrim: oklch(0.0, 0.0, 0.0, 0.5),
             on_stage: oklch(0.97, 0.0, 0.0, 0.86),
             shadow_ink: oklch(0.12, 0.01, 264.0, 1.0),
+            caption_scrim: oklch(0.0, 0.0, 0.0, 0.75),
+            caption_ink: oklch(0.98, 0.0, 0.0, 1.0),
         }
     }
 }
@@ -416,6 +434,136 @@ pub fn title(
     Some(Label { pixmap, x, y })
 }
 
+/// A caption's font size in pixels.
+pub fn caption_px(layout: &Layout, style: CaptionStyle) -> f64 {
+    layout.height * style.size()
+}
+
+/// How a caption's letters are drawn.
+pub fn caption_weight(style: CaptionStyle) -> Weight {
+    match style {
+        CaptionStyle::Bar => Weight::Medium,
+        CaptionStyle::Bold => Weight::Heavy,
+    }
+}
+
+/// `text` (light letters) with a dark edge round its letters and a soft shadow under them, so it reads on any
+/// picture. The editor draws the same with stacked CSS text shadows: three of `0 0 0.08em` black at 90% for the edge
+/// and `0 0.05em 0.24em` at 60% for the shadow. Returns the picture and the room it has around `text`.
+fn outlined(text: &Pixmap, size: f64) -> Option<(Pixmap, usize)> {
+    // Offset down, blur, strength and opacity, the lengths as fractions of the font size. A strength above one makes
+    // a blur's soft fringe a solid edge, as stacked shadows do.
+    let layers = [(0.05 * size, 0.12 * size, 1.0, 0.6), (0.0, 0.04 * size, 3.0, 0.9)];
+    let margin =
+        layers.iter().map(|(offset, sigma, ..)| offset + 3.0 * sigma).fold(0.0, f64::max).ceil() as usize;
+    let (tw, th) = (text.width() as usize, text.height() as usize);
+    let (w, h) = (tw + 2 * margin, th + 2 * margin);
+    let source: Vec<f32> = text.data().as_chunks::<4>().0.iter().map(|p| f32::from(p[3]) / 255.0).collect();
+    let mut shadow = vec![0f32; w * h];
+    for (offset, sigma, strength, opacity) in layers {
+        let dy = offset.round() as usize;
+        let mut alpha = vec![0f32; w * h];
+        for y in 0..th {
+            let row = (y + margin + dy) * w + margin;
+            alpha[row..row + tw].copy_from_slice(&source[y * tw..(y + 1) * tw]);
+        }
+        blur_alpha(&mut alpha, w, h, sigma);
+        for (s, a) in shadow.iter_mut().zip(alpha) {
+            let a = (a * strength).clamp(0.0, 1.0) * opacity;
+            *s = 1.0 - (1.0 - *s) * (1.0 - a);
+        }
+    }
+    let mut pixmap = Pixmap::new(w as u32, h as u32)?;
+    // Black, premultiplied: only the alpha.
+    for (px, s) in pixmap.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(shadow) {
+        *px = [0, 0, 0, (s.clamp(0.0, 1.0) * 255.0).round() as u8];
+    }
+    pixmap.draw_pixmap(
+        margin as i32,
+        margin as i32,
+        text.as_ref(),
+        &PixmapPaint::default(),
+        Transform::identity(),
+        None,
+    );
+    Some((pixmap, margin))
+}
+
+/// A caption as a compositor keeps it between frames: which one, its pages, and the page drawn (with where its top
+/// is), so each page is drawn once.
+pub struct CaptionShown<T> {
+    index: usize,
+    pages: Vec<Vec<String>>,
+    page: usize,
+    pub drawn: Option<(T, f64)>,
+}
+
+impl<T> CaptionShown<T> {
+    /// What shows of caption `index` (`text`, in rows of `max` units) `fraction` of the way through its time: what
+    /// `last` drew when that's the same page, or else the page's rows drawn by `draw`.
+    pub fn next(
+        last: Option<Self>,
+        (index, fraction): (usize, f64),
+        text: &str,
+        max: usize,
+        draw: impl FnOnce(&[String]) -> Option<(T, f64)>,
+    ) -> Self {
+        let pages = match last {
+            Some(last) if last.index == index => {
+                if shotmaxxing_core::captions::page_at(&last.pages, fraction) == last.page {
+                    return last;
+                }
+                last.pages
+            }
+            _ => shotmaxxing_core::captions::pages(text, max),
+        };
+        let page = shotmaxxing_core::captions::page_at(&pages, fraction);
+        let drawn = pages.get(page).and_then(|rows| draw(rows));
+        Self { index, pages, page, drawn }
+    }
+}
+
+/// A caption: its `rows` (each drawn at frame scale in the caption's ink) stacked and centred, the block's foot 5%
+/// above the frame's. A bar caption sits on a dark rounded bar (`px-[0.7em] py-[0.25em] rounded-[0.4em]` in the
+/// editor); a bold one has a dark edge round its letters instead. Also returns where what shows begins, so a
+/// keystroke can sit above it.
+pub fn caption(
+    layout: &Layout,
+    rows: &[Pixmap],
+    style: CaptionStyle,
+    palette: &Palette,
+) -> Option<(Label, f64)> {
+    let size = caption_px(layout, style);
+    let width = rows.iter().map(Pixmap::width).max()?;
+    let height: u32 = rows.iter().map(Pixmap::height).sum();
+    let mut block = Pixmap::new(width, height)?;
+    let mut y = 0;
+    for row in rows {
+        let x = ((width - row.width()) / 2) as i32;
+        block.draw_pixmap(x, y, row.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+        y += row.height() as i32;
+    }
+    let (pixmap, margin) = match style {
+        CaptionStyle::Bar => {
+            (label(&block, 0.7 * size, 0.25 * size, 0.4 * size, palette.caption_scrim, None)?, 0.0)
+        }
+        CaptionStyle::Bold => {
+            let (pixmap, margin) = outlined(&block, size)?;
+            (pixmap, margin as f64)
+        }
+    };
+    let (w, h) = (f64::from(pixmap.width()), f64::from(pixmap.height()));
+    let x = ((layout.width - w) / 2.0).round();
+    let y = (layout.height * 0.95 - (h - margin)).round();
+    Some((Label { pixmap, x, y }, y + margin))
+}
+
+/// Where a keystroke goes while a caption shows: above the caption's `top`, with half a line between, when its
+/// usual place would overlap it.
+pub fn key_above(key: &Label, top: f64, layout: &Layout) -> f64 {
+    key.y.min((top - 0.5 * layout.text_px - f64::from(key.pixmap.height())).round())
+}
+
 /// A keystroke: `glyphs` (drawn in the stage's ink) centred near the bottom on a dark scrim.
 pub fn key(layout: &Layout, glyphs: &Pixmap, palette: &Palette) -> Option<Label> {
     let size = layout.text_px;
@@ -429,6 +577,55 @@ pub fn key(layout: &Layout, glyphs: &Pixmap, palette: &Palette) -> Option<Label>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn layout() -> Layout {
+        let project = crate::RenderProject::from_parts(
+            std::path::Path::new("/tmp"),
+            &shotmaxxing_core::project::Project::default(),
+            &[],
+            &[],
+        );
+        Layout::new(&project, 1920, 1080)
+    }
+
+    fn glyphs(w: u32, h: u32) -> Pixmap {
+        let mut pixmap = Pixmap::new(w, h).unwrap();
+        pixmap.fill(Color::WHITE);
+        pixmap
+    }
+
+    #[test]
+    fn a_bar_caption_sits_centred_above_the_foot_and_a_keystroke_above_it() {
+        let (l, palette) = (layout(), Palette::get());
+        let size = caption_px(&l, CaptionStyle::Bar);
+        let (label, top) =
+            caption(&l, &[glyphs(600, 51), glyphs(400, 51)], CaptionStyle::Bar, &palette).unwrap();
+        let (w, h) = (f64::from(label.pixmap.width()), f64::from(label.pixmap.height()));
+        assert!((w - (600.0 + 1.4 * size)).abs() <= 1.0, "the widest row and its padding: {w}");
+        assert!((label.x + w / 2.0 - 960.0).abs() <= 1.0, "centred");
+        assert!((label.y + h - 1026.0).abs() <= 1.0, "5% above the foot: {}", label.y + h);
+        assert_eq!(top, label.y);
+
+        let key = Label { pixmap: glyphs(80, 40), x: 920.0, y: (1080.0 * 0.94 - 40.0_f64).round() };
+        let y = key_above(&key, top, &l);
+        assert!(y + 40.0 <= top - 0.4 * l.text_px, "clear of the caption: {y}");
+        let far = Label { pixmap: glyphs(80, 40), x: 920.0, y: 100.0 };
+        assert_eq!(key_above(&far, top, &l), 100.0, "a keystroke already clear stays put");
+    }
+
+    #[test]
+    fn a_bold_caption_keeps_its_letters_above_the_foot_with_a_shadow_around_them() {
+        let (l, palette) = (layout(), Palette::get());
+        let (label, top) = caption(&l, &[glyphs(500, 68)], CaptionStyle::Bold, &palette).unwrap();
+        let margin = top - label.y;
+        assert!(margin > 0.0, "room for the shadow");
+        assert!((top + 68.0 - 1026.0).abs() <= 1.0, "the letters end 5% above the foot: {}", top + 68.0);
+        // The shadow is dark and soft below the letters, and clear far from them.
+        let below = label.pixmap.pixel(margin as u32 + 250, (margin + 68.0 + 2.0) as u32).unwrap();
+        assert!(below.alpha() > 20 && below.red() < 10, "{below:?}");
+        let corner = label.pixmap.pixel(0, 0).unwrap();
+        assert!(corner.alpha() < 10, "{corner:?}");
+    }
 
     #[test]
     fn blur_keeps_the_total_and_spreads_it() {

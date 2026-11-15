@@ -246,6 +246,80 @@ export function cleanVoice(project: string): Promise<string> {
   return call('clean_voice', { path: project }, () => new Promise((done) => setTimeout(() => done(''), 900)));
 }
 
+// Captions -------------------------------------------------------------------------------------------------------
+
+/** Whether this computer can make captions, and whether the speech model still has to be downloaded first. */
+export interface CaptionModel {
+  /** Why captions can't be made here, when they can't. */
+  unsupported: string | null;
+  /** Downloaded and checked, so captions start at once. */
+  ready: boolean;
+  /** The model's download size, in bytes. */
+  bytes: number;
+}
+
+export function captionModel(): Promise<CaptionModel> {
+  return call('caption_model', undefined, () => ({ unsupported: null, ready: false, bytes: 59_707_625 }));
+}
+
+/** Where a caption job is: waiting for another project's, downloading the model, listening, or transcribing. */
+export type CaptionStage = 'waiting' | 'download' | 'listen' | 'transcribe';
+
+/** A caption made from speech, in microseconds on its voice's timeline. */
+export interface MadeCaption {
+  startUs: number;
+  endUs: number;
+  text: string;
+  /** The voice-over it was heard in, by its file: timed on the finished video. */
+  voiceOver?: string;
+}
+
+export type CaptionOutcome =
+  { status: 'done'; captions: MadeCaption[]; language: string | null } | { status: 'cancelled' };
+
+/**
+ * Makes captions from a project's voices (its microphone and voice-overs, as saved), downloading the speech model
+ * first when it isn't here yet. `rowUnits` is how many units a row of the frame holds, so each caption fits in two
+ * rows. Progress comes through `onCaptionProgress`.
+ */
+export function generateCaptions(request: {
+  id: string;
+  project: string;
+  language: string | null;
+  rowUnits: number;
+}): Promise<CaptionOutcome> {
+  return call('generate_captions', { request }, () => ({ status: 'cancelled' }) as const);
+}
+
+export function cancelCaptions(id: string): Promise<void> {
+  return call('cancel_captions', { id }, () => undefined);
+}
+
+/**
+ * Saves a project's captions as a subtitle file where the person picks, starting in `folder` (the export folder;
+ * none means next to the project). Resolves with where it went, or null when they cancelled.
+ */
+export function saveCaptions(
+  project: string,
+  name: string,
+  folder: string | null,
+  format: 'srt' | 'vtt',
+): Promise<string | null> {
+  return call('save_captions', { project, name, folder, format }, () => null);
+}
+
+/** Calls `listener` as caption jobs from this window make progress. Returns a function that stops listening. */
+export async function onCaptionProgress(
+  listener: (id: string, stage: CaptionStage, progress: number) => void,
+): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+  return getCurrentWebviewWindow().listen<{ id: string; stage: CaptionStage; progress: number }>(
+    'caption-progress',
+    (event) => listener(event.payload.id, event.payload.stage, event.payload.progress),
+  );
+}
+
 export interface LoadedProject {
   root: string;
   project: CoreProject;

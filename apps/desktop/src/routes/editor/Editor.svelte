@@ -474,7 +474,14 @@
               group: 'AI',
               icon: Ai,
               keywords: 'subtitles whisper transcribe',
-              run: () => (ed.tool = 'ai'),
+              run: () => {
+                ed.tool = 'ai';
+                const p = ed.project;
+                const voice = p.has.mic || p.audio.voiceOvers.length > 0;
+                if (voice && !p.captions.lines.length && ed.captionModel?.unsupported == null) {
+                  void ed.generateCaptions();
+                }
+              },
             },
             ...toolCommands,
             ...newCommands,

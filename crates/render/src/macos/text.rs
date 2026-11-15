@@ -13,6 +13,8 @@ use objc2_core_text::{
 };
 use tiny_skia::{Color, IntSize, Pixmap};
 
+use crate::sprites::Weight;
+
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C-unwind" {
     fn CGBitmapContextCreate(
@@ -28,14 +30,18 @@ unsafe extern "C-unwind" {
 
 /// Premultiplied RGBA, red first in memory.
 const PREMULTIPLIED_LAST: u32 = 1;
-/// Semibold, as `font-semibold` in the editor.
-const SEMIBOLD: f64 = 0.3;
-
-fn semibold_system_font(size: f64) -> Option<CFRetained<CTFont>> {
+/// The system font at `size` in `weight`, with Core Text's weights for the editor's: medium (`font-medium`), semibold
+/// and heavy (`font-extrabold`), as `NSFontWeight` has them.
+fn system_font(size: f64, weight: Weight) -> Option<CFRetained<CTFont>> {
+    let weight = match weight {
+        Weight::Medium => 0.23,
+        Weight::Semibold => 0.3,
+        Weight::Heavy => 0.56,
+    };
     // SAFETY: Core Text creates and copies fonts from valid descriptors; every object here is owned.
     unsafe {
         let base = CTFont::new_ui_font_for_language(CTFontUIFontType::System, size, None)?;
-        let weight = CFNumber::new_f64(SEMIBOLD);
+        let weight = CFNumber::new_f64(weight);
         let traits = CFDictionary::<CFString, CFType>::from_slices(&[kCTFontWeightTrait], &[weight.as_ref()]);
         let attributes =
             CFDictionary::<CFString, CFType>::from_slices(&[kCTFontTraitsAttribute], &[traits.as_ref()]);
@@ -44,10 +50,10 @@ fn semibold_system_font(size: f64) -> Option<CFRetained<CTFont>> {
     }
 }
 
-/// `text` in the semibold system font at `size` pixels, coloured `color`, on a transparent background. The box is
+/// `text` in the system font at `size` pixels and `weight`, coloured `color`, on a transparent background. The box is
 /// `line_height` × `size` tall with the glyphs centred in it, like a CSS line box.
-pub fn draw(text: &str, size: f64, line_height: f64, color: Color) -> Option<Pixmap> {
-    let font = semibold_system_font(size)?;
+pub fn draw(text: &str, size: f64, line_height: f64, color: Color, weight: Weight) -> Option<Pixmap> {
+    let font = system_font(size, weight)?;
     // SAFETY: plain Core Text and Core Graphics calls. The bitmap context draws into `data`, which outlives it.
     unsafe {
         let string = CFString::from_str(text);

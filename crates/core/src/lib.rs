@@ -8,6 +8,7 @@
 pub mod beats;
 pub mod bundle;
 pub mod camera;
+pub mod captions;
 pub mod cursor;
 pub mod geometry;
 pub mod hash;

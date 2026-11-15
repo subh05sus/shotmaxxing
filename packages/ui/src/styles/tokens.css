@@ -125,6 +125,13 @@
      the app's theme, and they scale with the frame. */
   --stage-scrim: oklch(0 0 0 / 0.5);
   --stage-shadow: 0 0.25em 0.75em oklch(0 0 0 / 0.3);
+  /* Captions: a darker scrim than the keystroke's, and solid letters, so they read on any picture. A bold caption has
+     a dark edge round its letters and a soft shadow instead; the export draws the same (crates/render sprites). */
+  --caption-scrim: oklch(0 0 0 / 0.75);
+  --caption-ink: oklch(0.98 0 0);
+  --caption-outline:
+    0 0 0.08em oklch(0 0 0 / 0.9), 0 0 0.08em oklch(0 0 0 / 0.9), 0 0 0.08em oklch(0 0 0 / 0.9),
+    0 0.05em 0.24em oklch(0 0 0 / 0.6);
 }
 
 /* ---------------------------------------------------------------- Platform shapes and type */
