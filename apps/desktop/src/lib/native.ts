@@ -118,7 +118,9 @@ export function listSources(): Promise<CaptureSource[]> {
       width: 980,
       height: 620,
     },
-    // Full screen on a Space of its own, so the preview shows that state too.
+    { id: 'window-5', kind: 'window', app: 'Xcode', title: 'Northwind.xcodeproj', width: 1680, height: 1050 },
+    // Windows on other Spaces come last, as the app lists them: one full screen on a Space of its own, and one on a
+    // desktop that isn't showing (as seen from a full-screen app), so the preview shows both states.
     {
       id: 'window-6',
       kind: 'window',
@@ -129,7 +131,15 @@ export function listSources(): Promise<CaptureSource[]> {
       full_screen: true,
       away: true,
     },
-    { id: 'window-5', kind: 'window', app: 'Xcode', title: 'Northwind.xcodeproj', width: 1680, height: 1050 },
+    {
+      id: 'window-7',
+      kind: 'window',
+      app: 'Notes',
+      title: 'Launch checklist',
+      width: 900,
+      height: 620,
+      away: true,
+    },
   ]);
 }
 

@@ -50,7 +50,7 @@ pub struct Placed {
 ///
 /// # Safety
 /// `info` must be a dictionary from `CGWindowListCopyWindowInfo`.
-unsafe fn entry<'a>(info: &'a CFDictionary, key: &CFString) -> Option<&'a CFType> {
+pub(super) unsafe fn entry<'a>(info: &'a CFDictionary, key: &CFString) -> Option<&'a CFType> {
     // SAFETY: the dictionary's values are CF objects, valid while it is.
     unsafe { (info.value((key as *const CFString).cast()) as *const CFType).as_ref() }
 }
@@ -364,20 +364,40 @@ pub fn reach(frame: CGRect, top: f64, displays: &[CGRect]) -> CGRect {
     )
 }
 
+/// Where the window server says a window is ([`super::spaces`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Space {
+    /// It can't say (its calls are missing): windows are told apart by their shape alone.
+    Unknown,
+    /// On no Space: minimised, hidden, a tab behind another, or a helper that never shows.
+    Nowhere,
+    /// On a Space that's showing.
+    Here,
+    /// On a desktop that isn't showing.
+    OtherDesktop,
+    /// On a full-screen app's Space that isn't showing.
+    OtherFullScreen,
+}
+
 /// A window as the picker weighs it.
 #[derive(Clone, Copy, Debug)]
 pub struct Seen {
     pub pid: i32,
     pub frame: CGRect,
     pub on_screen: bool,
+    pub space: Space,
 }
 
 /// Which of `windows` (apps' ordinary windows, front to back) the picker lists, each with whether it's in full
 /// screen. Every one showing on this Space is, but for a full-screen app's toolbars, which are recorded with its
-/// window. From other Spaces only full-screen apps are, once per app and display: their tabs are windows of their
-/// own, all the same size, and only the one in front shows when the Space does ([`stand_in`] records that one).
-/// Windows away for other reasons (minimised, hidden, on another desktop, helpers that never show) all look alike
-/// to the window server, so they're left out.
+/// window. From other Spaces, only windows macOS will go to: those of apps with no window showing here (asked to
+/// come forward, an app goes to its Space then, and stays here otherwise). Of those, full-screen apps' are listed
+/// once per app and display: their tabs are windows of their own, all the same size, and only the one in front shows
+/// when the Space does ([`stand_in`] records that one). And windows on other desktops are, when the window server
+/// says where windows are ([`Space`]).
+/// Windows on no Space (minimised, hidden, tabs behind others, helpers that never show) aren't listed. Without the
+/// window server's word, they can't be told from windows on other desktops, so then only full-screen apps are, by
+/// their shape.
 pub fn listed(windows: &[Seen], displays: &[CGRect]) -> Vec<(usize, bool)> {
     let fills = |frame: CGRect| displays.iter().position(|display| full_screen_shaped(frame, *display));
     // Full-screen windows showing here, with their app and display.
@@ -386,6 +406,8 @@ pub fn listed(windows: &[Seen], displays: &[CGRect]) -> Vec<(usize, bool)> {
         .filter(|w| w.on_screen)
         .filter_map(|w| fills(w.frame).map(|d| (w.pid, d, w.frame)))
         .collect();
+    // Apps with a window showing here.
+    let here: Vec<i32> = windows.iter().filter(|w| w.on_screen).map(|w| w.pid).collect();
     let mut elsewhere: Vec<(i32, usize)> = Vec::new();
     let mut out = Vec::new();
     for (index, w) in windows.iter().enumerate() {
@@ -398,12 +420,22 @@ pub fn listed(windows: &[Seen], displays: &[CGRect]) -> Vec<(usize, bool)> {
             if !toolbar {
                 out.push((index, display.is_some()));
             }
-        } else if let Some(d) = display
-            && !showing.iter().any(|&(pid, shown, _)| pid == w.pid && shown == d)
-            && !elsewhere.contains(&(w.pid, d))
-        {
-            elsewhere.push((w.pid, d));
-            out.push((index, true));
+            continue;
+        }
+        if here.contains(&w.pid) {
+            continue;
+        }
+        match w.space {
+            Space::OtherDesktop => out.push((index, false)),
+            Space::OtherFullScreen | Space::Unknown => {
+                if let Some(d) = display
+                    && !elsewhere.contains(&(w.pid, d))
+                {
+                    elsewhere.push((w.pid, d));
+                    out.push((index, true));
+                }
+            }
+            Space::Here | Space::Nowhere => {}
         }
     }
     out
@@ -530,7 +562,9 @@ mod tests {
 
     #[test]
     fn the_picker_lists_full_screen_apps_on_other_spaces_once() {
-        let seen = |pid: i32, frame: CGRect, on_screen: bool| Seen { pid, frame, on_screen };
+        // Without the window server's word on where windows are.
+        let seen =
+            |pid: i32, frame: CGRect, on_screen: bool| Seen { pid, frame, on_screen, space: Space::Unknown };
         let (chrome, terminal, finder, wakatime) = (1, 2, 3, 4);
         // As read while on the Desktop: Chrome and Terminal are full screen on Spaces of their own.
         let windows = [
@@ -557,5 +591,33 @@ mod tests {
             seen(finder, rect(224.0, 175.0, 900.0, 450.0), false),
         ];
         assert_eq!(listed(&windows, &[LAPTOP]), [(1, true), (3, true)]);
+    }
+
+    #[test]
+    fn from_a_full_screen_app_the_picker_lists_windows_on_the_desktop() {
+        let at =
+            |pid: i32, frame: CGRect, on_screen: bool, space: Space| Seen { pid, frame, on_screen, space };
+        let (terminal, chrome, whatsapp, motion, settings, wakatime) = (1, 2, 3, 4, 5, 6);
+        // As read on the owner's Mac from Terminal's full-screen Space, with Stage Manager on the desktop.
+        let windows = [
+            at(terminal, rect(0.0, 33.0, 1470.0, 68.0), true, Space::Here),
+            at(terminal, rect(0.0, 69.0, 1470.0, 887.0), true, Space::Here),
+            // Its other tabs and their tab bars, ordered out.
+            at(terminal, rect(0.0, 69.0, 1470.0, 887.0), false, Space::Nowhere),
+            at(terminal, rect(0.0, 33.0, 1470.0, 68.0), false, Space::Nowhere),
+            // A window of Terminal's on the desktop: Terminal is here, so macOS wouldn't go to it.
+            at(terminal, rect(16.0, 665.0, 108.0, 117.0), false, Space::OtherDesktop),
+            // Chrome full screen on its own Space, with its toolbar and a small window there.
+            at(chrome, rect(0.0, 33.0, 1470.0, 124.0), false, Space::OtherFullScreen),
+            at(chrome, rect(0.0, 121.0, 1470.0, 835.0), false, Space::OtherFullScreen),
+            at(chrome, rect(135.0, 59.0, 858.0, 458.0), false, Space::OtherFullScreen),
+            // Windows parked in Stage Manager's strip on the desktop.
+            at(whatsapp, rect(16.0, 519.0, 137.0, 137.0), false, Space::OtherDesktop),
+            at(motion, rect(16.0, 346.0, 137.0, 150.0), false, Space::OtherDesktop),
+            at(settings, rect(16.0, 207.0, 86.0, 122.0), false, Space::OtherDesktop),
+            // A hidden app's window.
+            at(wakatime, rect(515.0, 124.0, 446.0, 673.0), false, Space::Nowhere),
+        ];
+        assert_eq!(listed(&windows, &[LAPTOP]), [(1, true), (6, true), (8, false), (9, false), (10, false)]);
     }
 }

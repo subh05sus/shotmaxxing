@@ -1,5 +1,5 @@
 //! Prints what the record dialog offers: the displays, and the windows it lists, with whether each is in full screen
-//! and whether it's on another Space. Reads only; nothing moves.
+//! and whether it's on another Space or desktop. Reads only; nothing moves.
 //! Usage: cargo run -p shotmaxxing-capture --example source_probe
 
 fn main() {
@@ -17,7 +17,7 @@ fn main() {
             notes.push("full screen");
         }
         if window.away {
-            notes.push("on another Space");
+            notes.push(if window.full_screen { "on another Space" } else { "on another desktop" });
         }
         println!(
             "window  {:>6}  {:>6.0} × {:<6.0} {} — {}{}",

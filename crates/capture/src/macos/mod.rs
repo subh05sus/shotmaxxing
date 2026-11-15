@@ -7,6 +7,8 @@ mod devices;
 mod follow;
 mod input;
 mod preview;
+mod spaces;
+mod symbols;
 mod window;
 mod writer;
 
@@ -161,12 +163,21 @@ pub fn sources() -> Result<Sources, CaptureError> {
                 (!skip).then_some((w, app))
             })
             .collect();
+        // Which Space the windows not showing are on, when the window server says.
+        let layout = spaces::layout();
         let seen: Vec<window::Seen> = candidates
             .iter()
             .map(|(w, app)| window::Seen {
                 pid: app.processID(),
                 frame: w.frame(),
                 on_screen: w.isOnScreen(),
+                space: if w.isOnScreen() {
+                    window::Space::Here
+                } else {
+                    layout
+                        .as_ref()
+                        .map_or(window::Space::Unknown, |layout| spaces::space_of(w.windowID(), layout))
+                },
             })
             .collect();
         let mut windows: Vec<WindowInfo> = window::listed(&seen, &display_frames(&content))

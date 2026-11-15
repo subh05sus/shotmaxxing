@@ -1,7 +1,7 @@
 //! Accessibility: what apps say about their own windows and controls. It needs the person's permission (Privacy &
 //! Security › Accessibility), which is optional, so everything that asks has a way to do without.
 
-use std::ffi::{c_char, c_void};
+use std::ffi::c_void;
 use std::sync::OnceLock;
 
 use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGRect, CGSize};
@@ -35,13 +35,6 @@ unsafe extern "C" {
     fn CFArrayGetCount(array: *const c_void) -> isize;
     fn CFArrayGetValueAtIndex(array: *const c_void, index: isize) -> *const c_void;
 }
-
-unsafe extern "C" {
-    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-}
-
-/// `RTLD_DEFAULT`: look in every image already loaded.
-const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
 
 pub(super) const AX_VALUE_CGPOINT: u32 = 1;
 pub(super) const AX_VALUE_CGSIZE: u32 = 2;
@@ -99,11 +92,8 @@ type GetWindow = unsafe extern "C" fn(element: *const c_void, id: *mut u32) -> i
 /// nothing fails, a window's own frame just isn't known.
 fn get_window() -> Option<GetWindow> {
     static FOUND: OnceLock<Option<usize>> = OnceLock::new();
-    let address = *FOUND.get_or_init(|| {
-        // SAFETY: a lookup by name among the images already loaded; ApplicationServices is, by the link above.
-        let symbol = unsafe { dlsym(RTLD_DEFAULT, c"_AXUIElementGetWindow".as_ptr()) };
-        (!symbol.is_null()).then_some(symbol as usize)
-    });
+    // ApplicationServices is loaded, by the link above.
+    let address = *FOUND.get_or_init(|| super::symbols::find(&[c"_AXUIElementGetWindow"]));
     // SAFETY: the function has had this signature since it appeared (macOS 10.4 era): an element and an out
     // pointer for the window number, returning an AXError.
     address.map(|address| unsafe { std::mem::transmute::<usize, GetWindow>(address) })

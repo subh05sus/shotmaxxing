@@ -291,14 +291,15 @@
               : 'var(--fill-strong)'}
           >
             {#if source.parked || source.away}
-              <!-- Parked in Stage Manager's strip, where it could only be pictured small and tilted, or full screen on
-                   a Space of its own, which can't be pictured from this one: its app's icon stands in. -->
+              <!-- Parked in Stage Manager's strip, where it could only be pictured small and tilted, or on another
+                   Space (a full-screen app's, or a desktop that isn't showing), which can't be pictured from this one:
+                   its app's icon stands in. -->
               <span
                 class="absolute inset-0 grid place-items-center"
                 title={source.away
-                  ? kind === 'screenshot'
-                    ? 'It’s full screen. Shotmaxxing goes to it for the picture.'
-                    : 'It’s full screen. Shotmaxxing goes to it when the recording starts.'
+                  ? `It’s ${source.full_screen ? 'full screen' : 'on another desktop'}. Shotmaxxing goes to it ${
+                      kind === 'screenshot' ? 'for the picture' : 'when the recording starts'
+                    }.`
                   : kind === 'screenshot'
                     ? 'It comes forward for the picture.'
                     : 'It comes forward when the recording starts.'}
@@ -310,7 +311,11 @@
                     <Icon icon={AppWindow} size={28} class="text-fg-subtle" aria-hidden="true" />
                   {/if}
                   <span class="text-caption text-fg-muted"
-                    >{source.away ? 'Full screen' : 'Parked by Stage Manager'}</span
+                    >{source.away
+                      ? source.full_screen
+                        ? 'Full screen'
+                        : 'On another desktop'
+                      : 'Parked by Stage Manager'}</span
                   >
                 </span>
               </span>
