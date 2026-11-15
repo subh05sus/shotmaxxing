@@ -93,6 +93,9 @@ pub fn run() {
             takes::take_card,
             takes::answer_take,
             takes::stop_take,
+            takes::pause_take,
+            takes::resume_take,
+            takes::take_over_take,
             takes::hand_back_take,
             takes::dismiss_take,
         ])

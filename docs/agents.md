@@ -133,6 +133,9 @@ Anything an agent does can be changed later in the editor: open the project from
   doesn't happen. An agent that calls a request off takes the question off the card too.
 - **Stopping a take.** Press Stop on the take card, press Esc three times, or move the mouse. The take stops at once
   and leaves the rest to you.
+- **Pausing or taking over.** Pause on the take card holds the take once the step in progress ends, until you press
+  Resume. Take over hands you control the same way, until you press Hand back (or ⌥⌘Return, Ctrl+Alt+Enter on
+  Windows). The time on hold is cut from the video, and the agent hears about it.
 - **Passwords.** A take never types into a password field. A `user_step` beat hands that part to you:
   - the take waits until you press ⌥⌘Return (Ctrl+Alt+Enter on Windows) or Hand back on the card;
   - that stretch is cut from the video.

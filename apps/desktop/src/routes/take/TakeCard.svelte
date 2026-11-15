@@ -32,7 +32,10 @@
     handOff,
     isTauri,
     onTakeCard,
+    pauseTake,
+    resumeTake,
     stopTake,
+    takeOverTake,
     takeCard,
     type TakeCaller,
     type TakeCardState,
@@ -296,6 +299,12 @@
           you’re done.
         </p>
       </div>
+    {:else if phase === 'paused'}
+      <div class="px-4 pt-3" in:fade>
+        <p class="text-footnote leading-[1.45] text-fg-muted">
+          Nothing moves while the take is paused, and the pause is cut from the video.
+        </p>
+      </div>
     {:else if phase === 'stopped' && result?.stopped}
       <div class="px-4 pt-3" in:fade>
         <p class="text-footnote leading-[1.45] text-fg-muted">{result.stopped}</p>
@@ -319,6 +328,8 @@
                 <Spinner size={13} label="In progress" />
               {:else if active && phase === 'handoff'}
                 <Icon icon={Hand} size={13} class="text-accent-text" aria-label="Waiting for you" />
+              {:else if active && phase === 'paused'}
+                <Icon icon={Pause} size={13} fill="currentColor" class="text-fg-muted" aria-label="Paused" />
               {:else}
                 <span class="size-1.5 rounded-full bg-fg-subtle" aria-hidden="true"></span>
               {/if}
@@ -399,15 +410,29 @@
           <Button size="sm" onclick={restart}>Start over</Button>
         {/if}
       {:else}
-        {#if !live}
+        {#if live && card?.hold && phase === 'running'}
+          <span class="flex min-w-0 items-center gap-2 text-footnote text-fg-muted">
+            <Spinner size={13} label="Waiting for the step to finish" />
+            {card.hold === 'pause' ? 'Pausing after this step…' : 'Handing over after this step…'}
+          </span>
+        {:else}
           <Button
             size="sm"
             icon={phase === 'paused' ? Play : Pause}
-            onclick={() => (samplePhase = samplePhase === 'paused' ? 'running' : 'paused')}
+            disabled={pending}
+            onclick={() =>
+              live && card
+                ? act(() => (phase === 'paused' ? resumeTake(card!.id) : pauseTake(card!.id)))
+                : (samplePhase = samplePhase === 'paused' ? 'running' : 'paused')}
           >
             {phase === 'paused' ? 'Resume' : 'Pause'}
           </Button>
-          <Button size="sm" variant="ghost" icon={Hand} onclick={() => (samplePhase = 'handoff')}
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={Hand}
+            disabled={pending}
+            onclick={() => (live && card ? act(() => takeOverTake(card!.id)) : (samplePhase = 'handoff'))}
             >Take over</Button
           >
         {/if}

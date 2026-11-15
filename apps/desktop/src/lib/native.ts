@@ -394,7 +394,7 @@ export interface TakeCaller {
 export interface TakeCardState {
   id: number;
   kind: 'access' | 'take';
-  phase: 'asking' | 'running' | 'waiting' | 'done' | 'stopped';
+  phase: 'asking' | 'running' | 'paused' | 'waiting' | 'done' | 'stopped';
   /** The agent's name for itself. */
   client: string;
   caller: TakeCaller | null;
@@ -408,6 +408,8 @@ export interface TakeCardState {
   seconds: number;
   /** What the person was asked to do, while the take waits for them. */
   waiting: string | null;
+  /** The hold the person asked for, from the moment they ask until it's lifted. It starts after the current step. */
+  hold: 'pause' | 'take_over' | null;
   result: {
     beats_done: number;
     stopped: string | null;
@@ -428,6 +430,20 @@ export function answerTake(id: number, allow: boolean): Promise<void> {
 
 export function stopTake(id: number): Promise<void> {
   return call('stop_take', { id }, () => undefined);
+}
+
+/** Pauses the take once the step in progress ends. */
+export function pauseTake(id: number): Promise<void> {
+  return call('pause_take', { id }, () => undefined);
+}
+
+export function resumeTake(id: number): Promise<void> {
+  return call('resume_take', { id }, () => undefined);
+}
+
+/** Hands control to the person once the step in progress ends, until they hand back. */
+export function takeOverTake(id: number): Promise<void> {
+  return call('take_over_take', { id }, () => undefined);
 }
 
 export function handBackTake(id: number): Promise<void> {

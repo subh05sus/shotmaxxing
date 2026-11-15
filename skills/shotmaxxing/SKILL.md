@@ -32,6 +32,9 @@ When you can see the app's controls, plan the whole performance and let Shotmaxx
      again;
    - the person moved the mouse or pressed Stop: they took over, so leave the rest to them.
 
+   A take the person paused or took over for a while carries on afterwards; that time is cut from the video and
+   counted in `performance.handed_over`.
+
 ## Filming by hand
 
 1. **Plan the take before recording.** Write down the steps, the window to film and roughly how long it should

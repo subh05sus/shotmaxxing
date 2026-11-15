@@ -626,7 +626,8 @@ pub fn run_take(
         tree.snapshot();
     }
     let zero_ms = desk.now_ms() - recording.elapsed() * 1000.0;
-    let performed = crate::perform(script, &options.planned, &mut desk, &options.cancel, progress);
+    let performed =
+        crate::perform(script, &options.planned, &mut desk, &options.cancel, &options.hold, progress);
     drop(desk);
     let mut finished = recording.stop()?;
     // A finished take puts the pointer back. One the person stopped leaves it with them.

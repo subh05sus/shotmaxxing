@@ -8,7 +8,7 @@
 //! the card, where Stop and Hand back reach it straight away.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -41,9 +41,20 @@ pub enum Kind {
 pub enum Phase {
     Asking,
     Running,
+    /// Paused from the card, until resumed.
+    Paused,
+    /// The person has control (a `user_step`, or they took over), until they hand back.
     Waiting,
     Done,
     Stopped,
+}
+
+/// A hold the person asked for on the card. It starts when the beat in progress ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Hold {
+    Pause,
+    TakeOver,
 }
 
 /// What the take card shows.
@@ -68,12 +79,14 @@ pub struct Card {
     pub seconds: f64,
     /// What the person was asked to do, while the take waits for them.
     pub waiting: Option<String>,
+    /// The hold the person asked for, from the moment they ask until it's lifted.
+    pub hold: Option<Hold>,
     pub result: Option<TakeResult>,
 }
 
 impl Card {
     fn live(&self) -> bool {
-        matches!(self.phase, Phase::Asking | Phase::Running | Phase::Waiting)
+        matches!(self.phase, Phase::Asking | Phase::Running | Phase::Paused | Phase::Waiting)
     }
 }
 
@@ -82,6 +95,7 @@ impl Card {
 struct Flags {
     cancel: Arc<AtomicBool>,
     hand_back: Arc<AtomicBool>,
+    hold: Arc<AtomicU8>,
 }
 
 /// An agent session the person let see and record the screen: the session the command named, and the process the
@@ -151,6 +165,7 @@ impl Who {
             done: 0.0,
             seconds: 0.0,
             waiting: None,
+            hold: None,
             result: None,
         }
     }
@@ -367,6 +382,7 @@ fn perform<R: Runtime>(
         client: Some(client),
         cancel: flags.cancel.clone(),
         hand_back: flags.hand_back.clone(),
+        hold: flags.hold.clone(),
     };
     let result = shotmaxxing_agent::run_take(&take.script, options, &mut |p| {
         // A Hand back pressed before the take asked for one doesn't count.
@@ -374,20 +390,29 @@ fn perform<R: Runtime>(
             flags.hand_back.store(false, Ordering::SeqCst);
         }
         takes.update(app, id, |card| {
-            match (&p.waiting, p.beat) {
-                (Some(message), _) => {
+            match (&p.waiting, p.paused, p.beat) {
+                (Some(message), _, _) => {
                     card.phase = Phase::Waiting;
                     card.waiting = Some(message.clone());
                     return;
                 }
-                (None, Some(beat)) => card.beat = beat.min(beats),
+                (None, true, _) => {
+                    card.phase = Phase::Paused;
+                    card.waiting = None;
+                    return;
+                }
+                (None, false, Some(beat)) => card.beat = beat.min(beats),
                 // Every beat played: the take is being saved.
-                (None, None) if p.done >= 1.0 => card.beat = beats,
-                (None, None) => {}
+                (None, false, None) if p.done >= 1.0 => card.beat = beats,
+                (None, false, None) => {}
             }
             card.phase = Phase::Running;
             card.waiting = None;
             card.done = p.done.clamp(0.0, 1.0);
+            // Moving again with nothing on hold: a hold the person asked for is over.
+            if flags.hold.load(Ordering::SeqCst) == shotmaxxing_agent::hold::NONE {
+                card.hold = None;
+            }
         });
         let _ = sender.send(&FromApp::Progress { done: p.done, message: p.message.clone() });
     });
@@ -543,6 +568,18 @@ impl Takes {
         });
     }
 
+    /// Puts the take on hold, or lifts the hold, from the card's buttons.
+    fn hold<R: Runtime>(&self, app: &AppHandle<R>, id: u64, hold: Option<Hold>) -> Result<(), String> {
+        let value = match hold {
+            None => shotmaxxing_agent::hold::NONE,
+            Some(Hold::Pause) => shotmaxxing_agent::hold::PAUSE,
+            Some(Hold::TakeOver) => shotmaxxing_agent::hold::TAKE_OVER,
+        };
+        self.flags(id)?.hold.store(value, Ordering::SeqCst);
+        self.update(app, id, |card| card.hold = hold);
+        Ok(())
+    }
+
     fn stop_filming(&self, id: u64) {
         if let Ok(mut inner) = self.0.lock()
             && inner.filming.as_ref().is_some_and(|(filming, _)| *filming == id)
@@ -642,6 +679,25 @@ pub fn answer_take(takes: State<'_, Takes>, id: u64, allow: bool) -> Result<(), 
 pub fn stop_take(takes: State<'_, Takes>, id: u64) -> Result<(), String> {
     takes.flags(id)?.cancel.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+/// Pauses the take once the step in progress ends. The pause is cut from the video.
+#[tauri::command]
+pub fn pause_take<R: Runtime>(app: AppHandle<R>, takes: State<'_, Takes>, id: u64) -> Result<(), String> {
+    takes.hold(&app, id, Some(Hold::Pause))
+}
+
+/// Carries on after a pause.
+#[tauri::command]
+pub fn resume_take<R: Runtime>(app: AppHandle<R>, takes: State<'_, Takes>, id: u64) -> Result<(), String> {
+    takes.hold(&app, id, None)
+}
+
+/// Hands control to the person once the step in progress ends, until they hand back. The stretch is cut from the
+/// video.
+#[tauri::command]
+pub fn take_over_take<R: Runtime>(app: AppHandle<R>, takes: State<'_, Takes>, id: u64) -> Result<(), String> {
+    takes.hold(&app, id, Some(Hold::TakeOver))
 }
 
 /// Gives control back to the take after a hand-over, like pressing ⌥⌘Return.

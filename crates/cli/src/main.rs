@@ -575,6 +575,7 @@ fn run_take(
         client: Some("Shotmaxxing CLI".into()),
         cancel,
         hand_back: Default::default(),
+        hold: Default::default(),
     };
     let take = shotmaxxing_agent::run_take(&script, options, &mut |p| {
         if !json {

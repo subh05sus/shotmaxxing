@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use serde::{Deserialize, Serialize};
 use shotmaxxing_capture::{DeviceChoice, FinishedProject, WindowInfo};
@@ -69,6 +69,19 @@ const HAND_BACK_KEYS: &str = "⌥⌘Return";
 const HAND_BACK_KEYS: &str = "Ctrl+Alt+Enter";
 
 const TOOK_OVER: &str = "you moved the pointer, so the take stopped and left the rest to you";
+/// The longest a take waits on hold before it stops.
+const HOLD_LIMIT_MS: f64 = 30.0 * 60.0 * 1000.0;
+
+/// What the person asked of a take from the take card, through [`TakeOptions::hold`]. A hold starts once the beat in
+/// progress ends (so no button is held and no word is half typed), and the time on hold is cut from the video.
+pub mod hold {
+    /// Carry on.
+    pub const NONE: u8 = 0;
+    /// Wait until resumed.
+    pub const PAUSE: u8 = 1;
+    /// Give the person control until they hand back.
+    pub const TAKE_OVER: u8 = 2;
+}
 const PASSWORD: &str = "a password field has the keyboard, and Shotmaxxing never types into one. Use a user_step beat \
 for that part";
 
@@ -144,6 +157,8 @@ pub struct Progress {
     pub beat: Option<usize>,
     /// What the person was asked to do, while the take waits for them to hand back.
     pub waiting: Option<String>,
+    /// The take is paused from the take card, until resumed.
+    pub paused: bool,
 }
 
 /// What `prepare` found: the window to film and the controls an agent can name by ref. The app prepares, and the
@@ -171,6 +186,8 @@ pub struct TakeOptions {
     pub cancel: Arc<AtomicBool>,
     /// Set by the take card's Hand back button; it counts as pressing the hand-back keys.
     pub hand_back: Arc<AtomicBool>,
+    /// Set by the take card's Pause and Take over buttons: one of the [`hold`] values.
+    pub hold: Arc<AtomicU8>,
 }
 
 /// A filmed take: the saved project and how the performance went.
@@ -361,6 +378,7 @@ pub fn plan(script: &TakeScript, planned: &[ControlSnapshot]) -> Plan {
 struct Stage<'a> {
     desk: &'a mut dyn Desk,
     cancel: &'a AtomicBool,
+    hold: &'a AtomicU8,
     /// Where the take last put the pointer.
     placed: Option<Point>,
     escapes: Vec<f64>,
@@ -543,6 +561,79 @@ impl Stage<'_> {
         Ok(())
     }
 
+    /// Waits while the person has the take on hold from the take card: paused until they resume, or theirs until
+    /// they hand back. Only ever between beats. The time on hold is cut from the video.
+    fn held(
+        &mut self,
+        beat: usize,
+        done: f64,
+        progress: &mut dyn FnMut(Progress),
+        handoffs: &mut Vec<(f64, f64)>,
+    ) -> Result<(), String> {
+        let mut kind = self.hold.load(Ordering::SeqCst);
+        if kind == hold::NONE {
+            return Ok(());
+        }
+        let start = self.desk.now_ms();
+        // The pointer is the person's while the take waits, and so are their Escape presses.
+        self.placed = None;
+        let mut shown = hold::NONE;
+        loop {
+            if self.cancel.load(Ordering::SeqCst) {
+                return Err("the take was cancelled".into());
+            }
+            if kind != shown {
+                progress(if kind == hold::TAKE_OVER {
+                    Progress {
+                        done,
+                        message: format!("The person took over. Waiting for them to press {HAND_BACK_KEYS}."),
+                        beat: Some(beat),
+                        waiting: Some("You have control".into()),
+                        paused: false,
+                    }
+                } else {
+                    Progress {
+                        done,
+                        message: "Paused from the take card".into(),
+                        beat: Some(beat),
+                        waiting: None,
+                        paused: true,
+                    }
+                });
+                shown = kind;
+            }
+            if kind == hold::TAKE_OVER && self.desk.hand_back_down() {
+                let _ = self.hold.compare_exchange(
+                    hold::TAKE_OVER,
+                    hold::NONE,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                );
+                break;
+            }
+            if self.desk.now_ms() - start > HOLD_LIMIT_MS {
+                return Err("the take was on hold for 30 minutes, so it stopped".into());
+            }
+            self.desk.sleep_ms(40.0);
+            kind = self.hold.load(Ordering::SeqCst);
+            if kind == hold::NONE {
+                break;
+            }
+        }
+        // Typing with ⌥⌘ still held would turn letters into shortcuts.
+        let released = self.desk.now_ms();
+        while (self.desk.hand_back_down() || self.desk.modifiers_held())
+            && self.desk.now_ms() - released < 3_000.0
+        {
+            self.desk.sleep_ms(30.0);
+        }
+        handoffs.push((start, self.desk.now_ms()));
+        self.escapes.clear();
+        self.escape_was_down = self.desk.escape_down();
+        progress(Progress { done, message: "Carrying on".into(), beat: Some(beat), ..Progress::default() });
+        Ok(())
+    }
+
     fn play(
         &mut self,
         performance: &Performance,
@@ -642,13 +733,21 @@ pub fn perform(
     planned: &[ControlSnapshot],
     desk: &mut dyn Desk,
     cancel: &AtomicBool,
+    hold: &AtomicU8,
     progress: &mut dyn FnMut(Progress),
 ) -> Performed {
     let total = script.beats.len();
     let mut out = Performed { beats: total, ..Performed::default() };
     let escape_was_down = desk.escape_down();
-    let mut stage =
-        Stage { desk, cancel, placed: None, escapes: Vec::new(), escape_was_down, own_escape_until: 0.0 };
+    let mut stage = Stage {
+        desk,
+        cancel,
+        hold,
+        placed: None,
+        escapes: Vec::new(),
+        escape_was_down,
+        own_escape_until: 0.0,
+    };
     let base = Timing::default();
     if let Err(reason) = stage.rest(script.lead_ms.map_or(base.lead_ms, f64::from)) {
         out.stopped = Some(reason);
@@ -656,11 +755,15 @@ pub fn perform(
     }
     for (index, beat) in script.beats.iter().enumerate() {
         let done = index as f64 / total.max(1) as f64;
+        if let Err(reason) = stage.held(index, done, progress, &mut out.handoffs) {
+            out.stopped = Some(format!("Before beat {} ({}): {reason}", index + 1, describe(beat)));
+            return out;
+        }
         progress(Progress {
             done,
             message: format!("Beat {} of {total}: {}", index + 1, describe(beat)),
             beat: Some(index),
-            waiting: None,
+            ..Progress::default()
         });
         let result = match beat {
             Beat::Wait(wait) => stage.wait(wait, &mut out.warnings),
@@ -779,6 +882,9 @@ mod tests {
         hand_back_at: Option<f64>,
         secure: bool,
         changes_until: f64,
+        /// The take card's hold, changed at the given times.
+        hold: Arc<AtomicU8>,
+        holds: Vec<(f64, u8)>,
     }
 
     impl Fake {
@@ -793,6 +899,12 @@ mod tests {
         }
         fn sleep_ms(&mut self, ms: f64) {
             self.now += ms.max(0.5);
+            while let Some(&(at, value)) = self.holds.first()
+                && self.now >= at
+            {
+                self.hold.store(value, Ordering::SeqCst);
+                self.holds.remove(0);
+            }
             if let Some(at) = self.person_moves_at
                 && self.now >= at
             {
@@ -860,7 +972,8 @@ mod tests {
     }
 
     fn run(desk: &mut Fake, script: &TakeScript, planned: &[ControlSnapshot]) -> Performed {
-        perform(script, planned, desk, &AtomicBool::new(false), &mut |_| {})
+        let hold = desk.hold.clone();
+        perform(script, planned, desk, &AtomicBool::new(false), &hold, &mut |_| {})
     }
 
     #[test]
@@ -949,7 +1062,8 @@ mod tests {
         let yaml = "beats:\n  - user_step: Sign in\n  - type: ok\n";
         let mut desk = Fake { hand_back_at: Some(4_000.0), ..Fake::default() };
         let mut messages = Vec::new();
-        let done = perform(&script(yaml), &[], &mut desk, &AtomicBool::new(false), &mut |p| {
+        let hold = desk.hold.clone();
+        let done = perform(&script(yaml), &[], &mut desk, &AtomicBool::new(false), &hold, &mut |p| {
             messages.push(p.message)
         });
         assert_eq!(done.stopped, None, "{messages:?}");
@@ -958,6 +1072,49 @@ mod tests {
         assert!(start < 4_000.0 && end >= 4_150.0, "{start}..{end}");
         assert!(messages.iter().any(|m| m.contains(HAND_BACK_KEYS)));
         assert_eq!(desk.acts, vec![Act::Char('o'), Act::Char('k')]);
+    }
+
+    #[test]
+    fn a_paused_take_waits_between_beats_and_the_wait_is_cut() {
+        let typed = |desk: &Fake| -> String {
+            desk.acts.iter().filter_map(|a| if let Act::Char(c) = a { Some(*c) } else { None }).collect()
+        };
+        // Paused while the first beat types, resumed at 5 s.
+        let mut desk = Fake { holds: vec![(100.0, hold::PAUSE), (5_000.0, hold::NONE)], ..Fake::default() };
+        let hold = desk.hold.clone();
+        let (mut paused, mut carried_on) = (false, false);
+        let yaml = "lead_ms: 0\nbeats:\n  - type: ab\n  - type: cd\n";
+        let done = perform(&script(yaml), &[], &mut desk, &AtomicBool::new(false), &hold, &mut |p| {
+            paused |= p.paused;
+            carried_on |= paused && p.message == "Carrying on";
+        });
+        assert_eq!(done.stopped, None);
+        assert!(paused && carried_on, "the card heard about the pause and the resume");
+        assert_eq!(typed(&desk), "abcd", "the beat in progress finished first");
+        assert_eq!(done.handoffs.len(), 1);
+        let (start, end) = done.handoffs[0];
+        assert!(start > 100.0 && (5_000.0..5_100.0).contains(&end), "{start}..{end}");
+
+        // Taking over waits for the person to hand back, then the take carries on.
+        let mut desk =
+            Fake { holds: vec![(100.0, hold::TAKE_OVER)], hand_back_at: Some(3_000.0), ..Fake::default() };
+        let hold = desk.hold.clone();
+        let mut waiting = Vec::new();
+        let done = perform(&script(yaml), &[], &mut desk, &AtomicBool::new(false), &hold, &mut |p| {
+            waiting.extend(p.waiting)
+        });
+        assert_eq!(done.stopped, None);
+        assert_eq!(waiting, ["You have control"]);
+        assert_eq!(typed(&desk), "abcd");
+        assert_eq!(hold.load(Ordering::SeqCst), hold::NONE, "handing back lifts the hold");
+        let (_, end) = done.handoffs[0];
+        assert!(end >= 3_150.0, "the keys were let go first ({end})");
+
+        // A hold nobody lifts ends the take, keeping what was filmed.
+        let mut desk = Fake { holds: vec![(100.0, hold::PAUSE)], ..Fake::default() };
+        let done = run(&mut desk, &script(yaml), &[]);
+        assert!(done.stopped.as_deref().is_some_and(|s| s.contains("on hold for 30 minutes")), "{done:?}");
+        assert_eq!(done.beats_done, 1);
     }
 
     #[test]
