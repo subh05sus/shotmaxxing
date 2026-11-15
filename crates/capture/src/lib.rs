@@ -10,8 +10,8 @@
 //! - the real cursor is hidden in the capture and recorded as data instead.
 //!
 //! macOS uses ScreenCaptureKit and AVAssetWriter. Windows uses Windows Graphics Capture and Media Foundation for the
-//! picture, WASAPI for the computer's sound and microphones, and low-level hooks for the input; its camera track comes
-//! next, and until then a recording there says so in its warnings.
+//! picture, WASAPI for the computer's sound and microphones, Media Foundation for the camera, GDI for the source
+//! picker's thumbnails and low-level hooks for the input.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 

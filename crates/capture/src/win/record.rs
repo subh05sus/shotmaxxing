@@ -43,12 +43,17 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::core::{Interface, PCWSTR};
 
 use super::audio::{AudioRecorder, Source};
+use super::camera::CameraRecorder;
 use super::{clock, dpi_aware, input, monitor, wide, window_bounds};
 use crate::{CaptureError, RecordOptions, RecordedTrack, Recording, Target};
 
 fn system(error: windows::core::Error) -> CaptureError {
     CaptureError::System(error.message())
 }
+
+/// How a track recorded beside the screen ended (its start and end on the frames' clock, if anything came),
+/// and its file.
+type Ended = (Result<Option<(f64, f64)>, String>, PathBuf);
 
 /// COM for worker threads that have none of their own, and Media Foundation: once for the process.
 pub(super) fn start_systems() -> Result<(), CaptureError> {
@@ -324,9 +329,10 @@ pub struct Recorder {
     window_title: Option<String>,
     warnings: Vec<String>,
     input: Option<input::Telemetry>,
-    /// The computer's sound and the microphone, each with the file it goes to.
+    /// The computer's sound, the microphone and the camera, each with the file it goes to.
     system_audio: Option<(AudioRecorder, PathBuf)>,
     microphone: Option<(AudioRecorder, PathBuf)>,
+    camera: Option<(CameraRecorder, PathBuf)>,
 }
 
 impl Recorder {
@@ -374,9 +380,6 @@ impl Recorder {
         let encoder = Encoder::new(&device, &options.output, width, height, fps).map_err(system)?;
 
         let mut warnings = Vec::new();
-        if options.camera.is_some() {
-            warnings.push("The camera isn't recorded on Windows yet.".into());
-        }
         // The sound starts first, so the first words of a take are kept. Without it, the screen still records.
         let mut sound = |source: Source, path: &PathBuf, what: &str| match AudioRecorder::start(source, path)
         {
@@ -394,6 +397,15 @@ impl Recorder {
             .system_audio
             .as_ref()
             .and_then(|path| sound(Source::System, path, "The computer's sound"));
+        let camera = options.camera.as_ref().and_then(|c| {
+            match CameraRecorder::start(c.device.as_deref(), &c.output) {
+                Ok(recorder) => Some((recorder, c.output.clone())),
+                Err(error) => {
+                    warnings.push(format!("The camera isn't recorded: {error}."));
+                    None
+                }
+            }
+        });
 
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -455,6 +467,7 @@ impl Recorder {
             input,
             system_audio,
             microphone,
+            camera,
         })
     }
 
@@ -492,9 +505,9 @@ impl Recorder {
 
         // Every other track is placed on the screen's timeline: its offset is where it starts relative to the
         // first frame.
-        let mut track = |recorded: Option<(AudioRecorder, PathBuf)>, what: &str| {
-            let (recorder, output) = recorded?;
-            match recorder.stop() {
+        let mut track = |stopped: Option<Ended>, what: &str| {
+            let (stopped, output) = stopped?;
+            match stopped {
                 Ok(Some((start, end))) => Some(RecordedTrack {
                     output,
                     offset_us: ((start - first) * 1e6).round() as i64,
@@ -507,8 +520,10 @@ impl Recorder {
                 }
             }
         };
-        let system_audio = track(self.system_audio.take(), "The computer's sound");
-        let microphone = track(self.microphone.take(), "The microphone");
+        let system_audio =
+            track(self.system_audio.take().map(|(r, path)| (r.stop(), path)), "The computer's sound");
+        let microphone = track(self.microphone.take().map(|(r, path)| (r.stop(), path)), "The microphone");
+        let camera = track(self.camera.take().map(|(r, path)| (r.stop(), path)), "The camera");
         Ok(Recording {
             output: self.output,
             duration_us: (end / 10).max(0) as u64,
@@ -523,7 +538,7 @@ impl Recorder {
             events,
             system_audio,
             microphone,
-            camera: None,
+            camera,
             warnings: self.warnings,
         })
     }

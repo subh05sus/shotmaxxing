@@ -24,8 +24,8 @@ Early development, macOS first. No release is available yet; you can build it fr
 - export to MP4 and GIF;
 - an MCP server and one-click connect for AI agents.
 
-Windows recording (with the computer's sound and microphones) and export (with the sound mixed) are written and
-waiting for testing on a Windows computer; the camera on Windows comes next. See the [roadmap](docs/roadmap.md).
+Windows recording (with the computer's sound, microphones and the camera) and export (with the sound mixed) are
+written and waiting for testing on a Windows computer. See the [roadmap](docs/roadmap.md).
 
 ## Build from source
 

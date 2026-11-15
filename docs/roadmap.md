@@ -14,8 +14,8 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 
 - [x] macOS capture: ScreenCaptureKit → VideoToolbox HEVC → fragmented MP4
 - [ ] Windows capture: Windows.Graphics.Capture → Media Foundation → fragmented MP4 (the picture, the pointer path,
-      clicks, shortcuts, the computer's sound and microphones are written and await testing on Windows; the camera is
-      next)
+      clicks, shortcuts, the computer's sound, microphones, the camera and the source picker's thumbnails are written
+      and await testing on Windows)
 - [x] Cursor, click and key telemetry
 - [x] Microphone, system audio and camera tracks (macOS)
 - [x] Recording pill, record dialog, permissions checks

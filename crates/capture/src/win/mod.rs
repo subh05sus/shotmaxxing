@@ -31,8 +31,10 @@ use windows::core::{BOOL, PCWSTR, PWSTR};
 use crate::{CaptureError, Device, DisplayInfo, Sources, Target, WindowInfo};
 
 mod audio;
+mod camera;
 mod clock;
 mod input;
+mod preview;
 mod record;
 
 pub use record::Recorder;
@@ -300,8 +302,8 @@ fn wide_text(buffer: &[u16]) -> String {
     String::from_utf16_lossy(&buffer[..buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len())])
 }
 
-pub fn thumbnails(targets: &[Target], _max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
-    Ok(vec![None; targets.len()])
+pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
+    preview::thumbnails(targets, max_width)
 }
 
 pub fn microphones() -> Vec<Device> {
@@ -309,7 +311,7 @@ pub fn microphones() -> Vec<Device> {
 }
 
 pub fn cameras() -> Vec<Device> {
-    Vec::new()
+    camera::cameras()
 }
 
 #[cfg(test)]
