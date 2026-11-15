@@ -89,7 +89,13 @@ computer runs warm. The recording itself is never slowed down.
 
 ## Install
 
-Download the latest build from [Releases](https://github.com/subh05sus/shotmaxxing/releases).
+Download the latest build from [Releases](https://github.com/subh05sus/shotmaxxing/releases), or on a Mac use
+Homebrew, which also puts the `shotmaxxing` command on your PATH:
+
+```sh
+brew tap subh05sus/shotmaxxing https://github.com/subh05sus/shotmaxxing
+brew install --cask subh05sus/shotmaxxing/shotmaxxing
+```
 
 - **macOS 14 or later:** the `.dmg` for Apple silicon (`aarch64`) or Intel (`x64`). The builds aren't notarized yet, so
   macOS blocks the app the first time it opens: open **System Settings → Privacy & Security** and choose **Open

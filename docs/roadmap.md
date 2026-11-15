@@ -84,7 +84,11 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
       exports exactly as previewed, and save as SRT or WebVTT (Windows: written, awaiting testing on Windows)
 - [ ] Learn tab guides filmed by Shotmaxxing itself
 - [ ] Plugins: WASM effects and content packs
-- [ ] Signed releases, auto-updates, Homebrew, winget, Microsoft Store
+- [x] Preview releases on GitHub for macOS (Apple silicon and Intel) and Windows, built by CI from a tag, with a
+      daily check in the app that offers newer ones ([0.1.0](https://github.com/subh05sus/shotmaxxing/releases/tag/v0.1.0))
+- [x] A Homebrew cask (this repository is its own tap) and winget manifests ready to submit
+      ([packaging](../packaging/README.md))
+- [ ] Signed and notarized releases, auto-updates, winget-pkgs and Microsoft Store listings
 
 ## Later
 

@@ -3,6 +3,9 @@ name: Release
 # Pushing a tag such as v0.1.0 builds the app for macOS (Apple silicon and Intel) and Windows, and drafts one GitHub
 # release with all three. Starting the workflow by hand (Actions → Release → Run workflow) builds the same without a
 # release, to check the release builds before tagging: the installers are kept on that run's page.
+#
+# Tag the tip of main, and leave the workflows alone until the release is drafted: GitHub won't let the Actions token
+# create a release for a commit whose files under .github/workflows differ from main's.
 on:
   push:
     tags: ['v*']
