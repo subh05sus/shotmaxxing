@@ -14,9 +14,10 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 
 - [x] macOS capture: ScreenCaptureKit → VideoToolbox HEVC → fragmented MP4
 - [x] Window takes keep their menus: the window's app is recorded on its display, cropped to the window and
-      following it, so a dropdown shows at full size instead of shrinking the picture; with Stage Manager on, a
-      parked window comes back to the stage first, at its own size, and the picker shows parked windows by their
-      app's icon
+      following it, so a dropdown shows at full size instead of shrinking the picture; menus another process draws
+      over the window (System Settings' panes are app extensions) are added as they appear, never a password or
+      sign-in sheet; with Stage Manager on, a parked window comes back to the stage first, at its own size, and the
+      picker shows parked windows by their app's icon
 - [x] Full-screen apps (macOS): listed from their own Spaces and recorded with their toolbars; recording one goes
       to its Space, and the record dialog, pill and take card show over full-screen apps
 - [ ] Windows capture: Windows.Graphics.Capture → Media Foundation → fragmented MP4 (the picture, the pointer path,
@@ -25,6 +26,7 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [x] Cursor, click and key telemetry
 - [x] Microphone, system audio and camera tracks (macOS)
 - [x] Recording pill, record dialog, permissions checks
+- [x] Shotmaxxing's own windows and menu-bar icon stay out of recordings, and clicks on them aren't recorded
 - [x] Open a recording in the editor and play it back, with its sound and camera
 
 ## Milestone 2: Studio editor
@@ -84,6 +86,7 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 
 ## Later
 
+- Window recordings that keep a menu whole when it reaches past the window's edge (today it's cut at that edge)
 - 3D device scenes
 - Multiple screen sources in one recording
 - Windows virtual display (IddCx)

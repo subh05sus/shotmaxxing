@@ -69,3 +69,8 @@ jobs:
       - if: ${{ !cancelled() && runner.os == 'Windows' }}
         continue-on-error: true
         run: cargo test -p shotmaxxing-agent -- --ignored --nocapture
+      # Says which of Windows's own packaged apps the package check read, and what their packages said. The test
+      # itself runs above; this only shows its findings.
+      - if: ${{ !cancelled() && runner.os == 'Windows' }}
+        continue-on-error: true
+        run: cargo test -p shotmaxxing-control --lib packaged_apps_are_told_by_their_package -- --nocapture

@@ -94,8 +94,8 @@ Download the latest build from [Releases](https://github.com/subh05sus/shotmaxxi
 - **macOS 14 or later:** the `.dmg` for Apple silicon (`aarch64`) or Intel (`x64`). The builds aren't notarized yet, so
   macOS blocks the app the first time it opens: open **System Settings → Privacy & Security** and choose **Open
   Anyway**.
-- **Windows 10 (version 2004) or later, 64-bit:** the installer (`-setup.exe`). It isn't signed yet, so SmartScreen
-  may warn about it: choose **More info → Run anyway**. Recording, export and agent takes on Windows are written but
+- **Windows 10 (version 2004) or later, 64-bit:** the `-setup.exe` installer, or the `.msi`. It isn't signed yet, so
+  SmartScreen may warn about it: choose **More info → Run anyway**. Recording, export and agent takes on Windows are written but
   haven't been tested on a Windows computer yet, so expect rough edges.
 
 On macOS, Shotmaxxing needs Screen Recording to record. The microphone and the camera are asked for when you turn
