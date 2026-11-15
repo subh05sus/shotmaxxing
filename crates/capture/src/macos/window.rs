@@ -158,6 +158,15 @@ pub fn in_strip(frame: CGRect, displays: &[CGRect], right: bool) -> bool {
     })
 }
 
+/// Whether window `id`, owned by `pid` and showing at `frame`, is parked in Stage Manager's strip: by where it is
+/// (on one of `displays`), unless its app says that small frame is its real size, as for a small window near the
+/// screen's edge.
+pub fn parked(id: u32, frame: CGRect, pid: i32, displays: &[CGRect]) -> bool {
+    stage_manager_on()
+        && in_strip(frame, displays, strip_on_right())
+        && ax::own_frame(id, pid).is_none_or(|own| !at_real_size(frame, (own.size.width, own.size.height)))
+}
+
 /// How often a window coming forward is looked at.
 const TICK: Duration = Duration::from_millis(30);
 /// The longest a window is waited for. Stage Manager takes about half a second to bring one back, and going to a
@@ -196,11 +205,7 @@ pub fn bring_forward(id: u32) {
     if app.isActive() {
         return;
     }
-    // Parked, by where it is; unless its app says that small frame is its real size (a small window near the edge).
-    let own = if before.on_screen { ax::own_frame(id, before.pid) } else { None };
-    let parked = stage_manager
-        && in_strip(before.bounds, &displays(), strip_on_right())
-        && own.is_none_or(|own| !at_real_size(before.bounds, (own.size.width, own.size.height)));
+    let parked = before.on_screen && parked(id, before.bounds, before.pid, &displays());
     if !app.activateWithOptions(NSApplicationActivationOptions::empty()) {
         tracing::debug!(id, "the window's app didn't come forward");
         return;

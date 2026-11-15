@@ -470,13 +470,8 @@ impl Recorder {
                         .find(|w| w.windowID() == id)
                         .ok_or_else(|| not_showing(id))?;
                     // Still in Stage Manager's strip, it would come out as a small tilted picture.
-                    if window::stage_manager_on()
-                        && window::in_strip(
-                            window.frame(),
-                            &display_frames(&content),
-                            window::strip_on_right(),
-                        )
-                    {
+                    let pid = window.owningApplication().map_or(0, |a| a.processID());
+                    if window::parked(id, window.frame(), pid, &display_frames(&content)) {
                         return Err(CaptureError::Parked);
                     }
                     let app = window.owningApplication().map(|a| a.applicationName().to_string());

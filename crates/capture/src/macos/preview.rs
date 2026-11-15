@@ -123,10 +123,15 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Thumb
     // one on another Space can't be pictured from this one: their cards show their app's icon instead.
     let mut out: Vec<Option<Thumbnail>> = vec![None; targets.len()];
     let mut icons: HashMap<i32, Option<Vec<u8>>> = HashMap::new();
-    for (index, found) in windows.iter().enumerate() {
-        let Some((frame, pid, on_screen)) = *found else { continue };
+    for (index, (target, found)) in targets.iter().zip(&windows).enumerate() {
+        let (Target::Window(id), Some((frame, pid, on_screen))) = (*target, *found) else { continue };
         let away = !on_screen;
-        if away || (stage_manager && window::in_strip(frame, &displays, strip_on_right)) {
+        // Asking its app is only worth it for a window in the strip's band.
+        if away
+            || (stage_manager
+                && window::in_strip(frame, &displays, strip_on_right)
+                && window::parked(id, frame, pid, &displays))
+        {
             let icon = icons.entry(pid).or_insert_with(|| app_icon(pid, 128.0)).clone();
             out[index] = Some(if away { Thumbnail::Away { icon } } else { Thumbnail::Parked { icon } });
         }
@@ -216,9 +221,8 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
                 let window =
                     content.windows().iter().find(|w| w.windowID() == id).ok_or_else(|| not_showing(id))?;
                 // Still in Stage Manager's strip, it would come out small and tilted.
-                if window::stage_manager_on()
-                    && window::in_strip(window.frame(), &display_frames(&content), window::strip_on_right())
-                {
+                let pid = window.owningApplication().map_or(0, |a| a.processID());
+                if window::parked(id, window.frame(), pid, &display_frames(&content)) {
                     return Err(CaptureError::Parked);
                 }
                 let app = window.owningApplication().map(|a| a.applicationName().to_string());
