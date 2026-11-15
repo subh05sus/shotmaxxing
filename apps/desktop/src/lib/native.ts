@@ -95,7 +95,16 @@ export function listSources(): Promise<CaptureSource[]> {
     { id: 'display-2', kind: 'display', title: 'Studio Display', width: 5120, height: 2880 },
     { id: 'window-1', kind: 'window', app: 'Safari', title: 'Shotmaxxing docs', width: 1440, height: 900 },
     { id: 'window-2', kind: 'window', app: 'Figma', title: 'Onboarding v3', width: 1600, height: 1000 },
-    { id: 'window-3', kind: 'window', app: 'Notes', title: 'Launch checklist', width: 900, height: 700 },
+    // Parked by Stage Manager, so the preview shows that state too.
+    {
+      id: 'window-3',
+      kind: 'window',
+      app: 'Notes',
+      title: 'Launch checklist',
+      width: 900,
+      height: 700,
+      parked: true,
+    },
     {
       id: 'window-4',
       kind: 'window',

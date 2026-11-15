@@ -199,12 +199,12 @@
         </div>
         <div class="scn-label t" style="left:40px;top:114px">Name</div>
         <div class="scn-field t" style="top:136px">Maya Chen</div>
-        <div class="scn-label t" style="left:40px;top:184px">Work email</div>
-        <div class="scn-field t" class:focus={typing} style="top:198px">
+        <div class="scn-label t" style="left:40px;top:196px">Work email</div>
+        <div class="scn-field t" class:focus={typing} style="top:218px">
           {typed}{#if typing}<span class="scn-caret"></span>{/if}
         </div>
-        <div class="scn-label t" style="left:40px;top:252px">Password</div>
-        <div class="scn-field t" class:focus={t >= 15.4 && t < 18.6} style="top:266px;letter-spacing:4px">
+        <div class="scn-label t" style="left:40px;top:278px">Password</div>
+        <div class="scn-field t" class:focus={t >= 15.4 && t < 18.6} style="top:300px;letter-spacing:4px">
           {'•'.repeat(dots)}
         </div>
         <div

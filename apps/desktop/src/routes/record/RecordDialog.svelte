@@ -337,7 +337,10 @@
             {/if}
           </span>
           <span class="flex items-baseline gap-1.5 px-0.5">
-            <span class="truncate text-callout font-medium">{source.app ?? source.title}</span>
+            <!-- The app's name stays whole (up to most of the row); the window's title gives way first. -->
+            <span class="max-w-[70%] shrink-0 truncate text-callout font-medium"
+              >{source.app ?? source.title}</span
+            >
             <span class="truncate text-footnote text-fg-muted"
               >{source.app ? source.title : `${source.width} × ${source.height}`}</span
             >

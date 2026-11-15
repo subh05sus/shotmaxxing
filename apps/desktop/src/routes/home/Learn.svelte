@@ -10,7 +10,7 @@
 
   const GROUPS: { id: Guide['group']; icon: IconData; blurb: string }[] = [
     { id: 'Record', icon: MonitorDot, blurb: 'Film a window, a screen or yourself.' },
-    { id: 'Edit', icon: Scissors, blurb: 'Zooms, cursor, trims and privacy.' },
+    { id: 'Edit', icon: Scissors, blurb: 'Zooms, cursor, voice-overs, captions, trims and privacy.' },
     { id: 'Export', icon: Download, blurb: 'The right file for where it’s going.' },
     { id: 'Use with AI', icon: Bot, blurb: 'Let an agent film the demo for you.' },
   ];

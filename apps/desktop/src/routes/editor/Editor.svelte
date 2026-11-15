@@ -194,7 +194,7 @@
     camera: 'Move and shape your camera bubble. It can shrink during zooms so it never covers the action.',
     audio:
       'Set levels for your voice and the computer’s sound, record a voice-over or add music. Cleanup and silence cutting run on this computer.',
-    ai: 'Captions, voice cleanup and silence cutting run locally with open models. Nothing leaves this computer.',
+    ai: 'Generate captions in any of 99 languages, fix any word, and save them as subtitles. Like voice cleanup and silence cutting, it all runs on this computer.',
   };
 
   const STILL_HELP: Partial<Record<ToolId, string>> = {
