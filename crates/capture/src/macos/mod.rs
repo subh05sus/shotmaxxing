@@ -5,6 +5,7 @@ mod clock;
 mod devices;
 mod input;
 mod preview;
+mod window;
 mod writer;
 
 pub use devices::Voice;
@@ -168,6 +169,18 @@ pub fn sources() -> Result<Sources, CaptureError> {
     }
 }
 
+/// The largest display's size, in points: room to picture any ordinary window at its own size.
+fn room(content: &SCShareableContent) -> objc2_core_foundation::CGSize {
+    let mut room = objc2_core_foundation::CGSize::new(1920.0, 1080.0);
+    // SAFETY: read-only property access on objects owned by `content`.
+    for display in unsafe { content.displays() }.iter() {
+        let frame = unsafe { display.frame() };
+        room.width = room.width.max(frame.size.width);
+        room.height = room.height.max(frame.size.height);
+    }
+    room
+}
+
 /// Parts of macOS itself that own windows but aren't worth recording on their own (overlays, the Dock, menus).
 fn is_system_ui(bundle: &str) -> bool {
     const SYSTEM: [&str; 10] = [
@@ -327,8 +340,18 @@ impl Recorder {
             };
 
             let rect = filter.contentRect();
-            let scale = f64::from(filter.pointPixelScale()).max(1.0);
-            let (width_pt, height_pt) = (rect.size.width, rect.size.height);
+            let mut scale = f64::from(filter.pointPixelScale()).max(1.0);
+            let (mut width_pt, mut height_pt) = (rect.size.width, rect.size.height);
+            // A window's frame can be a Stage Manager thumbnail's, so its size comes from a picture of it.
+            let window_id = match options.target {
+                Target::Window(id) => Some(id),
+                Target::Display(_) => None,
+            };
+            if window_id.is_some()
+                && let Some(real) = window::measure(&filter, room(&content))
+            {
+                (width_pt, height_pt, scale) = (real.width, real.height, real.scale.max(1.0));
+            }
             // Encoders want even dimensions.
             let width_px = ((width_pt * scale).round() as usize) & !1;
             let height_px = ((height_pt * scale).round() as usize) & !1;
@@ -392,7 +415,15 @@ impl Recorder {
             }
 
             let started = clock::now();
-            let input = options.telemetry.then(|| input::Telemetry::start((origin.x, origin.y), started));
+            let input = options.telemetry.then(|| {
+                let origin = match window_id {
+                    Some(id) => {
+                        input::Origin::Window { id, start: (origin.x, origin.y), size: (width_pt, height_pt) }
+                    }
+                    None => input::Origin::Fixed(origin.x, origin.y),
+                };
+                input::Telemetry::start(origin, started)
+            });
 
             Ok(Self {
                 stream,

@@ -27,7 +27,7 @@ use shotmaxxing_core::telemetry::{
     AGENT_EVENT_MARK, CursorSample, CursorShape, InputEvent, InputSource, MouseButton,
 };
 
-use super::{SendBox, clock};
+use super::{SendBox, clock, window};
 
 /// A raw observation, stamped with host seconds.
 #[derive(Clone, Debug)]
@@ -44,9 +44,22 @@ struct TapState {
     clicks: Mutex<Sender<(f64, f64, f64)>>,
 }
 
+/// Where the captured picture's top-left corner is on the desktop.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Origin {
+    /// A screen's, which stays put.
+    Fixed(f64, f64),
+    /// A window's, which moves with it. `start` is its frame's corner when the take began, and `size` its real size
+    /// in points: its place is followed through the take, and readings taken while it isn't at that size (a Stage
+    /// Manager thumbnail, or mid-animation) are skipped.
+    Window { id: u32, start: (f64, f64), size: (f64, f64) },
+}
+
 pub struct Telemetry {
     stop: Arc<AtomicBool>,
-    origin: (f64, f64),
+    origin: Origin,
+    /// Where a recorded window's corner was, when it moved.
+    places: Option<JoinHandle<Vec<(f64, f64, f64)>>>,
     cursor: Option<JoinHandle<Vec<(f64, f64, f64)>>>,
     tap_loop: Option<SendBox<CFRetained<CFRunLoop>>>,
     tap_thread: Option<JoinHandle<()>>,
@@ -55,8 +68,19 @@ pub struct Telemetry {
 }
 
 impl Telemetry {
-    pub fn start(origin: (f64, f64), _started: f64) -> Self {
+    pub fn start(origin: Origin, _started: f64) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
+
+        let places = match origin {
+            Origin::Window { id, size, .. } => {
+                let follow_stop = stop.clone();
+                std::thread::Builder::new()
+                    .name("smx-window".into())
+                    .spawn(move || follow_window(id, size, &follow_stop))
+                    .ok()
+            }
+            Origin::Fixed(..) => None,
+        };
 
         let cursor_stop = stop.clone();
         let cursor = std::thread::Builder::new()
@@ -78,7 +102,7 @@ impl Telemetry {
             .ok();
         let tap_loop = loop_rx.recv_timeout(Duration::from_secs(2)).ok().flatten();
 
-        Self { stop, origin, cursor, tap_loop, tap_thread, focus_thread, state }
+        Self { stop, origin, places, cursor, tap_loop, tap_thread, focus_thread, state }
     }
 
     /// Stops every thread and returns telemetry in microseconds from `zero` (the first video frame), in points
@@ -97,8 +121,17 @@ impl Telemetry {
         }
         let focus = self.focus_thread.take().and_then(|t| t.join().ok()).unwrap_or_default();
         let path = self.cursor.take().and_then(|t| t.join().ok()).unwrap_or_default();
-
-        let (ox, oy) = self.origin;
+        let places = self.places.take().and_then(|t| t.join().ok()).unwrap_or_default();
+        let start = match self.origin {
+            Origin::Fixed(x, y) => (x, y),
+            Origin::Window { start, .. } => start,
+        };
+        // Where the corner was at `at`: the last place seen by then, or, before the window first showed at its real
+        // size, the first place it did.
+        let origin_at = |at: f64| match places.iter().rposition(|(t, _, _)| *t <= at) {
+            Some(i) => (places[i].1, places[i].2),
+            None => places.first().map_or(start, |&(_, x, y)| (x, y)),
+        };
         let t_us = |at: f64| ((at - zero).max(0.0) * 1e6) as u64;
         // The pointer's resting place when the first frame arrived counts as its position at 0.
         let before = path.iter().rposition(|(at, _, _)| *at < zero);
@@ -106,11 +139,9 @@ impl Telemetry {
             .into_iter()
             .enumerate()
             .filter(|(i, (at, _, _))| *at >= zero || Some(*i) == before)
-            .map(|(_, (at, x, y))| CursorSample {
-                t_us: t_us(at),
-                x: x - ox,
-                y: y - oy,
-                shape: CursorShape::Arrow,
+            .map(|(_, (at, x, y))| {
+                let (ox, oy) = origin_at(at);
+                CursorSample { t_us: t_us(at), x: x - ox, y: y - oy, shape: CursorShape::Arrow }
             })
             .collect();
 
@@ -120,7 +151,8 @@ impl Telemetry {
         let events = raw
             .into_iter()
             .filter(|r| at_of(r) >= zero)
-            .map(|r| match r {
+            .map(|r| (origin_at(at_of(&r)), r))
+            .map(|((ox, oy), r)| match r {
                 Raw::Down { at, x, y, button, clicks, source } => {
                     InputEvent::MouseDown { t_us: t_us(at), x: x - ox, y: y - oy, button, clicks, source }
                 }
@@ -147,6 +179,25 @@ impl Telemetry {
             .collect();
         (cursor, events)
     }
+}
+
+/// A recorded window's corner whenever it moves while showing at its real `size`, read ten times a second until
+/// `stop`. The window server's frame for a window parked in Stage Manager is the thumbnail's, so those readings are
+/// skipped.
+fn follow_window(id: u32, size: (f64, f64), stop: &AtomicBool) -> Vec<(f64, f64, f64)> {
+    let mut places: Vec<(f64, f64, f64)> = Vec::new();
+    while !stop.load(Ordering::Relaxed) {
+        if let Some(frame) = window::bounds(id)
+            && window::at_real_size(frame, size)
+        {
+            let (x, y) = (frame.origin.x, frame.origin.y);
+            if places.last().is_none_or(|&(_, px, py)| (px - x).abs() > 0.25 || (py - y).abs() > 0.25) {
+                places.push((clock::now(), x, y));
+            }
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    places
 }
 
 fn at_of(raw: &Raw) -> f64 {

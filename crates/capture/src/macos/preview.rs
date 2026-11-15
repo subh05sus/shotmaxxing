@@ -13,7 +13,7 @@ use objc2_core_graphics::{CGImage, kCGColorSpaceSRGB};
 use objc2_foundation::{NSArray, NSError};
 use objc2_screen_capture_kit::{SCContentFilter, SCScreenshotManager, SCStreamConfiguration};
 
-use super::shareable_content;
+use super::{room, shareable_content, window};
 use crate::{CaptureError, Device, Screenshot, Target};
 
 #[link(name = "ImageIO", kind = "framework")]
@@ -67,13 +67,12 @@ fn encode(image: *const c_void, kind: &'static str) -> Option<Vec<u8>> {
 /// or not on screen) get `None`. All pictures are taken at once and the whole call waits at most about two seconds.
 pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
     let content = shareable_content()?;
-    let (tx, rx) = channel::<(usize, Option<Vec<u8>>)>();
-    let mut pending = 0;
-    // SAFETY: read-only use of `content`; each request gets its own filter, configuration and handler block.
-    unsafe {
-        for (index, target) in targets.iter().enumerate() {
-            let filter: Option<Retained<SCContentFilter>> =
-                match *target {
+    // SAFETY: read-only use of `content`; each filter is made from one of its displays or windows.
+    let filters: Vec<Option<Retained<SCContentFilter>>> =
+        unsafe {
+            targets
+                .iter()
+                .map(|target| match *target {
                     Target::Display(id) => {
                         content.displays().iter().find(|d| id.is_none_or(|id| d.displayID() == id)).map(|d| {
                             SCContentFilter::initWithDisplay_excludingWindows(
@@ -86,14 +85,50 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
                     Target::Window(id) => content.windows().iter().find(|w| w.windowID() == id).map(|w| {
                         SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &w)
                     }),
-                };
+                })
+                .collect()
+        };
+    // A window parked in Stage Manager reports a thumbnail's frame, which would letterbox its picture, so each
+    // window's shape comes from a small picture first, all asked for at once.
+    let (measure_tx, measure_rx) = channel();
+    let mut measuring = 0;
+    for (index, filter) in filters.iter().enumerate() {
+        if let (Target::Window(_), Some(filter)) = (targets[index], filter) {
+            window::request_measure(
+                filter,
+                objc2_core_foundation::CGSize::new(160.0, 160.0),
+                index,
+                measure_tx.clone(),
+            );
+            measuring += 1;
+        }
+    }
+    drop(measure_tx);
+    let mut shapes: Vec<Option<(f64, f64)>> = vec![None; targets.len()];
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while measuring > 0 {
+        match measure_rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok((index, measured)) => {
+                shapes[index] = measured.map(|m| (m.width, m.height));
+                measuring -= 1;
+            }
+            Err(_) => break,
+        }
+    }
+
+    let (tx, rx) = channel::<(usize, Option<Vec<u8>>)>();
+    let mut pending = 0;
+    // SAFETY: each request gets its own filter, configuration and handler block.
+    unsafe {
+        for (index, filter) in filters.iter().enumerate() {
             let Some(filter) = filter else { continue };
             let rect = filter.contentRect();
-            if rect.size.width < 1.0 || rect.size.height < 1.0 {
+            let (w, h) = shapes[index].unwrap_or((rect.size.width, rect.size.height));
+            if w < 1.0 || h < 1.0 {
                 continue;
             }
-            let width = f64::from(max_width).min(rect.size.width * f64::from(filter.pointPixelScale()));
-            let height = width * rect.size.height / rect.size.width;
+            let width = f64::from(max_width).min(w * f64::from(filter.pointPixelScale()));
+            let height = width * h / w;
             let config = SCStreamConfiguration::new();
             config.setWidth(width.round().max(1.0) as usize);
             config.setHeight(height.round().max(1.0) as usize);
@@ -105,7 +140,7 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
                 let _ = tx.send((index, bytes));
             });
             SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(
-                &filter,
+                filter,
                 &config,
                 Some(&handler),
             );
@@ -164,8 +199,15 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
             }
         };
         let rect = filter.contentRect();
-        let scale = f64::from(filter.pointPixelScale());
-        let (width, height) = ((rect.size.width * scale).round(), (rect.size.height * scale).round());
+        let mut scale = f64::from(filter.pointPixelScale());
+        let (mut width, mut height) = (rect.size.width, rect.size.height);
+        // A window's frame can be a Stage Manager thumbnail's, so its size comes from a picture of it.
+        if matches!(target, Target::Window(_))
+            && let Some(real) = window::measure(&filter, room(&content))
+        {
+            (width, height, scale) = (real.width, real.height, real.scale);
+        }
+        let (width, height) = ((width * scale).round(), (height * scale).round());
         if width < 1.0 || height < 1.0 {
             return Err(CaptureError::System(
                 "there's nothing to picture there. Is the window minimised?".into(),
