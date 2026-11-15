@@ -15,32 +15,42 @@
 //! - a control to find that never appears;
 //! - a password field taking the typing: Shotmaxxing never types into one.
 //!
-//! A `user_step` beat hands control to the person (to sign in, say) and waits for them to press ⌥⌘Return. That
-//! stretch is cut from the video afterwards.
+//! A `user_step` beat hands control to the person (to sign in, say) and waits for them to press ⌥⌘Return
+//! (Ctrl+Alt+Enter on Windows) or Hand back on the take card. That stretch is cut from the video afterwards.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use shotmaxxing_capture::{DeviceChoice, FinishedProject, WindowInfo};
 use shotmaxxing_core::beats::{self, Aim, Cue, Performance, ResolvedBeat, Timing};
+use shotmaxxing_core::bundle::ProjectBundle;
 use shotmaxxing_core::geometry::Point;
 use shotmaxxing_core::keys::{Key, KeyChord, NamedKey};
+use shotmaxxing_core::project::{Project, TextOverlay, TimeRange};
 use shotmaxxing_core::refs::{self, ControlSnapshot};
 use shotmaxxing_core::take::{
-    Beat, SayBeat, TakeScript, TargetSpec, TypeBeat, UserStepBeat, WaitBeat, WaitCondition, WaitNamed,
+    Beat, SayBeat, Severity, TakeScript, TargetSpec, TypeBeat, UserStepBeat, WaitBeat, WaitCondition,
+    WaitNamed,
 };
 use shotmaxxing_core::telemetry::MouseButton;
+
+mod controls;
 
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{prepare, run_take};
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+mod win;
+#[cfg(windows)]
+pub use win::{prepare, run_take};
+
+#[cfg(not(any(target_os = "macos", windows)))]
 mod unsupported;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 pub use unsupported::{prepare, run_take};
 
 /// How often the pointer moves while a beat plays.
@@ -51,6 +61,12 @@ const TAKEOVER_POINTS: f64 = 24.0;
 const FIND_TIMEOUT_MS: f64 = 10_000.0;
 /// How long the screen has to stay still to count as settled.
 const SETTLED_MS: f64 = 600.0;
+
+/// The keys that hand a take back after a `user_step`.
+#[cfg(target_os = "macos")]
+const HAND_BACK_KEYS: &str = "⌥⌘Return";
+#[cfg(not(target_os = "macos"))]
+const HAND_BACK_KEYS: &str = "Ctrl+Alt+Enter";
 
 const TOOK_OVER: &str = "you moved the pointer, so the take stopped and left the rest to you";
 const PASSWORD: &str = "a password field has the keyboard, and Shotmaxxing never types into one. Use a user_step beat \
@@ -96,7 +112,7 @@ pub trait Desk {
     fn secure_input(&self) -> bool;
     /// Whether Escape is held down right now.
     fn escape_down(&self) -> bool;
-    /// Whether the person is handing control back: pressing ⌥⌘Return, or Hand back on the take card.
+    /// Whether the person is handing control back: pressing [`HAND_BACK_KEYS`], or Hand back on the take card.
     fn hand_back_down(&self) -> bool;
     /// Whether any modifier key is held.
     fn modifiers_held(&self) -> bool;
@@ -152,7 +168,7 @@ pub struct TakeOptions {
     /// The agent filming, e.g. "Claude Code".
     pub client: Option<String>,
     pub cancel: Arc<AtomicBool>,
-    /// Set by the take card's Hand back button; it counts as pressing ⌥⌘Return.
+    /// Set by the take card's Hand back button; it counts as pressing the hand-back keys.
     pub hand_back: Arc<AtomicBool>,
 }
 
@@ -493,7 +509,7 @@ impl Stage<'_> {
         };
         progress(Progress {
             done,
-            message: format!("Waiting for you: {message}. Press ⌥⌘Return when you're done."),
+            message: format!("Waiting for you: {message}. Press {HAND_BACK_KEYS} when you're done."),
             waiting: Some(message.to_string()),
             ..Progress::default()
         });
@@ -662,10 +678,83 @@ pub fn perform(
     out
 }
 
+/// Refuses a script with errors in it, each as a sentence naming its beat.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+fn check_script(script: &TakeScript) -> Result<(), AgentError> {
+    let problems: Vec<String> = script
+        .validate()
+        .into_iter()
+        .filter(|issue| issue.severity == Severity::Error)
+        .map(|issue| match issue.beat {
+            Some(beat) => format!("beat {}: {}", beat + 1, issue.message),
+            None => issue.message,
+        })
+        .collect();
+    if problems.is_empty() { Ok(()) } else { Err(AgentError::Script(problems)) }
+}
+
+/// Microseconds on the project's timeline for a moment on the desk clock.
+fn project_us(desk_ms: f64, zero_ms: f64, duration_us: u64) -> u64 {
+    (((desk_ms - zero_ms).max(0.0) * 1000.0) as u64).min(duration_us)
+}
+
+/// Adds a finished take's captions as titles, and cuts the stretches the person had control. `zero_ms` is when the
+/// recording's first frame came, on the desk clock.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+fn finish_project(root: &Path, performed: &Performed, zero_ms: f64) -> Result<Option<Project>, AgentError> {
+    if performed.captions.is_empty() && performed.handoffs.is_empty() {
+        return Ok(None);
+    }
+    let problem = |e: shotmaxxing_core::bundle::BundleError| AgentError::Project(e.to_string());
+    let (bundle, mut project) = ProjectBundle::open(root).map_err(problem)?;
+    let duration = project.duration_us();
+    for (i, (start, end, text)) in performed.captions.iter().enumerate() {
+        let range = TimeRange {
+            start_us: project_us(*start, zero_ms, duration),
+            end_us: project_us(*end, zero_ms, duration),
+        };
+        if range.end_us > range.start_us {
+            project.edits.texts.push(TextOverlay {
+                id: format!("say-{}", i + 1),
+                range,
+                text: text.clone(),
+                position: Point::new(0.05, 0.86),
+                style: String::new(),
+            });
+        }
+    }
+    let mut cuts = project.edits.cuts.clone();
+    for (start, end) in &performed.handoffs {
+        cuts.push(TimeRange {
+            start_us: project_us(*start, zero_ms, duration),
+            end_us: project_us(*end, zero_ms, duration),
+        });
+    }
+    cuts.retain(|c| c.end_us > c.start_us);
+    cuts.sort_by_key(|c| c.start_us);
+    let mut joined: Vec<TimeRange> = Vec::with_capacity(cuts.len());
+    for cut in cuts {
+        match joined.last_mut() {
+            Some(last) if cut.start_us <= last.end_us => last.end_us = last.end_us.max(cut.end_us),
+            _ => joined.push(cut),
+        }
+    }
+    project.edits.cuts = joined;
+    bundle.save(&mut project).map_err(problem)?;
+    Ok(Some(project))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use shotmaxxing_core::geometry::Rect;
+
+    #[test]
+    fn desk_moments_land_on_the_project_timeline() {
+        assert_eq!(project_us(1_500.0, 500.0, 10_000_000), 1_000_000);
+        assert_eq!(project_us(100.0, 500.0, 10_000_000), 0, "before the first frame");
+        assert_eq!(project_us(60_000.0, 0.0, 10_000_000), 10_000_000, "never past the end");
+    }
 
     #[derive(Debug, Clone, PartialEq)]
     enum Act {
@@ -866,7 +955,7 @@ mod tests {
         assert_eq!(done.handoffs.len(), 1);
         let (start, end) = done.handoffs[0];
         assert!(start < 4_000.0 && end >= 4_150.0, "{start}..{end}");
-        assert!(messages.iter().any(|m| m.contains("⌥⌘Return")));
+        assert!(messages.iter().any(|m| m.contains(HAND_BACK_KEYS)));
         assert_eq!(desk.acts, vec![Act::Char('o'), Act::Char('k')]);
     }
 

@@ -4,7 +4,6 @@ mod ax;
 mod keys;
 
 use std::ffi::c_void;
-use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,15 +15,14 @@ use objc2_core_graphics::{
     CGEventType, CGMouseButton, CGScrollEventUnit, CGWarpMouseCursorPosition,
 };
 use shotmaxxing_capture::{ProjectOptions, ProjectRecording, Target, WindowInfo};
-use shotmaxxing_core::bundle::ProjectBundle;
 use shotmaxxing_core::geometry::{Point, Rect};
 use shotmaxxing_core::keys::KeyChord;
-use shotmaxxing_core::project::{AgentInfo, TextOverlay, TimeRange};
+use shotmaxxing_core::project::AgentInfo;
 use shotmaxxing_core::refs::ControlSnapshot;
-use shotmaxxing_core::take::{Framing, Severity, TakeScript};
+use shotmaxxing_core::take::{Framing, TakeScript};
 use shotmaxxing_core::telemetry::{AGENT_EVENT_MARK, MouseButton};
 
-use crate::{AgentError, Desk, Performed, Prepared, Progress, Take, TakeOptions};
+use crate::{AgentError, Desk, Prepared, Progress, Take, TakeOptions};
 
 const SCREEN_PERMISSION: &str = "Shotmaxxing needs the Screen Recording permission to film a take. Allow it in \
 System Settings → Privacy & Security → Screen & System Audio Recording for the app that started Shotmaxxing (your \
@@ -337,77 +335,13 @@ impl Desk for MacDesk<'_> {
     }
 }
 
-/// Microseconds on the project's timeline for a moment on the desk clock.
-fn project_us(desk_ms: f64, zero_ms: f64, duration_us: u64) -> u64 {
-    (((desk_ms - zero_ms).max(0.0) * 1000.0) as u64).min(duration_us)
-}
-
-/// Adds the captions as titles, and cuts the stretches the person had control.
-fn finish_project(
-    root: &Path,
-    performed: &Performed,
-    zero_ms: f64,
-) -> Result<Option<shotmaxxing_core::project::Project>, AgentError> {
-    if performed.captions.is_empty() && performed.handoffs.is_empty() {
-        return Ok(None);
-    }
-    let problem = |e: shotmaxxing_core::bundle::BundleError| AgentError::Project(e.to_string());
-    let (bundle, mut project) = ProjectBundle::open(root).map_err(problem)?;
-    let duration = project.duration_us();
-    for (i, (start, end, text)) in performed.captions.iter().enumerate() {
-        let range = TimeRange {
-            start_us: project_us(*start, zero_ms, duration),
-            end_us: project_us(*end, zero_ms, duration),
-        };
-        if range.end_us > range.start_us {
-            project.edits.texts.push(TextOverlay {
-                id: format!("say-{}", i + 1),
-                range,
-                text: text.clone(),
-                position: Point::new(0.05, 0.86),
-                style: String::new(),
-            });
-        }
-    }
-    let mut cuts = project.edits.cuts.clone();
-    for (start, end) in &performed.handoffs {
-        cuts.push(TimeRange {
-            start_us: project_us(*start, zero_ms, duration),
-            end_us: project_us(*end, zero_ms, duration),
-        });
-    }
-    cuts.retain(|c| c.end_us > c.start_us);
-    cuts.sort_by_key(|c| c.start_us);
-    let mut joined: Vec<TimeRange> = Vec::with_capacity(cuts.len());
-    for cut in cuts {
-        match joined.last_mut() {
-            Some(last) if cut.start_us <= last.end_us => last.end_us = last.end_us.max(cut.end_us),
-            _ => joined.push(cut),
-        }
-    }
-    project.edits.cuts = joined;
-    bundle.save(&mut project).map_err(problem)?;
-    Ok(Some(project))
-}
-
 /// Films a take: opens the app, records its window (or the screen), performs the script and saves the project.
 pub fn run_take(
     script: &TakeScript,
     options: TakeOptions,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<Take, AgentError> {
-    let problems: Vec<String> = script
-        .validate()
-        .into_iter()
-        .filter(|issue| issue.severity == Severity::Error)
-        .map(|issue| match issue.beat {
-            Some(beat) => format!("beat {}: {}", beat + 1, issue.message),
-            None => issue.message,
-        })
-        .collect();
-    if !problems.is_empty() {
-        return Err(AgentError::Script(problems));
-    }
+    crate::check_script(script)?;
     if !shotmaxxing_capture::has_permission() {
         return Err(AgentError::Permission(SCREEN_PERMISSION.into()));
     }
@@ -456,20 +390,8 @@ pub fn run_take(
     if performed.stopped.is_none() {
         let _ = CGWarpMouseCursorPosition(CGPoint { x: home.x, y: home.y });
     }
-    if let Some(project) = finish_project(&finished.root, &performed, zero_ms)? {
+    if let Some(project) = crate::finish_project(&finished.root, &performed, zero_ms)? {
         finished.project = project;
     }
     Ok(Take { finished, performed })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn desk_moments_land_on_the_project_timeline() {
-        assert_eq!(project_us(1_500.0, 500.0, 10_000_000), 1_000_000);
-        assert_eq!(project_us(100.0, 500.0, 10_000_000), 0, "before the first frame");
-        assert_eq!(project_us(60_000.0, 0.0, 10_000_000), 10_000_000, "never past the end");
-    }
 }

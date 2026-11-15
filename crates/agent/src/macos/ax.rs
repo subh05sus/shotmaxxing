@@ -4,8 +4,8 @@
 //! labels and state together. The element behind every control is kept, so checking a ref again just before a click
 //! is a single call. A full walk only happens when that element has gone or something new has to be found.
 //!
-//! Ids are made from what a control is and says (`button.export`, `text_field.search`, `link.docs-2`), so they stay
-//! the same when unrelated parts of the window change. Field contents are never read, only labels.
+//! Ids, labels and matching are shared with the other systems (see [`crate::controls`]). Field contents are never
+//! read, only labels.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -14,13 +14,9 @@ use objc2_core_foundation::{CFRetained, CFString};
 use shotmaxxing_core::geometry::Rect;
 use shotmaxxing_core::refs::ControlSnapshot;
 
-type Ref = *const c_void;
+use crate::controls::{LIMIT, MAX_DEPTH, MAX_VISITS, best_match, clean_label, make_id};
 
-/// Most controls listed for one window.
-pub const LIMIT: usize = 800;
-/// Most elements visited in one walk; web pages can hold many thousands.
-const MAX_VISITS: usize = 6_000;
-const MAX_DEPTH: usize = 48;
+type Ref = *const c_void;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
@@ -172,9 +168,7 @@ impl Node {
         [&self.title, &self.description, &self.placeholder, &self.help]
             .into_iter()
             .flatten()
-            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
-            .find(|l| !l.is_empty())
-            .map(|l| if l.chars().count() > 80 { l.chars().take(80).collect() } else { l })
+            .find_map(|l| clean_label(l))
     }
 }
 
@@ -273,10 +267,8 @@ impl Tree {
             let role = copy(element.0, "AXRole").and_then(|r| string_of(r.0));
             if role.as_deref() == Some("AXStaticText") {
                 let words = copy(element.0, "AXValue").and_then(|v| string_of(v.0));
-                if let Some(words) = words.map(|w| w.split_whitespace().collect::<Vec<_>>().join(" "))
-                    && !words.is_empty()
-                {
-                    return Some(words.chars().take(80).collect());
+                if let Some(words) = words.as_deref().and_then(clean_label) {
+                    return Some(words);
                 }
             }
             queue.extend(copy_elements(element.0, "AXChildren"));
@@ -461,84 +453,4 @@ fn control_role(node: &Node) -> Option<String> {
         _ => return None,
     };
     Some(role.to_string())
-}
-
-fn slug(text: &str) -> String {
-    let mut out = String::new();
-    for ch in text.chars().flat_map(char::to_lowercase) {
-        if ch.is_alphanumeric() {
-            out.push(ch);
-        } else if !out.ends_with('-') && !out.is_empty() {
-            out.push('-');
-        }
-        if out.chars().count() >= 32 {
-            break;
-        }
-    }
-    out.trim_end_matches('-').to_string()
-}
-
-/// `button.export`, then `button.export-2` for a second one; `button-1`, `button-2` for buttons with no label.
-fn make_id(role: &str, label: Option<&str>, taken: &mut HashMap<String, usize>) -> String {
-    let slug = label.map(slug).filter(|s| !s.is_empty());
-    let base = match &slug {
-        Some(s) => format!("{role}.{s}"),
-        None => role.to_string(),
-    };
-    let count = taken.entry(base.clone()).or_insert(0);
-    *count += 1;
-    if slug.is_some() && *count == 1 { base } else { format!("{base}-{count}") }
-}
-
-/// An exact id, then an exact label, then the shortest label containing the words; enabled controls first.
-pub fn best_match<'a>(controls: &'a [ControlSnapshot], query: &str) -> Option<&'a ControlSnapshot> {
-    let q = query.trim().to_lowercase();
-    let label = |c: &ControlSnapshot| c.label.as_deref().unwrap_or("").to_lowercase();
-    let pick = |matches: &dyn Fn(&ControlSnapshot) -> bool| {
-        controls.iter().filter(|c| matches(c)).min_by_key(|c| (!c.enabled, label(c).len()))
-    };
-    pick(&|c| c.id.to_lowercase() == q)
-        .or_else(|| pick(&|c| label(c) == q))
-        .or_else(|| pick(&|c| !q.is_empty() && label(c).contains(&q)))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ids_read_like_the_control() {
-        let mut taken = HashMap::new();
-        assert_eq!(make_id("button", Some("Export…"), &mut taken), "button.export");
-        assert_eq!(make_id("button", Some("Export…"), &mut taken), "button.export-2");
-        assert_eq!(make_id("button", None, &mut taken), "button-1");
-        assert_eq!(make_id("button", None, &mut taken), "button-2");
-        assert_eq!(
-            make_id("text_field", Some("Search or enter website name"), &mut taken),
-            "text_field.search-or-enter-website-name"
-        );
-        assert_eq!(slug("Ünïcode & Co."), "ünïcode-co");
-    }
-
-    #[test]
-    fn finds_by_id_then_label_then_words() {
-        let c = |id: &str, label: &str, enabled| ControlSnapshot {
-            id: id.into(),
-            role: "button".into(),
-            label: Some(label.into()),
-            enabled,
-            bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
-            window_id: None,
-            occluded: false,
-        };
-        let controls = [
-            c("button.save-as", "Save As…", true),
-            c("button.save", "Save", false),
-            c("button.save-2", "Save", true),
-        ];
-        assert_eq!(best_match(&controls, "button.save").unwrap().id, "button.save");
-        assert_eq!(best_match(&controls, "save").unwrap().id, "button.save-2", "enabled first");
-        assert_eq!(best_match(&controls, "as").unwrap().id, "button.save-as");
-        assert!(best_match(&controls, "export").is_none());
-    }
 }

@@ -48,7 +48,8 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [x] Take script schema and checks
 - [x] Beats compiler and performer (macOS)
 - [x] Accessibility refs with fingerprints (macOS)
-- [ ] Accessibility refs on Windows (UI Automation)
+- [ ] Takes on Windows: UI Automation refs, SendInput, the same safety stops and hand-off (Ctrl+Alt+Enter), written
+      and awaiting testing on Windows
 - [x] Safety stops (Esc three times, the person moving the mouse, password fields) and hand-off (⌥⌘Return)
 - [x] Take card in the app, and a per-session consent prompt
 - [ ] macOS virtual display

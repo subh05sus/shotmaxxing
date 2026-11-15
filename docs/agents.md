@@ -128,7 +128,7 @@ Anything an agent does can be changed later in the editor: open the project from
 - **Stopping a take.** Press Stop on the take card, press Esc three times, or move the mouse. The take stops at once
   and leaves the rest to you.
 - **Passwords.** A take never types into a password field. A `user_step` beat hands that part to you:
-  - the take waits until you press ⌥⌘Return or Hand back on the card;
+  - the take waits until you press ⌥⌘Return (Ctrl+Alt+Enter on Windows) or Hand back on the card;
   - that stretch is cut from the video.
 - **Marked input.** Every click and key a take performs is marked as the agent's in the project.
 - **Limits.** One take records at a time. A recording started with `start_recording` stops by itself after
