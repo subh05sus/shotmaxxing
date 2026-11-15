@@ -167,11 +167,15 @@ the command then never opens the app, it only talks to one already listening the
 
 The same work is available from the terminal, where it runs with the terminal's own permissions:
 
+- `shotmaxxing sources` and `shotmaxxing devices`
 - `shotmaxxing record`
 - `shotmaxxing export`
 - `shotmaxxing info`
 - `shotmaxxing zoom`
-- `shotmaxxing take validate`
+- `shotmaxxing take validate` and `shotmaxxing take schema`
+- `shotmaxxing take prepare`, which lists an app's controls for a take script
+- `shotmaxxing take run`, which performs a take script there and then. You started it yourself, so no take card asks
+  first; Esc three times, moving the mouse or Ctrl-C still stops it
 - `shotmaxxing open`, which opens a project in the app's editor (opening the app first if it isn't running)
 
 Add `--json` for machine-readable output.
