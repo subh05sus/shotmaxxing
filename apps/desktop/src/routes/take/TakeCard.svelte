@@ -178,7 +178,8 @@
     if (!command) return { tone: 'warn', text: `From ${who}${where}, not the shotmaxxing command` };
     if (!caller.app) return { tone: 'warn', text: `From ${who}, outside any app` };
     if (!caller.checked) return { tone: 'plain', text: `From ${who}${where}` };
-    if (!caller.signer) return { tone: 'warn', text: `From ${who}${where}, which isn’t signed` };
+    if (!caller.signer)
+      return { tone: 'warn', text: `From ${who}${where} · not signed by an identified developer` };
     return { tone: 'safe', text: `From ${who}${where} · signed by ${caller.signer}` };
   });
   const result = $derived(live ? (card?.result ?? null) : null);

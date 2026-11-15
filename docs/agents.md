@@ -54,8 +54,9 @@ You decide what an agent may do, in the app:
 - **Every take** asks you again on the take card, listing every step.
 
 The card says who is asking as the system reports it, not as the agent describes itself: the agent's program, the
-app it runs in and, on macOS, who signed that app (for example "From claude in Terminal · signed by Apple"). A
-warning shows when the request didn't come from the `shotmaxxing` command, or when the app around it isn't signed.
+app it runs in and, on macOS, who signed that app (for example "From claude in Terminal · signed by Apple"). Only
+signers Apple vouches for are named: Apple itself, the Mac App Store, or a developer's Developer ID. A warning shows
+when the request didn't come from the `shotmaxxing` command, or when no identified developer signed the app around it.
 
 ## Tools
 

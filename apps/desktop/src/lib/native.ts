@@ -535,7 +535,7 @@ export interface TakeCaller {
   agent: string | null;
   /** The app it all runs in, e.g. "Terminal". */
   app: string | null;
-  /** Who signed that app, when its signature checks out: "Apple", or the developer's name. */
+  /** Who signed that app, if Apple vouches for them: "Apple", "the Mac App Store" or a Developer ID's name. */
   signer: string | null;
   /** Whether the signature was checked at all (macOS only, so far). */
   checked: boolean;

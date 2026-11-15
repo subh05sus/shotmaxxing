@@ -16,7 +16,8 @@ pub struct Caller {
     pub agent: Option<String>,
     /// The app all of this runs in, e.g. "Terminal" or "Visual Studio Code".
     pub app: Option<String>,
-    /// Who signed that app, when its signature checks out: "Apple", or the developer's name.
+    /// Who signed that app, when its signature checks out and Apple vouches for the signer: "Apple", "the Mac App
+    /// Store", or the name on the developer's Developer ID.
     pub signer: Option<String>,
     /// Whether the app's signature was checked at all. Only macOS checks it so far, so elsewhere a missing signer
     /// says nothing about the app.
@@ -189,8 +190,16 @@ mod imp {
     /// `kSecCSSigningInformation`: include the certificates and the team.
     const SIGNING_INFORMATION: u32 = 1 << 1;
 
-    /// Who signed the running process `pid`, if its signature checks out: "Apple" for Apple's own apps, otherwise the
-    /// name on the developer's certificate. `None` when it's unsigned, signed ad hoc, or doesn't check out.
+    /// Signed by Apple for the Mac App Store.
+    pub(super) const MAC_APP_STORE: &str =
+        "anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.9] exists";
+    /// Signed with a Developer ID, which Apple issues to developers it has identified.
+    pub(super) const DEVELOPER_ID: &str = "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists \
+                                and certificate leaf[field.1.2.840.113635.100.6.1.13] exists";
+
+    /// Who signed the running process `pid`, if its signature checks out and Apple vouches for the signer: "Apple"
+    /// for Apple's own code, "the Mac App Store" for apps from it, otherwise the name on the developer's Developer
+    /// ID. `None` when it's unsigned, signed ad hoc, signed by anyone else, or doesn't check out.
     pub(super) fn signer(pid: u32) -> Option<String> {
         // SAFETY: constants the Security framework defines, valid for the life of the process.
         let (pid_key, certificates_key, team_key) = unsafe {
@@ -218,6 +227,15 @@ mod imp {
         if satisfies(&code, "anchor apple") {
             return Some("Apple".into());
         }
+        if satisfies(&code, MAC_APP_STORE) {
+            return Some("the Mac App Store".into());
+        }
+        // The check above lets the certificates end at any certificate that signs itself, which anyone can make in
+        // any name, and Apple gives development certificates to any Apple ID, in the name it was given. Only a
+        // Developer ID names a developer Apple has identified.
+        if !satisfies(&code, DEVELOPER_ID) {
+            return None;
+        }
         let mut info: CFDictionaryRef = std::ptr::null();
         // SAFETY: reads the signing information of code we hold; the dictionary is ours to release.
         let status =
@@ -227,7 +245,6 @@ mod imp {
         }
         // SAFETY: a new dictionary from a Copy function, released when this drops.
         let info: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_create_rule(info) };
-        // Ad hoc signatures carry no certificates and no team: nobody vouches for them.
         let named = info.find(&certificates_key).and_then(|value| {
             let certificates = value.downcast::<CFArray>()?;
             let leaf: *const c_void = *certificates.get(0)?;
@@ -242,16 +259,18 @@ mod imp {
         })
     }
 
-    fn satisfies(code: &CFType, requirement: &str) -> bool {
-        let text = CFString::new(requirement);
+    /// A requirement compiled from its text, when the text is one.
+    pub(super) fn requirement(text: &str) -> Option<CFType> {
+        let text = CFString::new(text);
         let mut compiled: CFTypeRef = std::ptr::null();
         // SAFETY: compiles a requirement from text; the result is ours to release.
         let status = unsafe { SecRequirementCreateWithString(text.as_concrete_TypeRef(), 0, &mut compiled) };
-        if status != 0 || compiled.is_null() {
-            return false;
-        }
         // SAFETY: a new reference from a Create function, released when this drops.
-        let compiled = unsafe { CFType::wrap_under_create_rule(compiled) };
+        (status == 0 && !compiled.is_null()).then(|| unsafe { CFType::wrap_under_create_rule(compiled) })
+    }
+
+    fn satisfies(code: &CFType, text: &str) -> bool {
+        let Some(compiled) = requirement(text) else { return false };
         // SAFETY: checks code we hold against a requirement we hold.
         unsafe { SecCodeCheckValidity(code.as_CFTypeRef(), 0, compiled.as_CFTypeRef()) == 0 }
     }
@@ -491,18 +510,11 @@ mod imp {
     }
 }
 
-/// The developer's name from a certificate's summary: `Developer ID Application: Anthropic, PBC (Q6L2SF6YDW)` →
-/// `Anthropic, PBC`.
+/// The developer's name from a Developer ID certificate's summary: `Developer ID Application: Anthropic, PBC
+/// (Q6L2SF6YDW)` → `Anthropic, PBC`.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn developer(summary: &str) -> String {
-    const KINDS: [&str; 5] = [
-        "Developer ID Application: ",
-        "Apple Development: ",
-        "Apple Distribution: ",
-        "Mac Developer: ",
-        "3rd Party Mac Developer Application: ",
-    ];
-    let name = KINDS.iter().find_map(|kind| summary.strip_prefix(kind)).unwrap_or(summary).trim();
+    let name = summary.strip_prefix("Developer ID Application: ").unwrap_or(summary).trim();
     let name = match name.rfind(" (") {
         Some(at)
             if name.ends_with(')')
@@ -537,9 +549,29 @@ mod tests {
     #[test]
     fn developers_are_named_without_certificate_words() {
         assert_eq!(developer("Developer ID Application: Anthropic, PBC (Q6L2SF6YDW)"), "Anthropic, PBC");
-        assert_eq!(developer("Apple Development: Jane Doe (AB12CD34EF)"), "Jane Doe");
+        assert_eq!(
+            developer("Developer ID Application: Acme (Europe) Ltd (AB12CD34EF)"),
+            "Acme (Europe) Ltd"
+        );
         assert_eq!(developer("Microsoft Corporation"), "Microsoft Corporation");
         assert_eq!(developer("Acme (Europe) Ltd"), "Acme (Europe) Ltd");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn only_signers_apple_vouches_for_are_named() {
+        // Apple's own program, running (spawning returns once it is).
+        let mut sleep = std::process::Command::new("/bin/sleep").arg("5").spawn().expect("sleep runs");
+        let apple = imp::signer(sleep.id());
+        let _ = sleep.kill();
+        let _ = sleep.wait();
+        assert_eq!(apple.as_deref(), Some("Apple"));
+        // This test, signed ad hoc by the linker (or not at all): nobody vouches for it.
+        assert_eq!(imp::signer(std::process::id()), None);
+        // A requirement that doesn't compile would leave every app from the App Store, or with a Developer ID, unnamed.
+        assert!(imp::requirement(imp::MAC_APP_STORE).is_some());
+        assert!(imp::requirement(imp::DEVELOPER_ID).is_some());
+        assert!(imp::requirement("anchor apple and nonsense[").is_none());
     }
 
     #[test]
