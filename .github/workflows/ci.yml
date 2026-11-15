@@ -64,3 +64,7 @@ jobs:
       - if: runner.os == 'Windows'
         continue-on-error: true
         run: cargo test -p shotmaxxing-capture -- --ignored --nocapture
+      # Reads Notepad's controls through UI Automation, also without failing the build.
+      - if: runner.os == 'Windows'
+        continue-on-error: true
+        run: cargo test -p shotmaxxing-agent -- --ignored --nocapture
