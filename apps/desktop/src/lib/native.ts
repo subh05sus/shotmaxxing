@@ -5,6 +5,7 @@
 
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { env } from '@shotmaxxing/ui';
+import NORTHWIND from '../../../../docs/content-packs/northwind.json';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -385,6 +386,8 @@ export interface ProjectSummary {
 /** A screenshot's look in the project's own units: what the next screenshot starts from. */
 export interface StillLook {
   wallpaper: string;
+  /** The wallpaper itself, when it comes from a content pack. */
+  wallpaperCss?: string;
   padding: number;
   cornerRadius: number;
   shadowOpacity: number;
@@ -716,6 +719,67 @@ export function chooseMusic(project: string): Promise<MusicFile | null> {
 
 /** What the browser preview and the sample project "pick". */
 export const SAMPLE_MUSIC: MusicFile = { path: 'media/music.mp3', name: 'Sunrise drive.mp3', seconds: 154 };
+
+// Content packs ------------------------------------------------------------------------------------------------
+
+/** A content pack's wallpaper. A project names it `<pack>.<id>` and keeps a copy of its CSS. */
+export interface PackWallpaper {
+  id: string;
+  name: string;
+  css: string;
+}
+
+/** Some of the Background tool's settings, applied together. `wallpaper` is the pack's own id or a built-in one. */
+export interface PackLook {
+  id: string;
+  name: string;
+  wallpaper?: string;
+  padding?: number;
+  corner_radius?: number;
+  shadow?: number;
+  aspect?: string;
+}
+
+export interface ContentPack {
+  shotmaxxing_pack: number;
+  id: string;
+  name: string;
+  author?: string;
+  wallpapers: PackWallpaper[];
+  looks: PackLook[];
+}
+
+/** The content packs added on this computer, by name. The browser preview shows the sample pack. */
+export function listPacks(): Promise<ContentPack[]> {
+  return call('list_packs', undefined, () => previewPacks);
+}
+
+/** Asks for a content pack file and adds it. `null` when the person cancels; it rejects with what's wrong. */
+export function addPack(): Promise<{ pack: ContentPack; replaced: boolean } | null> {
+  return call('add_pack', undefined, () => {
+    const replaced = previewPacks.length > 0;
+    previewPacks = [SAMPLE_PACK];
+    return { pack: SAMPLE_PACK, replaced };
+  });
+}
+
+export function removePack(id: string): Promise<void> {
+  return call('remove_pack', { id }, () => {
+    previewPacks = previewPacks.filter((p) => p.id !== id);
+  });
+}
+
+/** Puts back a pack that was just removed. */
+export function restorePack(pack: ContentPack): Promise<void> {
+  return call('restore_pack', { pack }, () => {
+    previewPacks = [...previewPacks.filter((p) => p.id !== pack.id), pack];
+  });
+}
+
+/** The pack the browser preview has added: the documented example. */
+export const SAMPLE_PACK: ContentPack = NORTHWIND;
+
+let previewPacks: ContentPack[] = [SAMPLE_PACK];
 
 /** Editor routes carry a project path; it is encoded so it survives as one route segment. */
 export function editorTarget(path: string): string {

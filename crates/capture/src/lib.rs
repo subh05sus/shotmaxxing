@@ -461,7 +461,7 @@ mod tests {
         // A second one is numbered.
         // The next one can start from the look of the last.
         let look = shotmaxxing_core::project::Canvas {
-            background: shotmaxxing_core::project::Background::Wallpaper { id: "ocean".into() },
+            background: shotmaxxing_core::project::Background::Wallpaper { id: "ocean".into(), css: None },
             padding: 0.12,
             corner_radius: 20.0,
             ..Default::default()

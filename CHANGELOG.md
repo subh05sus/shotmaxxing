@@ -3,6 +3,13 @@
 What changed in each release. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version
 can change how things work.
 
+## Unreleased
+
+- **Content packs:** add wallpapers and looks from a JSON file in Settings → Content packs. They show in the editor's
+  Background tool, a look applies its settings in one click, and projects keep a copy of the wallpaper they use.
+  `shotmaxxing pack check` and `pack list` check and list packs, and agents can choose pack wallpapers.
+  [How to make one](docs/content-packs.md).
+
 ## 0.1.0 (2026-11-16)
 
 The first preview. It's built for macOS. The Windows version is written but hasn't been tested on a Windows computer

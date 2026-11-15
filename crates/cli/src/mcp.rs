@@ -204,8 +204,15 @@ fn handle(out: &Outbox, state: &State, message: Value) {
 fn tools() -> Value {
     let project =
         json!({ "type": "string", "description": "A project folder (.smx), as returned by stop_recording." });
+    // The built-in wallpapers, then those of the content packs added in the app (`<pack>.<wallpaper>`).
     let wallpapers: Vec<String> =
-        shotmaxxing_render::wallpaper::wallpapers().into_iter().map(|w| w.id).collect();
+        shotmaxxing_render::wallpaper::wallpapers()
+            .into_iter()
+            .map(|w| w.id)
+            .chain(shotmaxxing_render::packs::installed().iter().flat_map(|pack| {
+                pack.wallpapers.iter().map(|w| pack.wallpaper_id(&w.id)).collect::<Vec<_>>()
+            }))
+            .collect();
     json!([
         {
             "name": "list_sources",
@@ -337,7 +344,7 @@ fn tools() -> Value {
         {
             "name": "style_project",
             "title": "Style the canvas",
-            "description": "Changes how the video looks: the wallpaper behind the window, the canvas shape, the space around the window, its corners and shadow, and the cursor's size.",
+            "description": "Changes how the video looks: the wallpaper behind the window (the built-in ones, then those of content packs added in the app), the canvas shape, the space around the window, its corners and shadow, and the cursor's size.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -466,7 +473,7 @@ pub fn summary(root: &Path, project: &Project) -> Value {
         },
         "canvas": {
             "aspect": project.canvas.aspect,
-            "wallpaper": match &project.canvas.background { Background::Wallpaper { id } => Some(id.clone()), _ => None },
+            "wallpaper": match &project.canvas.background { Background::Wallpaper { id, .. } => Some(id.clone()), _ => None },
             "padding": project.canvas.padding,
             "corner_radius": project.canvas.corner_radius,
         },
@@ -749,14 +756,26 @@ fn plan_zooms(args: &Value) -> Reply {
     Ok(summary(&root, &project)["zooms"].clone())
 }
 
+/// What a project keeps of the wallpaper `id`: nothing for a built-in one, a copy of a content pack's.
+fn wallpaper_css(id: &str) -> Result<Option<String>, String> {
+    if shotmaxxing_render::wallpaper::wallpapers().iter().any(|w| w.id == id) {
+        return Ok(None);
+    }
+    shotmaxxing_render::packs::installed()
+        .into_iter()
+        .find_map(|pack| {
+            let own = pack.wallpapers.iter().find(|w| pack.wallpaper_id(&w.id) == id)?;
+            Some(own.css.clone())
+        })
+        .map(Some)
+        .ok_or_else(|| format!("there's no wallpaper called “{id}”; tools/list shows them"))
+}
+
 fn style(args: &Value) -> Reply {
     let path = project_arg(args)?;
     let (bundle, mut project) = open(&path)?;
     if let Some(id) = text(args, "wallpaper") {
-        if !shotmaxxing_render::wallpaper::wallpapers().iter().any(|w| w.id == id) {
-            return Err(format!("there's no wallpaper called “{id}”; tools/list shows them"));
-        }
-        project.canvas.background = Background::Wallpaper { id: id.to_string() };
+        project.canvas.background = Background::Wallpaper { id: id.to_string(), css: wallpaper_css(id)? };
     }
     if let Some(aspect) = text(args, "aspect") {
         project.canvas.aspect = serde_json::from_value::<AspectRatio>(json!(aspect))

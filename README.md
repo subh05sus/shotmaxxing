@@ -132,6 +132,7 @@ downloads the 60 MB Whisper model from Hugging Face, checked against a pinned ha
 ## Documentation
 
 - [Agents](docs/agents.md): connecting agents, the MCP tools, the command line and a typical take
+- [Content packs](docs/content-packs.md): adding wallpapers and looks, and making your own
 - [Architecture](docs/architecture.md): how the recorder, the editor and the agent layer fit together
 - [Design principles](docs/design/principles.md): motion, interaction and craft rules
 - [Roadmap](docs/roadmap.md) and [changelog](CHANGELOG.md)

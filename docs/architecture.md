@@ -235,14 +235,18 @@ computer-use tools. It starts and stops the recording, then tidies it up with au
 - **Local AI helpers** (captions with Whisper, voice cleanup, silence cutting) run on device, only when asked.
   Captions download their speech model on first use; the other two need none.
 
-## Plugins (planned)
+## Content packs and plugins
 
-Not built yet. The plan:
+- **Content packs** (built): one JSON file of wallpapers and looks, read and checked by `render::packs` and kept in the
+  app's data folder under `packs/`. A wallpaper's CSS must use the gradient subset that both the preview (the
+  webview) and the exporter (`render::wallpaper`) draw, must be opaque, and may stack 8 layers; a look sets
+  Background settings within the editor's own ranges. A project that uses a pack wallpaper stores its CSS
+  (`Background::Wallpaper { id, css }`), so it opens and exports the same without the pack. See
+  [content-packs.md](content-packs.md).
+- **Planned:** packs with cursor sets, device frames and export targets, and effect plugins as WebAssembly modules
+  plus WGSL shaders, run sandboxed inside the compositor.
 
-- **Effect plugins:** WebAssembly modules plus WGSL shaders, run sandboxed inside the compositor.
-- **Content packs:** declarative bundles of wallpapers, cursor sets, device frames, presets and export targets.
-
-No plugin gets unrestricted access to the system.
+No pack or plugin gets unrestricted access to the system: a pack is data, checked before it's used.
 
 ## Privacy
 

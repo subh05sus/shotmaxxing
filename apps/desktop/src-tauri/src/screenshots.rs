@@ -19,6 +19,9 @@ const STEP_ASIDE: Duration = Duration::from_millis(250);
 #[serde(rename_all = "camelCase")]
 pub struct Look {
     wallpaper: String,
+    /// The wallpaper itself, when it came from a content pack.
+    #[serde(default)]
+    wallpaper_css: Option<String>,
     padding: f64,
     corner_radius: f64,
     shadow_opacity: f64,
@@ -26,16 +29,28 @@ pub struct Look {
 
 impl Look {
     /// The look as a canvas, or `None` when it isn't one the editor could have made (an old or hand-edited setting).
+    /// A content pack's wallpaper (`<pack>.<wallpaper>`) comes with its CSS, which must check out.
     fn canvas(&self) -> Option<Canvas> {
-        let named = !self.wallpaper.is_empty()
-            && self.wallpaper.len() <= 64
-            && self.wallpaper.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        let id = |part: &str| {
+            !part.is_empty()
+                && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        };
+        let css = match (self.wallpaper.split_once('.'), &self.wallpaper_css) {
+            (None, None) => None,
+            (Some((pack, name)), Some(css))
+                if id(pack) && id(name) && shotmaxxing_render::wallpaper::check(css).is_ok() =>
+            {
+                Some(css.clone())
+            }
+            _ => return None,
+        };
+        let named = self.wallpaper.len() <= 81 && (css.is_some() || id(&self.wallpaper));
         let within = |value: f64, most: f64| value.is_finite() && (0.0..=most).contains(&value);
         let fits = within(self.padding, 0.3)
             && within(self.corner_radius, 200.0)
             && within(self.shadow_opacity, 1.0);
         (named && fits).then(|| Canvas {
-            background: Background::Wallpaper { id: self.wallpaper.clone() },
+            background: Background::Wallpaper { id: self.wallpaper.clone(), css },
             padding: self.padding,
             corner_radius: self.corner_radius,
             shadow: Shadow { opacity: self.shadow_opacity, ..Shadow::default() },
@@ -102,16 +117,43 @@ mod tests {
     use super::*;
 
     fn look(wallpaper: &str, padding: f64) -> Look {
-        Look { wallpaper: wallpaper.into(), padding, corner_radius: 20.0, shadow_opacity: 0.3 }
+        Look {
+            wallpaper: wallpaper.into(),
+            wallpaper_css: None,
+            padding,
+            corner_radius: 20.0,
+            shadow_opacity: 0.3,
+        }
     }
 
     #[test]
     fn a_remembered_look_carries_over_only_when_the_editor_could_have_made_it() {
         let canvas = look("ocean", 0.12).canvas().unwrap();
-        assert_eq!(canvas.background, Background::Wallpaper { id: "ocean".into() });
+        assert_eq!(canvas.background, Background::Wallpaper { id: "ocean".into(), css: None });
         assert_eq!((canvas.padding, canvas.corner_radius, canvas.shadow.opacity), (0.12, 20.0, 0.3));
         assert_eq!(canvas.shadow.blur, Shadow::default().blur);
         for bad in [look("", 0.1), look("../Pictures/x", 0.1), look("ocean", 0.9), look("ocean", f64::NAN)] {
+            assert!(bad.canvas().is_none(), "{bad:?} should be left out");
+        }
+    }
+
+    #[test]
+    fn a_content_packs_wallpaper_carries_over_with_its_css() {
+        let css = "linear-gradient(135deg, oklch(0.82 0.12 75), oklch(0.55 0.17 35))";
+        let pack =
+            |id: &str, css: Option<&str>| Look { wallpaper_css: css.map(String::from), ..look(id, 0.1) };
+        let canvas = pack("northwind.sunrise", Some(css)).canvas().unwrap();
+        assert_eq!(
+            canvas.background,
+            Background::Wallpaper { id: "northwind.sunrise".into(), css: Some(css.into()) }
+        );
+        // Without its CSS, with CSS that doesn't check out, or with CSS on a built-in name, it's left out.
+        for bad in [
+            pack("northwind.sunrise", None),
+            pack("northwind.sunrise", Some("url(//example.com/a.png)")),
+            pack("ocean", Some(css)),
+            pack("north wind.sunrise", Some(css)),
+        ] {
             assert!(bad.canvas().is_none(), "{bad:?} should be left out");
         }
     }

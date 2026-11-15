@@ -17,14 +17,19 @@
   import { go } from '../../lib/router.svelte';
   import { ui } from '../../lib/commands.svelte';
   import {
+    addPack,
     chooseProjectsFolder,
     defaultProjectsFolder,
     isTauri,
     launchAtLogin,
     openLink,
+    removePack,
+    restorePack,
     setLaunchAtLogin,
     setMenuBarIcon,
+    type ContentPack,
   } from '../../lib/native';
+  import { loadPacks, packs } from '../../lib/packs.svelte';
 
   const mac = $derived(env.os === 'mac');
   const version = import.meta.env.VITE_APP_VERSION;
@@ -32,6 +37,7 @@
   let defaultFolder = $state(env.os === 'windows' ? '~\\Videos\\Shotmaxxing' : '~/Movies/Shotmaxxing');
 
   onMount(async () => {
+    void loadPacks();
     defaultFolder = await defaultProjectsFolder(defaultFolder).catch(() => defaultFolder);
     // The system decides whether the app opens at login; show what it says.
     if (isTauri) settings.launchAtLogin = await launchAtLogin().catch(() => settings.launchAtLogin);
@@ -65,6 +71,48 @@
       ? `Stop from the ${mac ? 'menu bar' : 'tray'} or with ${mac ? '⌥⇧5' : 'Alt+Shift+5'}.`
       : `Stop with ${mac ? '⌥⇧5' : 'Alt+Shift+5'}.`,
   );
+
+  const PACKS_GUIDE = 'https://github.com/subh05sus/shotmaxxing/blob/main/docs/content-packs.md';
+
+  function packSummary(pack: ContentPack): string {
+    const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+    const holds = [
+      count(pack.wallpapers.length, 'wallpaper', 'wallpapers'),
+      count(pack.looks.length, 'look', 'looks'),
+    ];
+    return (pack.author ? `By ${pack.author} · ` : '') + holds.join(' · ');
+  }
+
+  let addingPack = $state(false);
+  async function addOnePack() {
+    addingPack = true;
+    try {
+      const added = await addPack();
+      if (!added) return;
+      await loadPacks();
+      toast(
+        added.replaced
+          ? `Updated ${added.pack.name}.`
+          : `Added ${added.pack.name}. Its wallpapers and looks are in the editor’s Background tool.`,
+      );
+    } catch (error) {
+      toast(`Couldn’t add that pack. ${error}`, { tone: 'danger', timeout: 12_000 });
+    } finally {
+      addingPack = false;
+    }
+  }
+
+  async function removeOnePack(pack: ContentPack) {
+    try {
+      await removePack(pack.id);
+      await loadPacks();
+      toast(`Removed ${pack.name}. Projects that use its wallpapers keep them.`, {
+        action: { label: 'Undo', run: () => void restorePack(pack).then(loadPacks) },
+      });
+    } catch (error) {
+      toast(`Couldn’t remove ${pack.name}: ${error}`, { tone: 'danger' });
+    }
+  }
 
   function setLowPower(value: LowPowerSetting) {
     settings.lowPower = value;
@@ -163,6 +211,28 @@
             <Button size="sm" variant="ghost" onclick={() => (settings.saveFolder = '')}>Use default</Button>
           {/if}
           <Button size="sm" icon={FolderOpen} disabled={!isTauri} onclick={chooseFolder}>Change…</Button>
+        </div>
+      </Row>
+    </Group>
+
+    <Group
+      title="Content packs"
+      footer="A pack adds wallpapers and looks to the editor’s Background tool. Projects keep a copy of the wallpaper they use, so removing a pack changes nothing you’ve made."
+    >
+      {#each packs.list as pack (pack.id)}
+        <Row label={pack.name} description={packSummary(pack)}>
+          <Button size="sm" variant="ghost" onclick={() => removeOnePack(pack)}>Remove</Button>
+        </Row>
+      {/each}
+      <Row
+        label={packs.list.length ? 'Add another pack' : 'Add a pack'}
+        description="A .json file of wallpapers and looks that you made or someone shared."
+      >
+        <div class="flex items-center gap-1">
+          <Button size="sm" variant="ghost" iconEnd={ExternalLink} onclick={() => openLink(PACKS_GUIDE)}
+            >Make one</Button
+          >
+          <Button size="sm" disabled={addingPack} onclick={addOnePack}>Add…</Button>
         </div>
       </Row>
     </Group>

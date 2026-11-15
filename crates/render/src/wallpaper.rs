@@ -205,6 +205,34 @@ fn parse(css: &str) -> Result<Vec<Layer>, String> {
     split_top(css, ',').into_iter().map(layer).collect()
 }
 
+/// The most layers a wallpaper from outside the app (a content pack) may stack.
+pub const MOST_LAYERS: usize = 8;
+
+/// Whether `css`, a wallpaper from outside the app, is one the exporter draws exactly as the editor shows it: only
+/// the gradients and `oklch()` colours above, at most [`MOST_LAYERS`] of them, covering the whole picture. Nothing
+/// else parses, so a wallpaper can't make the editor fetch anything (no `url()`), and with no quotes, colons or
+/// semicolons it can't reach past its own `background` either.
+pub fn check(css: &str) -> Result<(), String> {
+    if css.len() > 4000 {
+        return Err("is longer than 4,000 characters".into());
+    }
+    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || " .,%()/-\n\t".contains(c);
+    if let Some(c) = css.chars().find(|&c| !allowed(c)) {
+        return Err(format!("has “{c}”, which a wallpaper doesn't use: only gradients of oklch() colours"));
+    }
+    let layers = parse(css).map_err(|e| format!("can't be drawn: {e}"))?;
+    if layers.len() > MOST_LAYERS {
+        return Err(format!("stacks {} gradients; {MOST_LAYERS} at most", layers.len()));
+    }
+    let pixels = rasterize(css, 32, 18).map_err(|e| format!("can't be drawn: {e}"))?;
+    if pixels.chunks(4).any(|p| p[3] != 255) {
+        return Err(
+            "leaves part of the picture see-through: end it with a linear-gradient of solid colours".into()
+        );
+    }
+    Ok(())
+}
+
 fn lab_to_srgb(c: Lab) -> [f64; 3] {
     let l_ = c.l + 0.396_337_777_4 * c.a + 0.215_803_757_3 * c.b;
     let m_ = c.l - 0.105_561_345_8 * c.a - 0.063_854_172_8 * c.b;

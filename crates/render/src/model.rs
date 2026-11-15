@@ -16,6 +16,7 @@ use shotmaxxing_core::project::{
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent, decode_cursor, read_events};
 
 use crate::RenderError;
+use crate::wallpaper;
 
 const CURSOR_FILE: &str = "telemetry/cursor.smxc";
 const EVENTS_FILE: &str = "telemetry/events.jsonl";
@@ -135,6 +136,7 @@ pub struct RenderProject {
     pub zooms: Vec<Zoom>,
     pub instant_zoom: bool,
     pub follow_cursor: bool,
+    /// The wallpaper to draw, as CSS: the project's own copy of a content pack's wallpaper, or a built-in one.
     pub wallpaper: String,
     pub padding: f64,
     pub radius: f64,
@@ -271,8 +273,11 @@ impl RenderProject {
         let mut zooms: Vec<Zoom> = project.zooms.iter().map(zoom_of).collect();
         zooms.sort_by(|a, b| a.start.total_cmp(&b.start));
         let wallpaper = match &project.canvas.background {
-            Background::Wallpaper { id } => id.clone(),
-            _ => "aurora-lime".into(),
+            // A pack's wallpaper travels with the project. One that doesn't check out (a hand-edited project) falls
+            // back to the built-in wallpaper of that name, or the first.
+            Background::Wallpaper { css: Some(css), .. } if wallpaper::check(css).is_ok() => css.clone(),
+            Background::Wallpaper { id, .. } => wallpaper::find(id).map(|w| w.css).unwrap_or_default(),
+            _ => wallpaper::find("aurora-lime").map(|w| w.css).unwrap_or_default(),
         };
         let style = &project.cursor;
         let cursor_look = match style.theme {
@@ -552,6 +557,23 @@ mod tests {
 
     fn range(start_ms: u64, end_ms: u64) -> TimeRange {
         TimeRange { start_us: start_ms * 1000, end_us: end_ms * 1000 }
+    }
+
+    #[test]
+    fn a_content_packs_wallpaper_is_drawn_from_the_projects_own_copy() {
+        let mut project = Project::default();
+        let built_in = RenderProject::from_parts(Path::new("/tmp"), &project, &[], &[]).wallpaper;
+        assert_eq!(built_in, wallpaper::find("aurora-lime").unwrap().css);
+        // A pack's wallpaper exports from the copy the project keeps, with or without the pack.
+        let css = "linear-gradient(135deg, oklch(0.82 0.12 75), oklch(0.55 0.17 35))";
+        project.canvas.background =
+            Background::Wallpaper { id: "northwind.sunrise".into(), css: Some(css.into()) };
+        assert_eq!(RenderProject::from_parts(Path::new("/tmp"), &project, &[], &[]).wallpaper, css);
+        // A copy that doesn't check out (a hand-edited project) falls back to a built-in wallpaper.
+        project.canvas.background =
+            Background::Wallpaper { id: "graphite".into(), css: Some("url(//example.com/a.png)".into()) };
+        let fallback = RenderProject::from_parts(Path::new("/tmp"), &project, &[], &[]).wallpaper;
+        assert_eq!(fallback, wallpaper::find("graphite").unwrap().css);
     }
 
     #[test]

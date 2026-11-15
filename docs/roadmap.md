@@ -83,7 +83,10 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
       follow cuts and speed changes, every word can be fixed in the editor, they come in two styles, are drawn into
       exports exactly as previewed, and save as SRT or WebVTT (Windows: written, awaiting testing on Windows)
 - [ ] Learn tab guides filmed by Shotmaxxing itself
-- [ ] Plugins: WASM effects and content packs
+- [x] Content packs: JSON files of wallpapers and looks, added in Settings and checked strictly (only gradients both
+      renderers draw the same), shown in the Background tool, kept with each project that uses them, and checked by
+      `shotmaxxing pack check` ([format](content-packs.md))
+- [ ] Packs with cursor sets, device frames and export targets; WASM effect plugins
 - [x] Preview releases on GitHub for macOS (Apple silicon and Intel) and Windows, built by CI from a tag, with a
       daily check in the app that offers newer ones ([0.1.0](https://github.com/subh05sus/shotmaxxing/releases/tag/v0.1.0))
 - [x] A Homebrew cask (this repository is its own tap) and winget manifests ready to submit

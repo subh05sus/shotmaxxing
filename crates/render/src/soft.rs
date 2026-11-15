@@ -57,10 +57,7 @@ impl<'a> Compositor<'a> {
         let palette = Palette::get();
         let (w, h) = (layout.width as u32, layout.height as u32);
         let failed = |what: &str| RenderError::System(format!("couldn't draw {what}"));
-        let css = wallpaper::find(&project.wallpaper)
-            .map(|w| w.css)
-            .ok_or_else(|| RenderError::Project("there are no wallpapers".into()))?;
-        let pixels = wallpaper::rasterize(&css, w, h).map_err(RenderError::Project)?;
+        let pixels = wallpaper::rasterize(&project.wallpaper, w, h).map_err(RenderError::Project)?;
         let background =
             sprites::background(&layout, pixels, &palette).ok_or_else(|| failed("the background"))?;
         // Drawn at the largest zoom, so they're never enlarged.

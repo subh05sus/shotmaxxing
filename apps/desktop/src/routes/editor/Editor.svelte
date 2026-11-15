@@ -333,9 +333,10 @@
   let shownLook = '';
   $effect(() => {
     if (!ed.still || ed.status !== 'ready') return;
-    const { wallpaper, padding, radius, shadow } = ed.project.canvas;
+    const { wallpaper, wallpaperCss, padding, radius, shadow } = ed.project.canvas;
     const look = {
       wallpaper,
+      ...(wallpaperCss ? { wallpaperCss } : {}),
       padding,
       cornerRadius: radius,
       shadowOpacity: shadowOpacity(shadow),

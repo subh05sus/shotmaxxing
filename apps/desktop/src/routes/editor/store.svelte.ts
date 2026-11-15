@@ -100,7 +100,15 @@ export interface Project {
   kind: 'video' | 'screenshot';
   duration: number;
   capture: { width: number; height: number };
-  canvas: { wallpaper: string; padding: number; radius: number; shadow: number; aspect: Aspect };
+  canvas: {
+    wallpaper: string;
+    /** A content pack's wallpaper, kept with the project so it looks the same without the pack. */
+    wallpaperCss?: string;
+    padding: number;
+    radius: number;
+    shadow: number;
+    aspect: Aspect;
+  };
   cursor: {
     size: number;
     smoothing: number;

@@ -103,9 +103,7 @@ impl<'a> Compositor<'a> {
         .ok_or_else(|| system("the sRGB colour space is missing"))?;
         let palette = Palette::get();
         let (w, h) = (layout.width as u32, layout.height as u32);
-        let css =
-            wallpaper::find(&project.wallpaper).map(|w| w.css).ok_or_else(|| system("no wallpapers"))?;
-        let pixels = wallpaper::rasterize(&css, w, h).map_err(RenderError::Project)?;
+        let pixels = wallpaper::rasterize(&project.wallpaper, w, h).map_err(RenderError::Project)?;
         let background = sprites::background(&layout, pixels, &palette)
             .ok_or_else(|| system("couldn't draw the background"))?;
         let background = to_ci(&background, &space);

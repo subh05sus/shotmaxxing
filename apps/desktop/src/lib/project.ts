@@ -50,7 +50,7 @@ export interface CoreProject {
   }[];
   canvas: {
     aspect: string | { custom: { width: number; height: number } };
-    background: { kind: string; id?: string };
+    background: { kind: string; id?: string; css?: string };
     padding: number;
     corner_radius: number;
     shadow: { opacity: number; [key: string]: unknown };
@@ -231,6 +231,9 @@ export function fromCore(core: CoreProject, os: Os): Project {
         core.canvas.background.kind === 'wallpaper'
           ? (core.canvas.background.id ?? 'aurora-lime')
           : 'aurora-lime',
+      ...(core.canvas.background.kind === 'wallpaper' && core.canvas.background.css
+        ? { wallpaperCss: core.canvas.background.css }
+        : {}),
       padding: core.canvas.padding,
       radius: core.canvas.corner_radius,
       shadow: Math.min(1, Math.max(0, core.canvas.shadow.opacity / 0.6)),
@@ -341,7 +344,11 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
   const core = plainCopy(base);
   core.name = p.title;
   core.canvas.aspect = p.canvas.aspect;
-  core.canvas.background = { kind: 'wallpaper', id: p.canvas.wallpaper };
+  core.canvas.background = {
+    kind: 'wallpaper',
+    id: p.canvas.wallpaper,
+    ...(p.canvas.wallpaperCss ? { css: p.canvas.wallpaperCss } : {}),
+  };
   core.canvas.padding = p.canvas.padding;
   core.canvas.corner_radius = p.canvas.radius;
   core.canvas.shadow = { ...core.canvas.shadow, opacity: shadowOpacity(p.canvas.shadow) };

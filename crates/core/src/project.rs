@@ -186,16 +186,30 @@ impl AspectRatio {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Background {
-    Wallpaper { id: String },
-    Solid { color: String },
-    Gradient { from: String, to: String, angle_deg: f64 },
-    Image { path: String },
+    Wallpaper {
+        id: String,
+        /// The wallpaper itself when it comes from a content pack (`<pack>.<wallpaper>`), so the project looks the same
+        /// without the pack. Built-in wallpapers leave it out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        css: Option<String>,
+    },
+    Solid {
+        color: String,
+    },
+    Gradient {
+        from: String,
+        to: String,
+        angle_deg: f64,
+    },
+    Image {
+        path: String,
+    },
     None,
 }
 
 impl Default for Background {
     fn default() -> Self {
-        Self::Wallpaper { id: "aurora-lime".into() }
+        Self::Wallpaper { id: "aurora-lime".into(), css: None }
     }
 }
 

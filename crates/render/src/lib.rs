@@ -17,6 +17,7 @@ pub mod click;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod mix;
 mod model;
+pub mod packs;
 pub mod scene;
 // Systems without an exporter of their own yet don't draw.
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]

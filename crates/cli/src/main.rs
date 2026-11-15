@@ -65,6 +65,9 @@ enum Command {
     /// Check or describe take scripts.
     #[command(subcommand)]
     Take(TakeCommand),
+    /// Check content packs, the wallpapers and looks the app's Settings can add.
+    #[command(subcommand)]
+    Pack(PackCommand),
     /// Serve AI agents over MCP, on stdin and stdout. Agents start this themselves once connected.
     Mcp,
 }
@@ -182,6 +185,14 @@ enum TakeCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum PackCommand {
+    /// Check a content pack file the way the app does before adding it, and say what's in it.
+    Check { file: PathBuf },
+    /// List the content packs added in the app, with the ids of their wallpapers.
+    List,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum Depth {
     Subtle,
@@ -231,6 +242,8 @@ fn run(cli: Cli) -> Result<()> {
             run_take(&file, dry_run, out, mic, system_audio, cli.json)
         }
         Command::Mcp => mcp::serve(),
+        Command::Pack(PackCommand::Check { file }) => check_pack(&file, cli.json),
+        Command::Pack(PackCommand::List) => list_packs(cli.json),
         Command::Take(TakeCommand::Schema) => {
             println!("{}", serde_json::to_string_pretty(&shotmaxxing_core::take::json_schema())?);
             Ok(())
@@ -651,6 +664,44 @@ fn open_in_editor(project: &Path, json: bool) -> Result<()> {
         println!("{}", serde_json::json!({ "opened": std::path::absolute(project)? }));
     } else {
         println!("Opened {} in the Shotmaxxing editor.", project.display());
+    }
+    Ok(())
+}
+
+fn check_pack(file: &Path, json: bool) -> Result<()> {
+    let pack =
+        shotmaxxing_render::packs::read_file(file).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&pack)?);
+    } else {
+        let count = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        println!(
+            "{}: looks good. “{}” has {} and {}.",
+            file.display(),
+            pack.name,
+            count(pack.wallpapers.len(), "wallpaper", "wallpapers"),
+            count(pack.looks.len(), "look", "looks"),
+        );
+    }
+    Ok(())
+}
+
+fn list_packs(json: bool) -> Result<()> {
+    let packs = shotmaxxing_render::packs::installed();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&packs)?);
+    } else if packs.is_empty() {
+        println!("No content packs are added. Add one in Shotmaxxing's Settings.");
+    } else {
+        for pack in &packs {
+            let ids: Vec<String> = pack.wallpapers.iter().map(|w| pack.wallpaper_id(&w.id)).collect();
+            println!(
+                "{} ({}): {}",
+                pack.name,
+                pack.id,
+                if ids.is_empty() { "looks only".into() } else { ids.join(", ") }
+            );
+        }
     }
     Ok(())
 }

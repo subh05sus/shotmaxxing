@@ -34,8 +34,10 @@
   import { timecode } from '../../lib/format';
   import { settings } from '../../lib/settings.svelte';
   import { WALLPAPERS } from '../../lib/wallpapers';
+  import { loadPacks, lookWallpaper, packWallpaperId, packs } from '../../lib/packs.svelte';
+  import type { ContentPack, PackLook } from '../../lib/native';
   import { go } from '../../lib/router.svelte';
-  import type { EditorState, ToolId } from './store.svelte';
+  import type { Aspect, EditorState, ToolId } from './store.svelte';
 
   let { ed, onhelp }: { ed: EditorState; onhelp: (tool: ToolId) => void } = $props();
 
@@ -57,6 +59,66 @@
       : TITLES[ed.tool],
   );
   const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+  // Content packs add wallpapers and looks. They're read again each time the tool opens, so a pack just added in
+  // Settings shows without a restart.
+  $effect(() => {
+    if (ed.tool === 'background') void loadPacks();
+  });
+  const packLooks = $derived(packs.list.filter((pack) => pack.looks.length > 0));
+  const packWallpapers = $derived(packs.list.filter((pack) => pack.wallpapers.length > 0));
+  /** A pack wallpaper this project keeps a copy of, from a pack that isn't added here: shown so it stays choosable. */
+  const keptWallpaper = $derived(
+    p.canvas.wallpaperCss &&
+      packs.loaded &&
+      !packs.list.some((pack) =>
+        pack.wallpapers.some((w) => packWallpaperId(pack, w.id) === p.canvas.wallpaper),
+      )
+      ? { id: p.canvas.wallpaper, css: p.canvas.wallpaperCss }
+      : null,
+  );
+
+  function chooseWallpaper(id: string, css?: string) {
+    ed.change('Wallpaper', () => {
+      p.canvas.wallpaper = id;
+      p.canvas.wallpaperCss = css;
+    });
+  }
+
+  /** A look's aspect applies only where the editor offers it: Fit is for screenshots. */
+  function lookAspect(look: PackLook): Aspect | null {
+    if (!look.aspect || (look.aspect === 'original' && !ed.still)) return null;
+    return look.aspect as Aspect;
+  }
+
+  function applyLook(pack: ContentPack, look: PackLook) {
+    ed.change(`${look.name} look`, () => {
+      const wallpaper = lookWallpaper(pack, look);
+      if (wallpaper) {
+        p.canvas.wallpaper = wallpaper.id;
+        p.canvas.wallpaperCss = wallpaper.css;
+      }
+      if (look.padding !== undefined) p.canvas.padding = look.padding;
+      if (look.corner_radius !== undefined) p.canvas.radius = look.corner_radius;
+      if (look.shadow !== undefined) p.canvas.shadow = look.shadow;
+      const aspect = lookAspect(look);
+      if (aspect) p.canvas.aspect = aspect;
+    });
+  }
+
+  /** Whether the canvas is set the way `look` sets it. */
+  function lookIsOn(pack: ContentPack, look: PackLook): boolean {
+    const same = (a: number, b: number | undefined) => b === undefined || Math.abs(a - b) < 1e-6;
+    const wallpaper = lookWallpaper(pack, look);
+    const aspect = lookAspect(look);
+    return (
+      (!wallpaper || p.canvas.wallpaper === wallpaper.id) &&
+      same(p.canvas.padding, look.padding) &&
+      same(p.canvas.radius, look.corner_radius) &&
+      same(p.canvas.shadow, look.shadow) &&
+      (!aspect || p.canvas.aspect === aspect)
+    );
+  }
 
   const silenceSeconds = $derived(p.audio.silences.reduce((sum, s) => sum + s.end - s.start, 0));
 
@@ -114,8 +176,36 @@
 
   <div class="scroll-room flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-4 pb-4" data-tour="panel">
     {#if ed.tool === 'background'}
+      {#each packLooks as pack (pack.id)}
+        <p class="eyebrow mt-1">{pack.name} looks</p>
+        <div class="flex flex-wrap gap-1.5 py-1">
+          {#each pack.looks as look (look.id)}
+            {@const on = lookIsOn(pack, look)}
+            <button
+              type="button"
+              aria-pressed={on}
+              class={[
+                'press rounded-full px-3 py-1 text-footnote font-medium',
+                on ? 'bg-accent-tint text-accent-text' : 'bg-fill text-fg hover:bg-fill-hover',
+              ]}
+              onclick={() => applyLook(pack, look)}>{look.name}</button
+            >
+          {/each}
+        </div>
+      {/each}
       <p class="eyebrow mt-1">Wallpaper</p>
       <div class="grid grid-cols-3 gap-2 py-1" role="radiogroup" aria-label="Wallpaper">
+        {#if keptWallpaper}
+          <button
+            type="button"
+            role="radio"
+            aria-checked="true"
+            title="This project's wallpaper, from a content pack that isn't added here"
+            aria-label="This project's wallpaper"
+            class="press-card aspect-[4/3] rounded-[8px] shadow-[var(--elev-1)] ring-2 ring-accent ring-offset-2 ring-offset-surface"
+            style:background={keptWallpaper.css}
+          ></button>
+        {/if}
         {#each WALLPAPERS as w (w.id)}
           <button
             type="button"
@@ -128,10 +218,38 @@
               p.canvas.wallpaper === w.id && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
             ]}
             style:background={w.css}
-            onclick={() => ed.change('Wallpaper', () => (p.canvas.wallpaper = w.id))}
+            onclick={() => chooseWallpaper(w.id)}
           ></button>
         {/each}
       </div>
+      {#each packWallpapers as pack (pack.id)}
+        <p class="eyebrow mt-2">{pack.name}</p>
+        <div class="grid grid-cols-3 gap-2 py-1" role="radiogroup" aria-label="{pack.name} wallpapers">
+          {#each pack.wallpapers as w (w.id)}
+            {@const id = packWallpaperId(pack, w.id)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={p.canvas.wallpaper === id}
+              title={w.name}
+              aria-label={w.name}
+              class={[
+                'press-card aspect-[4/3] rounded-[8px] shadow-[var(--elev-1)]',
+                p.canvas.wallpaper === id && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+              ]}
+              style:background={w.css}
+              onclick={() => chooseWallpaper(id, w.css)}
+            ></button>
+          {/each}
+        </div>
+      {/each}
+      {#if packs.loaded && packs.list.length === 0}
+        <button
+          type="button"
+          class="press mb-1 self-start rounded-[6px] px-1 py-0.5 text-footnote text-fg-muted hover:text-fg"
+          onclick={() => go('home/settings')}>More wallpapers with a content pack</button
+        >
+      {/if}
       <Slider
         label="Padding"
         value={p.canvas.padding}

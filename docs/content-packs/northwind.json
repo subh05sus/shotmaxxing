@@ -1,0 +1,50 @@
+{
+  "shotmaxxing_pack": 1,
+  "id": "northwind",
+  "name": "Northwind",
+  "author": "Northwind Labs",
+  "wallpapers": [
+    {
+      "id": "sunrise",
+      "name": "Sunrise",
+      "css": "radial-gradient(90% 70% at 20% 10%, oklch(0.9 0.1 85) 0%, transparent 60%), linear-gradient(135deg, oklch(0.78 0.14 60), oklch(0.5 0.17 30))"
+    },
+    {
+      "id": "harbour",
+      "name": "Harbour",
+      "css": "radial-gradient(100% 80% at 80% 0%, oklch(0.72 0.1 220) 0%, transparent 65%), linear-gradient(160deg, oklch(0.42 0.09 240), oklch(0.2 0.05 255))"
+    },
+    {
+      "id": "fern",
+      "name": "Fern",
+      "css": "radial-gradient(110% 90% at 10% 90%, oklch(0.75 0.13 150) 0%, transparent 60%), linear-gradient(135deg, oklch(0.45 0.08 170), oklch(0.24 0.04 190))"
+    }
+  ],
+  "looks": [
+    {
+      "id": "launch",
+      "name": "Launch",
+      "wallpaper": "sunrise",
+      "padding": 0.1,
+      "corner_radius": 16,
+      "shadow": 0.7
+    },
+    {
+      "id": "docs",
+      "name": "Docs",
+      "wallpaper": "paper",
+      "padding": 0.06,
+      "corner_radius": 10,
+      "shadow": 0.3,
+      "aspect": "16:9"
+    },
+    {
+      "id": "reel",
+      "name": "Reel",
+      "wallpaper": "harbour",
+      "padding": 0.04,
+      "corner_radius": 24,
+      "aspect": "9:16"
+    }
+  ]
+}

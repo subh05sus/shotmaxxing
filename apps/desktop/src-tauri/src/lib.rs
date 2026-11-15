@@ -8,6 +8,7 @@ mod agents;
 mod captions;
 mod commands;
 mod export;
+mod packs;
 mod platform;
 mod projects;
 mod recording;
@@ -69,6 +70,10 @@ pub fn run() {
             commands::open_window,
             commands::reveal_in_folder,
             commands::show_error,
+            packs::list_packs,
+            packs::add_pack,
+            packs::remove_pack,
+            packs::restore_pack,
             commands::open_link,
             agents::connect_agent,
             agents::disconnect_agent,

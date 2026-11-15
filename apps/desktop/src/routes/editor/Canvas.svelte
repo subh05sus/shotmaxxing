@@ -323,7 +323,10 @@
         style:height="{frame.height}px"
         style:transform
       >
-        <div class="absolute inset-0" style:background={wallpaper(p.canvas.wallpaper).css}></div>
+        <div
+          class="absolute inset-0"
+          style:background={p.canvas.wallpaperCss ?? wallpaper(p.canvas.wallpaper).css}
+        ></div>
         <div
           class="absolute overflow-hidden"
           style:left="{win.x}px"
