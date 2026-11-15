@@ -61,10 +61,11 @@ jobs:
       - run: cargo test --workspace --no-fail-fast
       # Recording needs a desktop that can be captured and Media Foundation's encoder, which hosted runners may
       # lack: this reports how it went without failing the build.
-      - if: runner.os == 'Windows'
+      # These run even when a test above failed, so every run says how recording and UI Automation fare.
+      - if: ${{ !cancelled() && runner.os == 'Windows' }}
         continue-on-error: true
         run: cargo test -p shotmaxxing-capture -- --ignored --nocapture
       # Reads Notepad's controls through UI Automation, also without failing the build.
-      - if: runner.os == 'Windows'
+      - if: ${{ !cancelled() && runner.os == 'Windows' }}
         continue-on-error: true
         run: cargo test -p shotmaxxing-agent -- --ignored --nocapture
