@@ -435,7 +435,7 @@
                     <span class="text-title-3">Nice take</span>
                     <span class="text-callout opacity-80"
                       >{practiceZooms === 0
-                        ? 'Nothing was clicked, so no zooms yet'
+                        ? 'No zooms yet: clicks on buttons, links and fields make them'
                         : `${practiceZooms} ${practiceZooms === 1 ? 'zoom' : 'zooms'} added from your clicks`}</span
                     >
                   </div>

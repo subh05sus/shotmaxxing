@@ -431,7 +431,7 @@ fn record(args: RecordArgs, json: bool) -> Result<()> {
             }))?
         );
     } else {
-        print_summary(&finished.root, &finished.project);
+        print_summary(&finished.root, &finished.project, finished.project.zoom.auto);
         if finished.dropped > 0 {
             println!("  {} frames were dropped; the machine was busy.", finished.dropped);
         }
@@ -442,7 +442,8 @@ fn record(args: RecordArgs, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn print_summary(root: &Path, project: &Project) {
+/// What a project holds. `planned` says its zooms were planned just now, so an empty plan can say why.
+fn print_summary(root: &Path, project: &Project, planned: bool) {
     println!("{}", project.name);
     println!("  {}", root.display());
     println!(
@@ -466,7 +467,12 @@ fn print_summary(root: &Path, project: &Project) {
         println!("  With {}", extras.join(", "));
     }
     if project.zooms.is_empty() {
-        println!("  No zooms: nothing was clicked or typed.");
+        // A saved project's zooms may have been taken out by hand, so only a plan made just now says why.
+        if planned {
+            println!("  No zooms: nothing small enough to zoom in on was clicked or typed into.");
+        } else {
+            println!("  No zooms.");
+        }
     } else {
         println!("  Auto zoom added {}:", project.zooms.len());
         for z in &project.zooms {
@@ -487,7 +493,7 @@ fn info(path: &Path, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&project)?);
     } else {
-        print_summary(bundle.root(), &project);
+        print_summary(bundle.root(), &project, false);
     }
     Ok(())
 }
@@ -497,7 +503,7 @@ fn zoom(path: &Path, depth: ZoomDepth, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&project.zooms)?);
     } else {
-        print_summary(&root, &project);
+        print_summary(&root, &project, true);
     }
     Ok(())
 }
@@ -604,7 +610,7 @@ fn run_take(
         if let Some(reason) = &take.performed.stopped {
             println!("Stopped: {reason}");
         }
-        print_summary(&root, &take.finished.project);
+        print_summary(&root, &take.finished.project, take.finished.project.zoom.auto);
     }
     // A script asks for the editor unless it says otherwise, and the editor is in the app.
     let opened = (take.performed.stopped.is_none() && script.output.mode == OutputMode::Editor)
