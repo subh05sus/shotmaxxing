@@ -29,6 +29,28 @@ function clampCamera(c: Camera, w: number, h: number): Camera {
   return { scale: c.scale, x: clamp(c.x, hw, w - hw), y: clamp(c.y, hh, h - hh) };
 }
 
+/**
+ * When the camera glides from zoom `z` on to the next, `n`: through the gap between them, and over at least one
+ * ramp's time, taken half from each when the gap is shorter (zooms that touch would jump from one to the other), but
+ * never past either zoom's middle.
+ */
+function glide(z: ZoomBlock, n: ZoomBlock, ramp: number): [number, number] {
+  const mid = (z.end + n.start) / 2;
+  const half = Math.max(n.start - z.end, ramp) / 2;
+  const from = Math.max(mid - half, (z.start + z.end) / 2);
+  const to = Math.min(mid + half, (n.start + n.end) / 2);
+  return [from, Math.max(from, to)];
+}
+
+/** Blends two cameras, the scale in log space so a zoom feels even from start to end. */
+function blend(from: Camera, to: Camera, u: number): Camera {
+  return {
+    scale: Math.exp(lerp(Math.log(from.scale), Math.log(to.scale), u)),
+    x: lerp(from.x, to.x, u),
+    y: lerp(from.y, to.y, u),
+  };
+}
+
 export function cameraAt(
   t: number,
   zooms: ZoomBlock[],
@@ -41,45 +63,41 @@ export function cameraAt(
 ): Camera {
   const { width: w, height: h } = size;
   const ramp = motion === 'instant' ? 0.001 : 0.7;
+  const wide: Camera = { scale: 1, x: w / 2, y: h / 2 };
+  const target = (z: ZoomBlock): Camera => {
+    const pulled = follow && cursor;
+    return {
+      scale: Math.max(z.scale, 1e-6),
+      x: pulled ? lerp(z.focus.x, cursor.x, 0.35) : z.focus.x,
+      y: pulled ? lerp(z.focus.y, cursor.y, 0.35) : z.focus.y,
+    };
+  };
   const sorted = [...zooms].sort((a, b) => a.start - b.start);
   for (let i = 0; i < sorted.length; i++) {
     const z = sorted[i];
     const prev = sorted[i - 1];
     const next = sorted[i + 1];
-    const joinPrev = !!prev && z.start - prev.end < GLIDE_GAP;
-    const joinNext = !!next && next.start - z.end < GLIDE_GAP;
-    if (joinNext && t > z.end && t < next.start) {
-      const u = smootherstep((t - z.end) / Math.max(0.001, next.start - z.end));
+    const before = prev && z.start - prev.end < GLIDE_GAP ? prev : null;
+    const after = next && next.start - z.end < GLIDE_GAP ? glide(z, next, ramp) : null;
+    if (after && t > after[0] && t < after[1]) {
       return clampCamera(
-        {
-          scale: Math.exp(lerp(Math.log(z.scale), Math.log(next.scale), u)),
-          x: lerp(z.focus.x, next.focus.x, u),
-          y: lerp(z.focus.y, next.focus.y, u),
-        },
+        blend(target(z), target(next), smootherstep((t - after[0]) / (after[1] - after[0]))),
         w,
         h,
       );
     }
-    if (t < z.start || t > z.end) continue;
-    const length = z.end - z.start;
-    const r = Math.min(ramp, length / 2);
+    // This zoom's own time: from where the glide into it ends to where the glide out of it starts.
+    const start = before ? glide(before, z, ramp)[1] : z.start;
+    const end = after ? after[0] : z.end;
+    if (t < start || t > end) continue;
+    const r = Math.max(Math.min(ramp, (z.end - z.start) / 2), 1e-6);
     const weight = Math.min(
-      joinPrev ? 1 : smootherstep((t - z.start) / r),
-      joinNext ? 1 : smootherstep((z.end - t) / r),
+      before ? 1 : smootherstep((t - z.start) / r),
+      after ? 1 : smootherstep((z.end - t) / r),
     );
-    let fx = z.focus.x;
-    let fy = z.focus.y;
-    if (follow && cursor) {
-      fx = lerp(fx, cursor.x, 0.35);
-      fy = lerp(fy, cursor.y, 0.35);
-    }
-    return clampCamera(
-      { scale: Math.exp(weight * Math.log(z.scale)), x: lerp(w / 2, fx, weight), y: lerp(h / 2, fy, weight) },
-      w,
-      h,
-    );
+    return clampCamera(blend(wide, target(z), weight), w, h);
   }
-  return { scale: 1, x: w / 2, y: h / 2 };
+  return wide;
 }
 
 const minJerk = (u: number) => u * u * u * (10 - 15 * u + 6 * u * u);

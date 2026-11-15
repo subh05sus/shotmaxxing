@@ -189,12 +189,13 @@ pub fn plan_zooms(
         reasons: Vec<String>,
         weight: f64,
     }
+    let ease = u64::from(transition_ms) * 1_000;
     let mut groups: Vec<Group> = Vec::new();
-    // The last moment that can still be zoomed into: eased in, and held a moment before the video ends.
-    let in_time = |m: &Moment| {
-        m.start_us.saturating_sub(lead) + u64::from(transition_ms) * 1_000 + END_HOLD_US <= input.duration_us
-    };
+    // The last moment that can still be zoomed into: zoomed in, held a moment and eased out before the video ends.
+    let in_time = |m: &Moment| m.start_us.saturating_sub(lead) + END_HOLD_US + ease <= input.duration_us;
     for m in moments.into_iter().filter(in_time) {
+        // Zoomed in from `lead` before the activity until `hold` after it. The camera eases in before that and out
+        // after (see below), so it's still while things happen rather than moving through them.
         let start = m.start_us.saturating_sub(lead);
         let end = (m.end_us + hold).min(input.duration_us.max(m.end_us));
         if let Some(last) = groups.last_mut() {
@@ -236,7 +237,8 @@ pub fn plan_zooms(
             Size::new(input.capture.width / scale, input.capture.height / scale),
         )
         .clamp_inside(bounds);
-        let (mut start, mut end) = (g.start, g.end);
+        let (mut start, mut end) =
+            (g.start.saturating_sub(ease), (g.end + ease).min(input.duration_us.max(g.end)));
         if end - start < min_len {
             let grow = (min_len - (end - start)) / 2;
             start = start.saturating_sub(grow);

@@ -213,7 +213,9 @@ out afterwards) and **computer-use mode** (record an agent's own computer-use ac
 
 - **Auto zoom** combines clicks, typing, accessibility focus (the bounds of the control in use), screen-change
   regions and cursor dwell. It frames the whole control or changed region, not just the pointer, merges nearby
-  activity and records a reason for every zoom ("Typing in Search · 2.1x · 1.8 s"). Only what happens on the
+  activity and records a reason for every zoom ("Typing in Search · 2.1x · 1.8 s"). The camera is fully in a
+  moment before the activity and holds through it, easing in before and out after, so the picture is still while
+  things happen; nearby zooms glide from one to the next, and the camera never jumps. Only what happens on the
   recorded area counts: a click beside a recorded window, typing into another app, or a moment too near the end to
   zoom into (the click that stops the take) makes no zoom, and clicks on Shotmaxxing's own windows, which are never
   in the video, aren't recorded at all.

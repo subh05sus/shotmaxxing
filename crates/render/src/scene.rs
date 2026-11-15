@@ -121,55 +121,63 @@ fn clamp_camera(c: Camera, w: f64, h: f64) -> Camera {
     }
 }
 
+/// When the camera glides from zoom `z` on to the next, `n`: through the gap between them, and over at least one
+/// ramp's time, taken half from each when the gap is shorter (zooms that touch would jump from one to the other),
+/// but never past either zoom's middle.
+fn glide(z: &Zoom, n: &Zoom, ramp: f64) -> (f64, f64) {
+    let mid = (z.end + n.start) / 2.0;
+    let half = (n.start - z.end).max(ramp) / 2.0;
+    let from = (mid - half).max((z.start + z.end) / 2.0);
+    let to = (mid + half).min((n.start + n.end) / 2.0);
+    (from, to.max(from))
+}
+
+/// Blends two cameras, the scale in log space so a zoom feels even from start to end.
+fn blend(from: Camera, to: Camera, u: f64) -> Camera {
+    Camera {
+        scale: lerp(from.scale.ln(), to.scale.ln(), u).exp(),
+        x: lerp(from.x, to.x, u),
+        y: lerp(from.y, to.y, u),
+    }
+}
+
 /// The camera at `t` seconds. `zooms` must be sorted by start. `cursor` is used when the camera follows it.
 pub fn camera_at(t: f64, zooms: &[Zoom], capture: Size, instant: bool, cursor: Option<Point>) -> Camera {
     let (w, h) = (capture.width, capture.height);
     let ramp = if instant { 0.001 } else { 0.7 };
-    for (i, z) in zooms.iter().enumerate() {
-        let prev = i.checked_sub(1).map(|j| &zooms[j]);
-        let next = zooms.get(i + 1);
-        let join_prev = prev.is_some_and(|p| z.start - p.end < GLIDE_GAP);
-        let join_next = next.is_some_and(|n| n.start - z.end < GLIDE_GAP);
-        if let Some(n) = next
-            && join_next
-            && t > z.end
-            && t < n.start
-        {
-            let u = smootherstep((t - z.end) / (n.start - z.end).max(0.001));
-            return clamp_camera(
-                Camera {
-                    scale: lerp(z.scale.ln(), n.scale.ln(), u).exp(),
-                    x: lerp(z.focus.x, n.focus.x, u),
-                    y: lerp(z.focus.y, n.focus.y, u),
-                },
-                w,
-                h,
-            );
+    let wide = Camera { scale: 1.0, x: w / 2.0, y: h / 2.0 };
+    let target = |z: &Zoom| {
+        let (mut x, mut y) = (z.focus.x, z.focus.y);
+        if let Some(c) = cursor {
+            x = lerp(x, c.x, 0.35);
+            y = lerp(y, c.y, 0.35);
         }
-        if t < z.start || t > z.end {
+        Camera { scale: z.scale.max(1e-6), x, y }
+    };
+    for (i, z) in zooms.iter().enumerate() {
+        let before = i.checked_sub(1).map(|j| &zooms[j]).filter(|p| z.start - p.end < GLIDE_GAP);
+        let next = zooms.get(i + 1).filter(|n| n.start - z.end < GLIDE_GAP);
+        let after = next.map(|n| glide(z, n, ramp));
+        if let (Some(n), Some((from, to))) = (next, after)
+            && t > from
+            && t < to
+        {
+            return clamp_camera(blend(target(z), target(n), smootherstep((t - from) / (to - from))), w, h);
+        }
+        // This zoom's own time: from where the glide into it ends to where the glide out of it starts.
+        let start = before.map_or(z.start, |p| glide(p, z, ramp).1);
+        let end = after.map_or(z.end, |(from, _)| from);
+        if t < start || t > end {
             continue;
         }
         let r = f64::min(ramp, (z.end - z.start) / 2.0).max(1e-6);
         let weight = f64::min(
-            if join_prev { 1.0 } else { smootherstep((t - z.start) / r) },
-            if join_next { 1.0 } else { smootherstep((z.end - t) / r) },
+            if before.is_some() { 1.0 } else { smootherstep((t - z.start) / r) },
+            if after.is_some() { 1.0 } else { smootherstep((z.end - t) / r) },
         );
-        let (mut fx, mut fy) = (z.focus.x, z.focus.y);
-        if let Some(c) = cursor {
-            fx = lerp(fx, c.x, 0.35);
-            fy = lerp(fy, c.y, 0.35);
-        }
-        return clamp_camera(
-            Camera {
-                scale: (weight * z.scale.max(1e-6).ln()).exp(),
-                x: lerp(w / 2.0, fx, weight),
-                y: lerp(h / 2.0, fy, weight),
-            },
-            w,
-            h,
-        );
+        return clamp_camera(blend(wide, target(z), weight), w, h);
     }
-    Camera { scale: 1.0, x: w / 2.0, y: h / 2.0 }
+    wide
 }
 
 /// How the camera layer maps onto the frame: a point `p` lands at `(tx + scale·p.x, ty + scale·p.y)`.
@@ -316,6 +324,29 @@ mod tests {
         let zooms = [zoom(1.0, 3.0, 2.0, 400.0, 300.0), zoom(3.5, 6.0, 3.0, 1200.0, 700.0)];
         let between = camera_at(3.25, &zooms, CAPTURE, false, None);
         assert!(between.scale > 2.0 && between.scale < 3.0, "{between:?}");
+    }
+
+    #[test]
+    fn the_camera_never_jumps() {
+        // Zooms that touch (auto zoom trims overlaps so), nearly touch, overlap, sit apart, and a short one alone.
+        let cases = [
+            vec![zoom(1.0, 3.0, 2.0, 400.0, 300.0), zoom(3.0, 5.0, 3.0, 1200.0, 700.0)],
+            vec![zoom(1.0, 3.0, 2.0, 400.0, 300.0), zoom(3.1, 5.0, 1.5, 1300.0, 200.0)],
+            vec![zoom(1.0, 3.4, 2.0, 400.0, 300.0), zoom(3.0, 5.0, 2.5, 1200.0, 700.0)],
+            vec![zoom(1.0, 3.0, 2.0, 400.0, 300.0), zoom(6.0, 8.0, 2.0, 1200.0, 700.0)],
+            vec![zoom(1.0, 1.6, 2.4, 300.0, 200.0)],
+        ];
+        for zooms in &cases {
+            let mut last = camera_at(0.0, zooms, CAPTURE, false, None);
+            for step in 1..=9_000 {
+                let t = f64::from(step) / 1_000.0;
+                let now = camera_at(t, zooms, CAPTURE, false, None);
+                let (scale, moved) =
+                    ((now.scale.ln() - last.scale.ln()).abs(), (now.x - last.x).hypot(now.y - last.y));
+                assert!(scale < 0.01 && moved < 6.0, "{t}s: {last:?} to {now:?} in {zooms:?}");
+                last = now;
+            }
+        }
     }
 
     #[test]

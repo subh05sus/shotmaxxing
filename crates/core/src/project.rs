@@ -391,9 +391,9 @@ impl ZoomMotion {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ZoomTuning {
-    /// Start a zoom this long before the activity.
+    /// Be zoomed in this long before the activity. The camera eases in before that.
     pub lead_ms: u32,
-    /// Keep the zoom this long after the activity.
+    /// Stay zoomed in this long after the activity, then ease out.
     pub hold_ms: u32,
     /// Activity closer than this in time joins one zoom.
     pub merge_gap_ms: u32,
