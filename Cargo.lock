@@ -3932,6 +3932,7 @@ dependencies = [
  "serde_json",
  "shotmaxxing-core",
  "tempfile",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
