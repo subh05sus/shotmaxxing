@@ -273,7 +273,16 @@ unsafe fn crop_for(content: &SCShareableContent, window: &SCWindow) -> Option<fo
             })
             .collect();
         let rect = window::reach(placed.bounds, top, &[display]);
-        Some(follow::Crop { app, excepted, screens, screen, window: placed.bounds, top, rect })
+        Some(follow::Crop {
+            app,
+            helpers: Vec::new(),
+            excepted,
+            screens,
+            screen,
+            window: placed.bounds,
+            top,
+            rect,
+        })
     }
 }
 

@@ -6,12 +6,17 @@
 //! resized, parked in Stage Manager's strip, minimised, or on another desktop) the take holds its last picture:
 //! frames are let go, and the video shows the window still, as a recording of the window by itself would. Once the
 //! window has been still for a moment, the crop moves there and frames flow again.
+//!
+//! Some apps open menus and panels from another process: each System Settings pane is an app extension of its own
+//! that draws its own menus, and a sandboxed app's save panel is an XPC service's window. About ten times a second
+//! the thread also looks at what's open over the window, and a helper like that ([`window::helper`]) is drawn with
+//! the take from then on. Other apps aren't, and nor is anything that shows passwords.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::sync_channel;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use block2::{DynBlock, RcBlock};
 use objc2::AllocAnyThread;
@@ -30,6 +35,9 @@ const STILL: u32 = 2;
 /// Frames captured this long after the stream says the crop moved can still show it where it was (the first frame
 /// cropped anew came 26 ms after, in a test), so they're let go too.
 const SETTLING: f64 = 0.15;
+/// Every how many readings what's open over the window is looked at: about ten times a second, each a list of the
+/// windows showing (0.3 ms in a test), so a menu shows in the take a tenth of a second or so after it opens.
+const LOOK_EVERY: u32 = 3;
 
 /// Whether a frame belongs in the take, shared by the follower and the stream's output.
 #[derive(Default)]
@@ -77,6 +85,9 @@ pub(super) struct Screen {
 /// keeps the window still and full size, and shows what opens inside it, cut at its edge.
 pub(super) struct Crop {
     pub app: Retained<SCRunningApplication>,
+    /// Helpers of the app that opened something over the window during the take ([`window::helper`]), drawn with it
+    /// from then on.
+    pub helpers: Vec<Retained<SCRunningApplication>>,
     /// The app's other windows that were open when the take started, left out as they would be from a recording of
     /// the window alone. Menus, sheets and popovers open later, so they show.
     pub excepted: Vec<Retained<SCWindow>>,
@@ -93,9 +104,9 @@ pub(super) struct Crop {
 }
 
 impl Crop {
-    /// The app's windows on the display, but for the ones left out.
+    /// The app's windows on the display, and its helpers', but for the ones left out.
     pub fn filter(&self) -> Retained<SCContentFilter> {
-        filter_for(&self.screens[self.screen].display, &self.app, &self.excepted)
+        filter_for(&self.screens[self.screen].display, &self.app, &self.helpers, &self.excepted)
     }
 
     /// The crop in its display's own points, as a stream's source rect.
@@ -107,14 +118,16 @@ impl Crop {
 fn filter_for(
     display: &SCDisplay,
     app: &Retained<SCRunningApplication>,
+    helpers: &[Retained<SCRunningApplication>],
     excepted: &[Retained<SCWindow>],
 ) -> Retained<SCContentFilter> {
+    let apps = [std::slice::from_ref(app), helpers].concat();
     // SAFETY: a new filter from live ScreenCaptureKit objects.
     unsafe {
         SCContentFilter::initWithDisplay_includingApplications_exceptingWindows(
             SCContentFilter::alloc(),
             display,
-            &NSArray::from_retained_slice(std::slice::from_ref(app)),
+            &NSArray::from_retained_slice(&apps),
             &NSArray::from_retained_slice(excepted),
         )
     }
@@ -163,6 +176,11 @@ struct Following {
     size: (f64, f64),
     stage_manager: bool,
     gate: Arc<Gate>,
+    /// Processes already looked at for drawing with the take: its app, Shotmaxxing, the helpers drawn, and others
+    /// that had a window over it.
+    judged: Vec<i32>,
+    /// When to look again for a helper ScreenCaptureKit didn't list yet.
+    retry_at: Instant,
 }
 
 // SAFETY: ScreenCaptureKit's stream, filter and shareable-content objects may be used from any thread (their work is
@@ -180,8 +198,20 @@ impl Follower {
         gate: Arc<Gate>,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
-        let following =
-            Following { stream, crop, settings, id, size, stage_manager: window::stage_manager_on(), gate };
+        // SAFETY: read-only property access on a live ScreenCaptureKit object.
+        let mut judged = vec![unsafe { crop.app.processID() }];
+        judged.extend(window::left_out_processes());
+        let following = Following {
+            stream,
+            crop,
+            settings,
+            id,
+            size,
+            stage_manager: window::stage_manager_on(),
+            gate,
+            judged,
+            retry_at: Instant::now(),
+        };
         let flag = Arc::clone(&stop);
         let thread = std::thread::Builder::new()
             .name("smx-window-follow".into())
@@ -204,6 +234,7 @@ impl Drop for Follower {
 fn run(mut f: Following, stop: &AtomicBool) {
     // The last frame read, and how many readings in a row it has held.
     let (mut last, mut still): (Option<CGRect>, u32) = (None, 0);
+    let mut readings: u32 = 0;
     while !stop.load(Ordering::Relaxed) {
         std::thread::sleep(EVERY);
         let shown = window::placed(f.id).filter(|placed| {
@@ -228,6 +259,10 @@ fn run(mut f: Following, stop: &AtomicBool) {
             if f.gate.is_held() && still >= 1 {
                 tracing::debug!(id = f.id, "the window is back under the crop");
                 f.gate.open_from(clock::now());
+            }
+            readings = readings.wrapping_add(1);
+            if readings.is_multiple_of(LOOK_EVERY) {
+                draw_helpers(&mut f);
             }
             continue;
         }
@@ -265,7 +300,7 @@ fn move_crop(
     settings: &StreamSettings,
 ) -> bool {
     if screen != crop.screen {
-        let filter = filter_for(&crop.screens[screen].display, &crop.app, &crop.excepted);
+        let filter = filter_for(&crop.screens[screen].display, &crop.app, &crop.helpers, &crop.excepted);
         // SAFETY: a running stream and a valid filter; the block lives until the call returns, and the framework
         // copies it.
         if !applied(|done| unsafe { stream.updateContentFilter_completionHandler(&filter, Some(done)) }) {
@@ -282,6 +317,47 @@ fn move_crop(
     }
     (crop.window, crop.rect) = (window, area);
     true
+}
+
+/// Draws with the take a helper of its app ([`window::helper`]) that has just opened something over the window,
+/// such as a System Settings pane's menu. A crop of System Settings alone showed none of its panes' menus.
+fn draw_helpers(f: &mut Following) {
+    if Instant::now() < f.retry_at {
+        return;
+    }
+    let fresh = window::in_front_of(f.id, f.crop.rect, &f.judged);
+    if fresh.is_empty() {
+        return;
+    }
+    let (helpers, others): (Vec<i32>, Vec<i32>) = fresh.into_iter().partition(|&pid| window::helper(pid));
+    f.judged.extend(others);
+    if helpers.is_empty() {
+        return;
+    }
+    // ScreenCaptureKit lists a process once it has a window; one it doesn't list yet is looked for again soon.
+    let listed: Vec<Retained<SCRunningApplication>> = match super::shareable_content(true) {
+        // SAFETY: read-only property access on objects owned by `content`.
+        Ok(content) => unsafe {
+            content.applications().iter().filter(|app| helpers.contains(&app.processID())).collect()
+        },
+        Err(_) => Vec::new(),
+    };
+    if listed.is_empty() {
+        f.retry_at = Instant::now() + Duration::from_secs(1);
+        return;
+    }
+    let all = [f.crop.helpers.as_slice(), listed.as_slice()].concat();
+    let filter = filter_for(&f.crop.screens[f.crop.screen].display, &f.crop.app, &all, &f.crop.excepted);
+    // SAFETY: a running stream and a valid filter; the block lives until the call returns, and the framework copies
+    // it.
+    if applied(|done| unsafe { f.stream.updateContentFilter_completionHandler(&filter, Some(done)) }) {
+        // SAFETY: read-only property access on live ScreenCaptureKit objects.
+        f.judged.extend(listed.iter().map(|app| unsafe { app.processID() }));
+        tracing::debug!(id = f.id, ?helpers, "a helper's windows are drawn with the take");
+        f.crop.helpers = all;
+    } else {
+        f.retry_at = Instant::now() + Duration::from_secs(1);
+    }
 }
 
 /// Makes a change through `call`, which hands the block it's given to ScreenCaptureKit, and waits up to a second for

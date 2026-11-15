@@ -20,16 +20,17 @@ use shotmaxxing_core::telemetry::{
 };
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetDoubleClickTime, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetCursorPos, GetMessageW, GetSystemMetrics, HC_ACTION, KBDLLHOOKSTRUCT, MSG,
-    MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, SM_CXDOUBLECLK, SM_CYDOUBLECLK,
-    SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN,
-    WM_RBUTTONUP, WM_SYSKEYDOWN, WM_USER,
+    CallNextHookEx, GA_ROOT, GetAncestor, GetCursorPos, GetMessageW, GetSystemMetrics,
+    GetWindowThreadProcessId, HC_ACTION, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW,
+    PostThreadMessageW, SM_CXDOUBLECLK, SM_CYDOUBLECLK, SetWindowsHookExW, UnhookWindowsHookEx,
+    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEHWHEEL, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_USER,
+    WindowFromPoint,
 };
 
 use super::clock;
@@ -59,6 +60,9 @@ struct Hooked {
     events: Mutex<Vec<Raw>>,
     /// The last press, to count double and triple clicks the way Windows does.
     last_press: Mutex<Option<(f64, POINT, MouseButton, u8)>>,
+    /// Whether each button's last press (left, right, middle) was on one of Shotmaxxing's own windows, so its
+    /// release is left out too.
+    dropped: [AtomicBool; 3],
 }
 
 pub struct Telemetry {
@@ -75,8 +79,11 @@ impl Telemetry {
     /// Starts recording input over an area whose top left is `origin` (pixels), at `scale` pixels per point.
     pub fn start(origin: (i32, i32), scale: f64) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
-        let state =
-            Arc::new(Hooked { events: Mutex::new(Vec::with_capacity(1024)), last_press: Mutex::new(None) });
+        let state = Arc::new(Hooked {
+            events: Mutex::new(Vec::with_capacity(1024)),
+            last_press: Mutex::new(None),
+            dropped: Default::default(),
+        });
         if let Ok(mut hooked) = HOOKED.lock() {
             *hooked = Some(state.clone());
         }
@@ -232,11 +239,28 @@ fn record_mouse(message: u32, info: &MSLLHOOKSTRUCT) {
     let at = clock::now();
     let (x, y) = (f64::from(info.pt.x), f64::from(info.pt.y));
     let source = source_of(info.dwExtraInfo);
+    let slot = match button {
+        MouseButton::Left => 0,
+        MouseButton::Right => 1,
+        MouseButton::Middle => 2,
+    };
     let raw = match message {
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+            // Shotmaxxing's own windows (the recording pill, the take card, their menus) are never in a take, so a
+            // click on one isn't either: it would ripple on, and be zoomed into, nothing.
+            let ours = ours_at(info.pt);
+            state.dropped[slot].store(ours, Ordering::Relaxed);
+            if ours {
+                return;
+            }
             Raw::Down { at, x, y, button, clicks: count_click(&state, at, info.pt, button), source }
         }
-        WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP => Raw::Up { at, x, y, button, source },
+        WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP => {
+            if state.dropped[slot].swap(false, Ordering::Relaxed) {
+                return;
+            }
+            Raw::Up { at, x, y, button, source }
+        }
         _ => {
             // The wheel's turn is the high word: 120 for each notch, forward (up) positive.
             let notches = f64::from((info.mouseData >> 16) as u16 as i16) / 120.0;
@@ -247,6 +271,23 @@ fn record_mouse(message: u32, info: &MSLLHOOKSTRUCT) {
     };
     if let Ok(mut events) = state.events.lock() {
         events.push(raw);
+    }
+}
+
+/// Whether the window at `point`, in pixels, is one of Shotmaxxing's own. A web page's window inside it can belong
+/// to the WebView2 process, so this goes by the top-level window it's in.
+fn ours_at(point: POINT) -> bool {
+    // SAFETY: window-manager queries that change nothing. With no window at the point the handle is null, and a
+    // null handle belongs to no process.
+    unsafe {
+        let window = WindowFromPoint(point);
+        if window.is_invalid() {
+            return false;
+        }
+        let root = GetAncestor(window, GA_ROOT);
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(if root.is_invalid() { window } else { root }, Some(&raw mut pid));
+        pid == GetCurrentProcessId()
     }
 }
 

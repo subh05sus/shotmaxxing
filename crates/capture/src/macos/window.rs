@@ -107,8 +107,16 @@ fn showing() -> Vec<(u32, i64, Placed)> {
 
 /// The process whose window is in front at `point`, on the desktop in points, when one shows there.
 pub fn owner_at(point: CGPoint) -> Option<i32> {
-    showing()
-        .into_iter()
+    front_owner(&showing(), &displays(), point)
+}
+
+/// Whose window, of `windows` front to back, is in front at `point`. A window above the usual layer that covers a
+/// whole display is passed over: that's an overlay clicks go through. The Dock keeps one over every screen, on a
+/// layer above the recording pill's, so without this every click would seem to be on the Dock.
+fn front_owner(windows: &[(u32, i64, Placed)], displays: &[CGRect], point: CGPoint) -> Option<i32> {
+    windows
+        .iter()
+        .filter(|(_, layer, w)| *layer <= 0 || !displays.iter().any(|&display| near(w.bounds, display)))
         .find(|(_, _, w)| {
             let b = w.bounds;
             point.x >= b.origin.x
@@ -132,6 +140,60 @@ pub fn left_out_processes() -> Vec<i32> {
     pids.sort_unstable();
     pids.dedup();
     pids
+}
+
+/// The processes, other than those in `skip`, with a window in front of window `id` and over `area`: who has
+/// something open over a window take (a menu, a sheet), front to back. None when the window isn't showing.
+pub fn in_front_of(id: u32, area: CGRect, skip: &[i32]) -> Vec<i32> {
+    front_of(&showing(), id, area, skip)
+}
+
+fn front_of(windows: &[(u32, i64, Placed)], id: u32, area: CGRect, skip: &[i32]) -> Vec<i32> {
+    let Some(at) = windows.iter().position(|&(number, ..)| number == id) else { return Vec::new() };
+    let mut pids = Vec::new();
+    for (_, _, w) in &windows[..at] {
+        if !skip.contains(&w.pid) && !pids.contains(&w.pid) && overlap(w.bounds, area) {
+            pids.push(w.pid);
+        }
+    }
+    pids
+}
+
+/// Whether two frames share any area.
+fn overlap(a: CGRect, b: CGRect) -> bool {
+    a.origin.x < b.origin.x + b.size.width
+        && b.origin.x < a.origin.x + a.size.width
+        && a.origin.y < b.origin.y + b.size.height
+        && b.origin.y < a.origin.y + a.size.height
+}
+
+unsafe extern "C" {
+    /// libproc's: the path of process `pid`'s executable, written into `buffer`. Its length, or 0 when unknown.
+    fn proc_pidpath(pid: i32, buffer: *mut std::ffi::c_void, size: u32) -> i32;
+}
+
+/// Whether process `pid` is a helper an app shows some of its interface through: an app extension (each System
+/// Settings pane is one, and draws its own menus) or an XPC service (a sandboxed app's open and save panel).
+pub fn helper(pid: i32) -> bool {
+    let mut buffer = [0u8; 4096];
+    // SAFETY: the buffer is as long as the size given.
+    let length = unsafe { proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    let Ok(length) = usize::try_from(length) else { return false };
+    std::str::from_utf8(&buffer[..length.min(buffer.len())]).is_ok_and(helper_path)
+}
+
+/// Whether the executable at `path` is a helper ([`helper`]). Never one that shows or asks for passwords (AutoFill,
+/// the password prompt, Touch ID): a window take leaves those out, as it always has.
+fn helper_path(path: &str) -> bool {
+    const PRIVATE: [&str; 6] = [
+        "AutoFill",
+        "AuthenticationServices",
+        "Password",
+        "Keychain",
+        "SecurityAgent",
+        "LocalAuthentication",
+    ];
+    (path.contains(".appex/") || path.contains(".xpc/")) && !PRIVATE.iter().any(|word| path.contains(word))
 }
 
 /// The displays' frames on the desktop, in points from the top left of the main display.
@@ -459,6 +521,65 @@ mod tests {
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
         CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+    }
+
+    #[test]
+    fn clicks_go_through_overlays_that_cover_a_whole_display() {
+        let display = rect(0.0, 0.0, 1470.0, 956.0);
+        let shown = |bounds, pid| Placed { bounds, on_screen: true, pid };
+        // Front to back, as the window server lists them: the Dock's overlay over the whole screen and the Dock
+        // itself, both on layer 20, the recording pill on layer 5, and an app's window.
+        let windows = [
+            (39, 20, shown(display, 1270)),
+            (40, 20, shown(rect(400.0, 880.0, 670.0, 76.0), 1270)),
+            (10524, 5, shown(rect(555.0, 33.0, 360.0, 84.0), 55620)),
+            (10529, 0, shown(rect(55.0, 33.0, 1249.0, 860.0), 42)),
+        ];
+        let at = |x, y| front_owner(&windows, &[display], CGPoint::new(x, y));
+        assert_eq!(at(818.8, 71.0), Some(55620), "the pill, under the Dock's overlay");
+        assert_eq!(at(700.0, 900.0), Some(1270), "the Dock");
+        assert_eq!(at(300.0, 500.0), Some(42), "the app");
+        assert_eq!(at(10.0, 940.0), None, "the desktop");
+        // A full-screen app's window covers the display too, but on the usual layer: clicks go to it.
+        let full = [(39, 20, shown(display, 1270)), (7, 0, shown(display, 42))];
+        assert_eq!(front_owner(&full, &[display], CGPoint::new(10.0, 10.0)), Some(42));
+    }
+
+    #[test]
+    fn whats_open_over_a_window_is_told_by_who_owns_it() {
+        let shown = |bounds, pid| Placed { bounds, on_screen: true, pid };
+        let window = rect(384.0, 152.0, 740.0, 625.0);
+        // Front to back: the Dock's overlay, a pane's menu over the window's top edge, the recording pill (ours),
+        // a menu elsewhere on the screen, the window itself, and another app's window behind it.
+        let windows = [
+            (39, 20, shown(rect(0.0, 0.0, 1470.0, 956.0), 1270)),
+            (900, 101, shown(rect(950.0, 60.0, 200.0, 260.0), 25035)),
+            (10524, 5, shown(rect(555.0, 33.0, 360.0, 84.0), 55620)),
+            (901, 101, shown(rect(20.0, 800.0, 150.0, 90.0), 31337)),
+            (10308, 0, shown(window, 600)),
+            (77, 0, shown(rect(300.0, 300.0, 600.0, 400.0), 700)),
+        ];
+        assert_eq!(front_of(&windows, 10308, window, &[600, 55620]), vec![1270, 25035]);
+        assert_eq!(front_of(&windows, 10308, window, &[600, 55620, 1270, 25035]), Vec::<i32>::new());
+        assert!(front_of(&windows, 4242, window, &[]).is_empty(), "a window that isn't showing");
+    }
+
+    #[test]
+    fn helpers_are_app_extensions_and_xpc_services_but_never_password_ones() {
+        assert!(helper_path(
+            "/System/Library/ExtensionKit/Extensions/Bluetooth.appex/Contents/MacOS/Bluetooth"
+        ));
+        assert!(helper_path(
+            "/System/Library/Frameworks/AppKit.framework/Versions/C/XPCServices/com.apple.appkit.xpc.openAndSavePanelService.xpc/Contents/MacOS/com.apple.appkit.xpc.openAndSavePanelService"
+        ));
+        assert!(!helper_path("/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock"), "an app");
+        assert!(!helper_path("/Applications/Notes.app/Contents/MacOS/Notes"), "an app");
+        assert!(!helper_path(
+            "/System/Library/Frameworks/AuthenticationServices.framework/XPCServices/AutoFillPanelService.xpc/Contents/MacOS/AutoFillPanelService"
+        ));
+        assert!(!helper_path(
+            "/System/Library/Frameworks/Security.framework/Versions/A/MachServices/SecurityAgent.bundle/Contents/MacOS/SecurityAgent"
+        ));
     }
 
     #[test]
