@@ -1,23 +1,31 @@
-//! The computer's sound and microphones on Windows, through WASAPI: the default output device's loopback for the
-//! computer's sound, and the microphone's own stream. Windows converts both to 48 kHz float on the way, and Media
-//! Foundation writes them as AAC in an `.m4a`, timed on the same clock as the screen's frames.
+//! The computer's sound and microphones on Windows, through WASAPI: a loopback of everything that plays except this
+//! app (process loopback, on Windows 11 and Server 2022 or later; elsewhere the default output device's loopback,
+//! which hears this app too), and the microphone's own stream. Windows converts both to 48 kHz float on the way, and
+//! Media Foundation writes them as AAC in an `.m4a`, timed on the same clock as the screen's frames.
 //!
-//! The loopback sends nothing while nothing plays, so the gaps are filled with silence from the packets' times.
+//! A loopback sends nothing while nothing plays, so the gaps are filled with silence from the packets' times.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Sender, channel};
+use std::sync::mpsc::{Sender, SyncSender, channel, sync_channel};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
-use windows::Win32::Foundation::E_ACCESSDENIED;
+use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, HANDLE};
 use windows::Win32::Media::Audio::{
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
     AUDCLNT_STREAMFLAGS_LOOPBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, DEVICE_STATE_ACTIVE,
     IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX,
     eCapture, eConsole, eRender,
+};
+use windows::Win32::Media::Audio::{
+    AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0,
+    AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
+    ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
+    IActivateAudioInterfaceCompletionHandler, IActivateAudioInterfaceCompletionHandler_Impl,
+    PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
 };
 use windows::Win32::Media::MediaFoundation::{
     IMFSinkWriter, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, MF_MT_AUDIO_BITS_PER_SAMPLE,
@@ -26,9 +34,14 @@ use windows::Win32::Media::MediaFoundation::{
     MFAudioFormat_PCM, MFCreateAttributes, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample,
     MFCreateSinkWriterFromURL, MFMediaType_Audio, MFTranscodeContainerType_MPEG4,
 };
-use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc};
-use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance, CoTaskMemFree, STGM_READ};
-use windows::core::{HSTRING, IUnknown, PWSTR};
+use windows::Win32::System::Com::StructuredStorage::{
+    PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0, PropVariantClear,
+    PropVariantToStringAlloc,
+};
+use windows::Win32::System::Com::{BLOB, CLSCTX_ALL, CoCreateInstance, CoTaskMemFree, STGM_READ};
+use windows::Win32::System::Threading::CreateEventW;
+use windows::Win32::System::Variant::VT_BLOB;
+use windows::core::{HRESULT, HSTRING, IUnknown, Interface, PWSTR, Ref, implement};
 
 use super::record::start_systems;
 use crate::Device;
@@ -130,8 +143,77 @@ fn message(error: &windows::core::Error) -> String {
     error.message()
 }
 
+/// Tells the waiting thread that Windows has finished making the process loopback client.
+#[implement(IActivateAudioInterfaceCompletionHandler)]
+struct Activated(SyncSender<()>);
+
+impl IActivateAudioInterfaceCompletionHandler_Impl for Activated_Impl {
+    fn ActivateCompleted(
+        &self,
+        _operation: Ref<IActivateAudioInterfaceAsyncOperation>,
+    ) -> windows::core::Result<()> {
+        let _ = self.0.try_send(());
+        Ok(())
+    }
+}
+
+/// A loopback client for everything that plays except this app and the processes it started, or why Windows
+/// can't make one (it's new in Windows 11 and Server 2022).
+fn process_loopback() -> Result<IAudioClient, String> {
+    // On the heap, and kept if Windows doesn't answer in time, as it may still read them afterwards.
+    let mut params = Box::new(AUDIOCLIENT_ACTIVATION_PARAMS {
+        ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+        Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
+            ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+                TargetProcessId: std::process::id(),
+                ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+            },
+        },
+    });
+    let blob = Box::new(PROPVARIANT {
+        Anonymous: PROPVARIANT_0 {
+            Anonymous: std::mem::ManuallyDrop::new(PROPVARIANT_0_0 {
+                vt: VT_BLOB,
+                wReserved1: 0,
+                wReserved2: 0,
+                wReserved3: 0,
+                Anonymous: PROPVARIANT_0_0_0 {
+                    blob: BLOB {
+                        cbSize: size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32,
+                        pBlobData: (&raw mut *params).cast(),
+                    },
+                },
+            }),
+        },
+    });
+    let (done, finished) = sync_channel(1);
+    let handler: IActivateAudioInterfaceCompletionHandler = Activated(done).into();
+    // SAFETY: the parameters and the PROPVARIANT pointing at them stay alive until Windows is done with them.
+    unsafe {
+        let operation = ActivateAudioInterfaceAsync(
+            VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+            &IAudioClient::IID,
+            Some(&raw const *blob),
+            &handler,
+        )
+        .map_err(|e| message(&e))?;
+        if finished.recv_timeout(Duration::from_secs(5)).is_err() {
+            std::mem::forget((params, blob));
+            return Err("Windows didn't finish setting up the sound recording".into());
+        }
+        let (mut result, mut activated) = (HRESULT(0), None);
+        operation.GetActivateResult(&mut result, &mut activated).map_err(|e| message(&e))?;
+        result.ok().map_err(|e| message(&e))?;
+        activated.ok_or("Windows made no sound client")?.cast::<IAudioClient>().map_err(|e| message(&e))
+    }
+}
+
+/// A started stream: its client, what reads it, the file, and the event an event-driven client signals (closed when
+/// the stream stops).
+type Prepared = (IAudioClient, IAudioCaptureClient, AacWriter, Option<HANDLE>);
+
 /// The device, its stream and the file, started.
-fn prepare(source: &Source, path: &Path) -> Result<(IAudioClient, IAudioCaptureClient, AacWriter), String> {
+fn prepare(source: &Source, path: &Path) -> Result<Prepared, String> {
     start_systems().map_err(|e| e.to_string())?;
     let microphone = matches!(source, Source::Microphone(_));
     let missing = |_: windows::core::Error| {
@@ -154,7 +236,6 @@ fn prepare(source: &Source, path: &Path) -> Result<(IAudioClient, IAudioCaptureC
                 .GetDevice(&HSTRING::from(id.as_str()))
                 .map_err(|_| "that microphone isn't connected".to_string())?,
         };
-        let client: IAudioClient = device.Activate(CLSCTX_ALL, None).map_err(|e| message(&e))?;
         let channels: u16 = if microphone { 1 } else { 2 };
         let format = WAVEFORMATEX {
             wFormatTag: FLOAT,
@@ -170,26 +251,82 @@ fn prepare(source: &Source, path: &Path) -> Result<(IAudioClient, IAudioCaptureC
         if !microphone {
             flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
         }
-        // A second of buffer: far more than the 10 ms between reads.
-        client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 10_000_000, 0, &format, None).map_err(|e| {
-            if e.code() == E_ACCESSDENIED && microphone {
-                "the microphone isn't allowed: turn on microphone access for desktop apps in Settings › Privacy & \
-                 security › Microphone"
-                    .to_string()
-            } else {
-                message(&e)
+        // The computer's sound leaves this app's own out where Windows can (process loopback, event-driven as
+        // Windows' own sample and Chromium run it); elsewhere the whole output is recorded.
+        let leaving_out = if microphone {
+            None
+        } else {
+            match process_loopback().and_then(|client| {
+                let event = CreateEventW(None, false, false, None).map_err(|e| message(&e))?;
+                // The flags of Windows' own process loopback sample.
+                let process_flags = AUDCLNT_STREAMFLAGS_LOOPBACK
+                    | AUDCLNT_STREAMFLAGS_EVENTCALLBACK
+                    | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM;
+                let started = client
+                    .Initialize(AUDCLNT_SHAREMODE_SHARED, process_flags, 10_000_000, 0, &format, None)
+                    .and_then(|()| client.SetEventHandle(event));
+                match started {
+                    Ok(()) => Ok((client, event)),
+                    Err(error) => {
+                        let _ = CloseHandle(event);
+                        Err(message(&error))
+                    }
+                }
+            }) {
+                Ok(started) => Some(started),
+                Err(why) => {
+                    tracing::info!(%why, "recording all of the computer's sound, this app's too");
+                    None
+                }
             }
-        })?;
-        let capture: IAudioCaptureClient = client.GetService().map_err(|e| message(&e))?;
-        let writer = AacWriter::new(path, channels)?;
-        client.Start().map_err(|e| message(&e))?;
-        Ok((client, capture, writer))
+        };
+        let (client, event) = match leaving_out {
+            Some((client, event)) => (client, Some(event)),
+            None => {
+                let client: IAudioClient = device.Activate(CLSCTX_ALL, None).map_err(|e| message(&e))?;
+                // A second of buffer: far more than the 10 ms between reads.
+                client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 10_000_000, 0, &format, None).map_err(|e| {
+                    if e.code() == E_ACCESSDENIED && microphone {
+                        "the microphone isn't allowed: turn on microphone access for desktop apps in Settings › \
+                         Privacy & security › Microphone"
+                            .to_string()
+                    } else {
+                        message(&e)
+                    }
+                })?;
+                (client, None)
+            }
+        };
+        let close = |event: Option<HANDLE>| {
+            if let Some(event) = event {
+                let _ = CloseHandle(event);
+            }
+        };
+        let capture: IAudioCaptureClient = match client.GetService() {
+            Ok(capture) => capture,
+            Err(error) => {
+                close(event);
+                return Err(message(&error));
+            }
+        };
+        let writer = match AacWriter::new(path, channels) {
+            Ok(writer) => writer,
+            Err(error) => {
+                close(event);
+                return Err(error);
+            }
+        };
+        if let Err(error) = client.Start() {
+            close(event);
+            return Err(message(&error));
+        }
+        Ok((client, capture, writer, event))
     }
 }
 
 /// Records until asked to stop, reading what has arrived every 10 ms.
 fn run(source: &Source, path: &PathBuf, stop: &AtomicBool, ready: &Sender<Result<(), String>>) -> Heard {
-    let (client, capture, mut writer) = match prepare(source, path) {
+    let (client, capture, mut writer, event) = match prepare(source, path) {
         Ok(parts) => {
             let _ = ready.send(Ok(()));
             parts
@@ -217,8 +354,15 @@ fn run(source: &Source, path: &PathBuf, stop: &AtomicBool, ready: &Sender<Result
                     capture
                         .GetBuffer(&mut data, &mut count, &mut flags, None, Some(&raw mut qpc))
                         .map_err(|e| message(&e))?;
-                    // The packet's time, on the frames' clock: the performance counter in 100 ns units.
-                    let at = qpc as f64 / 1e7;
+                    // The packet's time, on the frames' clock: the performance counter in 100 ns units. A time no
+                    // one-second buffer could hold (or none, which a process loopback may give) is replaced by
+                    // now, less the packet.
+                    let (reported, now) = (qpc as f64 / 1e7, super::clock::now());
+                    let at = if qpc != 0 && (reported - now).abs() < 1.5 {
+                        reported
+                    } else {
+                        now - f64::from(count) / rate
+                    };
                     let first = *start.get_or_insert(at);
                     let behind = at - (first + frames as f64 / rate);
                     if behind > GAP {
@@ -248,8 +392,12 @@ fn run(source: &Source, path: &PathBuf, stop: &AtomicBool, ready: &Sender<Result
             std::thread::sleep(Duration::from_millis(10));
         }
     })();
-    // SAFETY: stops the stream this thread started.
+    // SAFETY: stops the stream this thread started, then closes the event it signalled.
     let _ = unsafe { client.Stop() };
+    if let Some(event) = event {
+        // SAFETY: the event was made for this stream, which no longer signals it.
+        let _ = unsafe { CloseHandle(event) };
+    }
     result?;
     match start {
         Some(first) if frames > 0 => {

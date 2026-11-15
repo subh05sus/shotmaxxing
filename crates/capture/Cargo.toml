@@ -29,6 +29,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 dispatch2 = "0.3"
 
 [target.'cfg(windows)'.dependencies]
+# `#[implement]` (for the process loopback's completion handler) expands to paths in windows-core.
+windows-core = "0.62"
 windows = { version = "0.62", features = [
     "Foundation",
     "Win32_Devices_FunctionDiscovery",
@@ -45,6 +47,7 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Imaging",
     "Win32_Media_Audio",
     "Win32_Media_MediaFoundation",
+    "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_Storage_Xps",
     "Win32_System_Com",
