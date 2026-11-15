@@ -216,8 +216,9 @@ pub fn bring_forward(id: u32) {
 /// Waits for a window to come to rest where it'll be recorded: showing on this Space, and still for a moment at
 /// the size its app says it is, or when its app can't say, out of Stage Manager's strip. One that was parked or on
 /// another Space (`must_change`) has to have changed first, and one from another Space gets time for the switch to
-/// finish. At most [`MOST`].
-fn settle(id: u32, before: Placed, must_change: bool) {
+/// finish. A full-screen app's tab that isn't the one in front never shows, so then the tab in front, in its place,
+/// is waited for: it's the one recorded ([`stand_in`]). At most [`MOST`].
+fn settle(mut id: u32, before: Placed, must_change: bool) {
     let start = Instant::now();
     let (stage_manager, right, screens) = (stage_manager_on(), strip_on_right(), displays());
     let (mut last, mut same, mut changed) = (before, 0u32, false);
@@ -227,7 +228,15 @@ fn settle(id: u32, before: Placed, must_change: bool) {
     let mut arrived: Option<Instant> = before.on_screen.then_some(start);
     while start.elapsed() < MOST {
         std::thread::sleep(TICK);
-        let Some(now) = placed(id) else { return };
+        let Some(mut now) = placed(id) else { return };
+        if !now.on_screen && !before.on_screen {
+            let shown = stand_in(id);
+            if shown != id
+                && let Some(front) = placed(shown)
+            {
+                (id, now) = (shown, front);
+            }
+        }
         if now == last {
             same += 1;
         } else {
