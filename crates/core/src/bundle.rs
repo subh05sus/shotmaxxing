@@ -61,18 +61,26 @@ pub fn now_ms() -> u64 {
 
 impl ProjectBundle {
     /// Creates `<parent>/<name>.smx` with its folders and an initial `project.json`.
-    /// If the name is taken, a number is added: "Launch demo 2.smx".
+    /// If the name is taken, a number is added, to the folder and the project's name alike: "Launch demo 2.smx",
+    /// named "Launch demo 2", so the Library and exports tell it from the first (a fifth take was a fifth
+    /// "Recording", and its export, numbered by the files in its folder instead, "Recording 3.mp4").
     pub fn create(parent: &Path, project: &mut Project) -> Result<Self, BundleError> {
         fs::create_dir_all(parent)?;
         let base = sanitize_file_name(&project.name);
         let mut root = parent.join(format!("{base}.{EXTENSION}"));
+        let mut numbered = None;
         let mut n = 2;
         while root.exists() {
             root = parent.join(format!("{base} {n}.{EXTENSION}"));
+            numbered = Some(n);
             n += 1;
             if n > 10_000 {
                 return Err(BundleError::AlreadyExists(root));
             }
+        }
+        if let Some(n) = numbered {
+            let name = project.name.trim();
+            project.name = format!("{} {n}", if name.is_empty() { base.as_str() } else { name });
         }
         fs::create_dir(&root)?;
         for dir in SUBDIRS {
@@ -345,10 +353,20 @@ mod tests {
         assert_eq!(reopened.canvas.padding, 0.12);
         assert_eq!(reopened.id, project.id);
 
-        // A second project with the same name gets a number.
+        // A second project with the same name gets a number, in its folder and its name.
         let mut again = Project { name: "Launch demo".into(), ..Default::default() };
         let second = ProjectBundle::create(dir.path(), &mut again).unwrap();
         assert!(second.root().ends_with("Launch demo 2.smx"));
+        assert_eq!(again.name, "Launch demo 2");
+        assert_eq!(ProjectBundle::open(second.root()).unwrap().1.name, "Launch demo 2");
+        let mut third = Project { name: "Launch demo".into(), ..Default::default() };
+        assert!(ProjectBundle::create(dir.path(), &mut third).unwrap().root().ends_with("Launch demo 3.smx"));
+        assert_eq!(third.name, "Launch demo 3");
+        assert_eq!(
+            ProjectBundle::open(bundle.root()).unwrap().1.name,
+            "Launch demo",
+            "the first keeps its name"
+        );
     }
 
     #[test]
