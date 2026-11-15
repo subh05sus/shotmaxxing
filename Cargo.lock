@@ -4008,6 +4008,8 @@ dependencies = [
  "thiserror 2.0.21",
  "tiny-skia",
  "tracing",
+ "windows 0.62.2",
+ "windows-numerics 0.3.1",
 ]
 
 [[package]]

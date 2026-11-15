@@ -15,7 +15,7 @@ mod video;
 pub mod voice;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::ptr::NonNull;
 
 use objc2::rc::{Retained, autoreleasepool};
@@ -491,13 +491,6 @@ fn context() -> Result<Retained<CIContext>, RenderError> {
     Ok(unsafe { CIContext::contextWithOptions(Some(&options)) })
 }
 
-/// Where the file is written until it's complete: hidden, next to the final file, with the same extension.
-fn partial(output: &Path) -> PathBuf {
-    let name = output.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
-    let ext = output.extension().and_then(|s| s.to_str()).unwrap_or("mp4");
-    output.with_file_name(format!(".{name}.partial.{ext}"))
-}
-
 /// Removes the partial file and the scratch files AVFoundation keeps beside it (`<name>.sb-…`).
 fn remove_partial(temp: &Path) {
     let (Some(dir), Some(name)) = (temp.parent(), temp.file_name().and_then(|n| n.to_str())) else { return };
@@ -604,7 +597,7 @@ pub fn export(
     options: &ExportOptions,
     progress: &mut dyn FnMut(f64) -> bool,
 ) -> Result<(), RenderError> {
-    let temp = partial(&options.output);
+    let temp = crate::partial(&options.output);
     let started = std::time::Instant::now();
     let result = match options.format {
         Format::Gif => export_gif(project, options, &temp, progress),
@@ -720,9 +713,6 @@ pub fn draw_both(
     })
 }
 
-/// Frames sampled across the clip to learn a GIF's palette from.
-const PALETTE_SAMPLES: u64 = 16;
-
 fn export_gif(
     project: &RenderProject,
     options: &ExportOptions,
@@ -737,7 +727,7 @@ fn export_gif(
 
     // A first, quick pass over a few frames finds the colours the whole clip needs.
     let mut sampler = Job::new(project, options)?;
-    let count = PALETTE_SAMPLES.min(sampler.total);
+    let count = animated::PALETTE_SAMPLES.min(sampler.total);
     let mut samples = Vec::new();
     for k in 0..count {
         if !progress(0.08 * k as f64 / count as f64) {

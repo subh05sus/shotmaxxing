@@ -10,21 +10,23 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 // The GIF writer and the CPU-drawn sprites serve the exporters, which only macOS has so far.
-// Windows draws with these once its exporter lands.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod animated;
 pub mod click;
 mod model;
 pub mod scene;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+// Systems without an exporter of their own yet don't draw.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod soft;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod sprites;
 pub mod voice;
 pub mod wallpaper;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(windows)]
+mod win;
 
 pub use model::RenderProject;
 
@@ -221,11 +223,23 @@ pub fn export(
     {
         macos::export(&project, &options, progress)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        win::export(&project, &options, progress)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let _ = (project, progress);
         Err(RenderError::Unsupported)
     }
+}
+
+/// Where an export is written until it's complete: hidden, next to the final file, with the same extension.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+fn partial(output: &Path) -> PathBuf {
+    let name = output.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
+    let ext = output.extension().and_then(|s| s.to_str()).unwrap_or("mp4");
+    output.with_file_name(format!(".{name}.partial.{ext}"))
 }
 
 /// Draws the moment `options.at` of the project at `root` with Core Image and with the portable compositor, as

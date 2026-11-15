@@ -24,7 +24,7 @@ how it fits together and why. Design rules for the interface live in [design/pri
 │  │ control API ── the one API for the UI, CLI, MCP and scripts        │                    │
 │  │ project model (.smx) · timeline · undo · autosave                  │                    │
 │  │ recorder ── capture → encode → fragmented MP4 + telemetry          │                    │
-│  │ compositor (wgpu) ── preview and export share one renderer         │                    │
+│  │ renderer ── the export draws the editor's scene, frame for frame   │                    │
 │  │ takes ── beats compiler, performer, refs, consent, hand-off        │                    │
 │  │ analysis ── auto zoom, silence, captions (on demand)               │                    │
 │  └───────┬──────────────┬──────────────┬──────────────┬───────────────┘                    │
@@ -44,13 +44,13 @@ how it fits together and why. Design rules for the interface live in [design/pri
 ```
 apps/desktop/          Tauri 2 app: Svelte 5 UI + the Tauri shell (src-tauri)
 crates/
-  core/                project model, timeline, take-script schema, shared types
-  capture/             CaptureBackend trait; macos/ (ScreenCaptureKit), windows/ (Windows.Graphics.Capture)
-  encode/              EncoderBackend trait; VideoToolbox, Media Foundation; fragmented MP4 muxing
-  input/               cursor and key telemetry, synthetic input for takes
-  a11y/                accessibility refs: AXUIElement (macOS), UI Automation (Windows)
-  compositor/          wgpu scene graph used by preview and export
-  agent/               control API server, take performer, consent and trust policy
+  core/                project model, timeline, take scripts, telemetry, auto zoom, shared types
+  capture/             recording and input telemetry: macos/ (ScreenCaptureKit, AVAssetWriter),
+                       win/ (Windows.Graphics.Capture, Media Foundation, low-level input hooks)
+  render/              export: the scene and sprites, Core Image on macOS, the portable CPU compositor and
+                       Media Foundation on Windows, the sound mix and voice tools
+  control/             the control API between the command and the app (private socket or named pipe)
+  agent/               the take performer: refs, human-paced pointer and typing, hand-off
   cli/                 the `shotmaxxing` binary: CLI subcommands and `shotmaxxing mcp`
 packages/ui/           design tokens, motion and shared Svelte components
 docs/                  architecture, design principles, schemas, guides
@@ -81,7 +81,10 @@ These are the rules the code is reviewed against.
 
 ### Editing and preview
 
-- **One renderer for preview and export.** The wgpu compositor draws both, so what you see is what you export.
+- **One scene for preview and export.** The editor draws its canvas in the webview. The export draws the same scene
+  (`render/src/scene.rs` mirrors the canvas maths): with Core Image on macOS, and on the CPU with tiny-skia on
+  Windows. Both blend in sRGB as the browser does, so what you see is what you export, and a test holds the two
+  export renderers to each other.
 - **Render on demand.** The preview redraws only when the playhead moves or a property changes. When paused and
   idle, the GPU does nothing.
 - **Decode with hardware.** Preview decodes through VideoToolbox / Media Foundation into GPU textures, at preview

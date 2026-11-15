@@ -13,6 +13,9 @@ use gif::{DisposalMethod, Encoder, Frame, Repeat};
 
 use crate::RenderError;
 
+/// Frames sampled across the clip to learn a GIF's palette from.
+pub const PALETTE_SAMPLES: u64 = 16;
+
 /// The palette index that means "unchanged".
 const CLEAR: u8 = 255;
 /// Colours in the palette, leaving one index for "unchanged".

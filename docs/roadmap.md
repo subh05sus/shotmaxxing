@@ -22,7 +22,8 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 
 ## Milestone 2: Studio editor
 
-- [x] Compositor: background, padding, corners, shadows, aspect ratios (Core Image on macOS)
+- [x] Compositor: background, padding, corners, shadows, aspect ratios (Core Image on macOS, and a portable CPU
+      compositor that draws the same frames)
 - [x] Rendered cursor: size, smoothing, styles, click effects, snap, spotlight
 - [x] Cursor motion blur and click sounds
 - [x] Auto zoom (multi-signal, explainable) and manual zooms, replanned as its settings change
@@ -31,6 +32,8 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [ ] Voice-over recorded in the editor
 - [x] Webcam bubble
 - [x] Export: MP4 (H.264, HEVC) and GIF, with the sound mixed
+- [ ] Windows export: MP4, GIF and PNG through Media Foundation and the portable compositor are written and await
+      testing on Windows; the sound mix is next
 - [x] Background export queue (exports wait in line and render one at a time)
 - [x] Autosave and version history
 - [x] Styled stills: any frame as a PNG, from the editor, the CLI and MCP
