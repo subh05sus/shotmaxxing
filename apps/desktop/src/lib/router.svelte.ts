@@ -3,6 +3,8 @@
  * so a window only builds the screen it shows.
  */
 
+import { isTauri, openWindow } from './native';
+
 export const route = $state({ path: [] as string[], query: new URLSearchParams() });
 
 function read() {
@@ -18,7 +20,17 @@ export function startRouter(): () => void {
   return () => window.removeEventListener('hashchange', read);
 }
 
+/**
+ * Shows `path`. In the app, Home pages live in the Home window and each project in its own editor window, so a page
+ * of the other kind opens in its own window and this one stays as it is.
+ */
 export function go(path: string): void {
   const next = path.startsWith('#') ? path : `#/${path.replace(/^\//, '')}`;
+  const target = next.replace(/^#\/?/, '');
+  const kind = target.split(/[/?]/)[0];
+  if (isTauri && kind !== route.path[0] && (kind === 'home' || kind === 'editor')) {
+    void openWindow(kind, kind === 'home' ? target : target.slice('editor/'.length) || undefined);
+    return;
+  }
   if (location.hash !== next) location.hash = next;
 }

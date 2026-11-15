@@ -109,7 +109,8 @@ pub fn open_editor<R: Runtime>(app: &AppHandle<R>, project: &str) -> tauri::Resu
     set_dock_visible(app, true);
     let label = editor_label(project);
     if let Some(window) = app.get_webview_window(&label) {
-        return focus(&window, None);
+        // It shows this project again, even if it has moved on to another page since.
+        return focus(&window, Some(&format!("editor/{project}")));
     }
     let url = format!("index.html#/editor/{project}");
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))

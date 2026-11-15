@@ -236,8 +236,7 @@
   /** What ⌘E does to a card: export a video, or save a screenshot as a PNG. */
   function exportItem(item: LibraryItem) {
     if (item.kind === 'screenshot' && item.path) void saveImage(item);
-    else if (item.path) open(item, '?export=1');
-    else go(`editor/${item.id}?export=1`);
+    else open(item, '?export=1');
   }
 
   function menuFor(item: LibraryItem): MenuItem[] {
