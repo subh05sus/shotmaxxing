@@ -55,7 +55,8 @@ pub struct SoundWriter {
 }
 
 impl SoundWriter {
-    fn create(path: &Path, rate: u32) -> Result<Self, RenderError> {
+    /// A file at `bitrate` bits a second: 96, 128, 160 or 192 kbps.
+    fn create(path: &Path, rate: u32, bitrate: u32) -> Result<Self, RenderError> {
         if rate != RATE {
             return Err(RenderError::System(format!("sound at {rate} Hz can't be written here")));
         }
@@ -63,7 +64,7 @@ impl SoundWriter {
             std::fs::remove_file(path)?;
         }
         let writer = sink(path)?;
-        let stream = add_sound(&writer, 1, 96_000)?;
+        let stream = add_sound(&writer, 1, bitrate)?;
         // SAFETY: the writer has its stream and types set.
         unsafe { writer.BeginWriting() }.map_err(system)?;
         Ok(Self { writer, stream, written: 0 })
@@ -148,7 +149,7 @@ impl VoiceSystem for Windows {
     }
 
     fn create(&self, path: &Path, rate: u32) -> Result<SoundWriter, RenderError> {
-        SoundWriter::create(path, rate)
+        SoundWriter::create(path, rate, 96_000)
     }
 
     fn frame_times(&self, path: &Path) -> Result<Vec<f64>, RenderError> {
@@ -230,16 +231,24 @@ mod tests {
         }
         screen.finish().unwrap();
 
-        // A voice for half a second every two seconds, over a quiet room.
-        let Ok(mut voice) = SoundWriter::create(&media.join("microphone.m4a"), RATE) else {
+        // A voice for half a second every two seconds over a quiet room, as the Mac's test has it: pink noise, the
+        // room at 3% of the voice, recorded at 128 kbps like a Windows recording.
+        let Ok(mut voice) = SoundWriter::create(&media.join("microphone.m4a"), RATE, 128_000) else {
             eprintln!("skipped: this computer can't encode AAC");
             return;
         };
-        let mut seed = 1u32;
+        let (mut seed, mut pink) = (1u32, [0f32; 3]);
         let samples: Vec<f32> = (0..6 * RATE as usize)
             .map(|i| {
                 seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                let noise = (seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0;
+                let white = (seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0;
+                // Paul Kellet's filter turns white noise pink.
+                pink = [
+                    0.99765 * pink[0] + white * 0.099_046,
+                    0.963 * pink[1] + white * 0.296_516_4,
+                    0.57 * pink[2] + white * 1.052_691_3,
+                ];
+                let noise = (pink.iter().sum::<f32>() + white * 0.1848) * 0.25;
                 let speaking = (i as f64 / f64::from(RATE)) % 2.0 < 0.5;
                 noise * if speaking { 0.5 } else { 0.015 }
             })
@@ -275,8 +284,11 @@ mod tests {
         assert!((before - after).abs() < 0.05, "{before} s became {after} s");
         // The room between words is clearly quieter, while the voice stays strong.
         let (room_before, room_after) = (level(&original, 1.0, 0.8), level(&cleaned, 1.0, 0.8));
-        assert!(room_after < room_before - 6.0, "room {room_before} -> {room_after} dB");
         let (voice_before, voice_after) = (level(&original, 2.05, 0.4), level(&cleaned, 2.05, 0.4));
+        eprintln!(
+            "room {room_before:.1} -> {room_after:.1} dB, voice {voice_before:.1} -> {voice_after:.1} dB"
+        );
+        assert!(room_after < room_before - 6.0, "room {room_before} -> {room_after} dB");
         assert!(voice_after > voice_before - 6.0, "voice {voice_before} -> {voice_after} dB");
     }
 }

@@ -212,6 +212,8 @@ const HISTORY: usize = 8;
 const BIAS: f32 = 1.6;
 /// The most a frequency is turned down: about 14 dB, which keeps the voice natural.
 const FLOOR_GAIN: f32 = 0.2;
+/// A stretch quieter than this on average is digital silence (about -90 dB), not a room.
+const SILENCE: f32 = 1e-9;
 
 /// Turns down steady background noise. Each frame's spectrum is compared with a running estimate of the noise (the
 /// quietest each frequency has been lately), and frequencies are scaled by how much of them is voice. Gains follow
@@ -292,21 +294,27 @@ impl Denoiser {
             return;
         }
 
-        // Track the noise: the smoothed power's minimum over the last second and a half.
+        // Track the noise: the smoothed power's minimum over the last second and a half. Digital silence (an AAC
+        // file's priming, a microphone starting up or muted) says nothing about the room, so a frame that touches
+        // it leaves the estimate alone; taken as the noise, it would stop the cleaning until it was forgotten.
         let bins = self.spectrum.len();
-        for k in 0..bins {
-            let power = self.spectrum[k].norm_sqr();
-            self.smoothed[k] = if self.started { 0.8 * self.smoothed[k] + 0.2 * power } else { power };
-            self.step_min[k] = self.step_min[k].min(self.smoothed[k]);
-        }
-        self.started = true;
-        self.steps += 1;
-        if self.steps == STEPS {
-            if self.history.len() == HISTORY {
-                self.history.remove(0);
+        let silent = |part: &[f32]| part.iter().map(|x| x * x).sum::<f32>() < SILENCE * part.len() as f32;
+        let heard = &self.pending[at..at + size];
+        if !silent(&heard[..hop]) && !silent(&heard[hop..]) {
+            for k in 0..bins {
+                let power = self.spectrum[k].norm_sqr();
+                self.smoothed[k] = if self.started { 0.8 * self.smoothed[k] + 0.2 * power } else { power };
+                self.step_min[k] = self.step_min[k].min(self.smoothed[k]);
             }
-            self.history.push(std::mem::replace(&mut self.step_min, self.smoothed.clone()));
-            self.steps = 0;
+            self.started = true;
+            self.steps += 1;
+            if self.steps == STEPS {
+                if self.history.len() == HISTORY {
+                    self.history.remove(0);
+                }
+                self.history.push(std::mem::replace(&mut self.step_min, self.smoothed.clone()));
+                self.steps = 0;
+            }
         }
 
         for k in 0..bins {
@@ -587,6 +595,32 @@ mod tests {
         }
         cleaner.finish(&mut out);
         out
+    }
+
+    #[test]
+    fn silence_before_the_sound_leaves_the_noise_estimate_alone() {
+        // Windows' AAC files start with the encoder's priming as digital silence, and microphones often start with
+        // a moment of it too. Taken as the room's noise, it would stop the cleaning for over a second.
+        let rate = 48_000;
+        let level = |x: &[f32]| {
+            10.0 * (x.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / x.len() as f64).log10()
+        };
+        let reduction = |lead: usize| {
+            let mut seed = 1u32;
+            let mut input = vec![0f32; lead];
+            input.extend((0..4 * rate as usize).map(|i| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let noise = (seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0;
+                let speaking = (i as f64 / f64::from(rate)) % 2.0 < 0.5;
+                noise * if speaking { 0.5 } else { 0.015 }
+            }));
+            let out = clean(&input, rate);
+            let room = (rate as usize)..(rate as usize * 9 / 5);
+            level(&input[room.clone()]) - level(&out[room])
+        };
+        let (plain, primed) = (reduction(0), reduction(2112));
+        assert!(plain > 6.0, "{plain} dB");
+        assert!((plain - primed).abs() < 1.0, "{plain} dB without silence, {primed} dB after it");
     }
 
     #[test]
