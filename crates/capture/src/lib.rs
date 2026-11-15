@@ -151,7 +151,8 @@ pub struct RecordOptions {
     /// Leave the desktop icons out of screen recordings. Windows are recorded on their own, so this only applies to
     /// screens.
     pub hide_desktop_icons: bool,
-    /// Record what the computer plays into this file (`.m4a`). This app's own sounds are left out.
+    /// Record what the computer plays into this file (`.m4a`). On macOS this app's own sounds are left out; on
+    /// Windows everything that plays is recorded.
     pub system_audio: Option<PathBuf>,
     /// Record a microphone into an `.m4a` file.
     pub microphone: Option<DeviceRecording>,
