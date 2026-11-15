@@ -26,7 +26,8 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [x] Cursor motion blur and click sounds
 - [x] Auto zoom (multi-signal, explainable) and manual zooms, replanned as its settings change
 - [x] Timeline: trim, split, speed, text, arrows, blur
-- [ ] Extra audio tracks (music, voice-over)
+- [x] Music under the whole video: through cuts, fading out at the end, in the editor, the export and MCP
+- [ ] Voice-over recorded in the editor
 - [x] Webcam bubble
 - [x] Export: MP4 (H.264, HEVC) and GIF, with the sound mixed
 - [x] Background export queue (exports wait in line and render one at a time)

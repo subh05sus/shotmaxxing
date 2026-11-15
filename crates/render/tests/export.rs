@@ -26,7 +26,16 @@ fn range(start_ms: u64, end_ms: u64) -> TimeRange {
 }
 
 fn track(kind: TrackKind, path: &str, duration_us: u64, offset_us: i64, volume: f64) -> MediaTrack {
-    MediaTrack { id: path.into(), kind, path: path.into(), duration_us, offset_us, volume, muted: false }
+    MediaTrack {
+        id: path.into(),
+        kind,
+        path: path.into(),
+        duration_us,
+        offset_us,
+        volume,
+        muted: false,
+        name: None,
+    }
 }
 
 fn ffmpeg(args: &[&str], out: &Path) {
@@ -295,6 +304,74 @@ fn click_sounds_play_under_presses_even_without_a_recorded_sound() {
     assert!(mean < -30.0, "mean {mean} dB");
     let at = loudest_at(&output);
     assert!((at - 1.5).abs() < 0.03, "the click sounds at {at} s");
+}
+
+#[test]
+fn music_plays_on_the_videos_own_timeline_and_fades_out() {
+    if !has_ffmpeg() {
+        eprintln!("skipped: ffmpeg isn't installed");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = make_project(dir.path());
+    let (bundle, mut project) = ProjectBundle::open(&root).unwrap();
+    for track in &mut project.tracks {
+        if matches!(track.kind, TrackKind::Microphone | TrackKind::SystemAudio) {
+            track.muted = true;
+        }
+    }
+    // Ten seconds of music, longer than the video, starting half a second in.
+    ffmpeg(
+        &["-f", "lavfi", "-i", "sine=frequency=330:sample_rate=44100:duration=10", "-ac", "2", "-c:a", "aac"],
+        &bundle.media_dir().join("music.m4a"),
+    );
+    let mut music = track(TrackKind::Music, "media/music.m4a", 10_000_000, 500_000, 1.0);
+    music.name = Some("Theme.m4a".into());
+    project.tracks.push(music);
+    bundle.save(&mut project).unwrap();
+
+    let output = dir.path().join("Music.mp4");
+    let options = ExportOptions {
+        width: 640,
+        height: 360,
+        fps: 30,
+        format: Format::H264,
+        bitrate: 4e6,
+        output: output.clone(),
+        at: None,
+    };
+    export(&root, &options, &mut |_| true).unwrap();
+    // The cut leaves 3.6 s, and the music runs to the very end of it, not past.
+    let (_, _, seconds) = probe_sound(&output).expect("the export has no sound");
+    assert!((seconds - 3.6).abs() < 0.08, "the sound lasts {seconds} s");
+    let pcm = samples(&output);
+    let level = |from: f64, to: f64| level_db(&pcm, from, to);
+    // Quiet before it starts, full while it plays (across the cut at 3.2 s in the recording), and faded at the end.
+    assert!(level(0.05, 0.4) < -60.0, "before the music: {} dB", level(0.05, 0.4));
+    let full = level(0.8, 1.6);
+    assert!(full > -30.0, "the music plays at {full} dB");
+    // The fade takes the last 1.55 s: half of what's left after the music starts, at most two seconds.
+    assert!((level(1.6, 1.9) - full).abs() < 1.0, "it fades too soon: {} dB", level(1.6, 1.9));
+    assert!(level(2.9, 3.1) < full - 4.0, "it isn't fading: {} dB", level(2.9, 3.1));
+    assert!(level(3.45, 3.55) < full - 15.0, "the end is {} dB", level(3.45, 3.55));
+}
+
+/// The exported sound as mono samples at 48 kHz.
+fn samples(path: &Path) -> Vec<f32> {
+    let out = Command::new("ffmpeg")
+        .args(["-v", "error", "-i"])
+        .arg(path)
+        .args(["-map", "0:a:0", "-ac", "1", "-ar", "48000", "-f", "f32le", "-"])
+        .output()
+        .unwrap();
+    out.stdout.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect()
+}
+
+/// The loudness from `from` to `to` seconds, in dB below full scale.
+fn level_db(pcm: &[f32], from: f64, to: f64) -> f64 {
+    let window = &pcm[(from * 48_000.0) as usize..((to * 48_000.0) as usize).min(pcm.len())];
+    let power = window.iter().map(|&v| f64::from(v) * f64::from(v)).sum::<f64>() / window.len().max(1) as f64;
+    10.0 * power.max(1e-12).log10()
 }
 
 /// When the exported sound is loudest, in seconds.

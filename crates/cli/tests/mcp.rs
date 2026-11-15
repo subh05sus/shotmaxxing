@@ -94,6 +94,7 @@ fn make_project(dir: &Path, media: bool) -> PathBuf {
         offset_us: 0,
         volume: 1.0,
         muted: false,
+        name: None,
     }];
     let bundle = ProjectBundle::create(dir, &mut project).unwrap();
     if media {
@@ -218,6 +219,30 @@ fn speaks_mcp() {
     // No microphone, so no pauses to cut, and nothing changes.
     let result = server.tool("cut_silences", json!({ "project": root }));
     assert_eq!(result["structuredContent"]["pauses_cut"], 0, "{result}");
+
+    // Music: added (loud, with no voice to sit under), turned down, and taken out.
+    if cfg!(target_os = "macos") {
+        let song = dir.path().join("Theme.wav");
+        std::fs::write(&song, shotmaxxing_render::click::wav(&vec![0.1f32; 96_000], 48_000)).unwrap();
+        let result = server.tool("set_music", json!({ "project": root, "file": song }));
+        let music = &result["structuredContent"]["music"];
+        assert_eq!(
+            (music["name"].as_str(), music["volume"].as_f64()),
+            (Some("Theme.wav"), Some(0.8)),
+            "{result}"
+        );
+        assert_eq!(music["seconds"], 2.0);
+        let result = server.tool("set_music", json!({ "project": root, "volume": 0.4, "start": 0.5 }));
+        assert_eq!(result["structuredContent"]["music"]["volume"], 0.4, "{result}");
+        let (_, saved) = ProjectBundle::open(&root).unwrap();
+        let tracks: Vec<_> = saved.tracks.iter().filter(|t| t.kind == TrackKind::Music).collect();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!((tracks[0].offset_us, tracks[0].path.as_str()), (500_000, "media/music.wav"));
+        let result = server.tool("set_music", json!({ "project": root, "remove": true }));
+        assert_eq!(result["structuredContent"]["music"], Value::Null, "{result}");
+        let result = server.tool("set_music", json!({ "project": root, "volume": 0.5 }));
+        assert_eq!(result["isError"], true, "{result}");
+    }
 
     if has_ffmpeg() {
         // Exported square, with progress along the way.

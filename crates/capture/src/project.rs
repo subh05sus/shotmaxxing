@@ -88,6 +88,7 @@ fn media_track(id: &str, kind: TrackKind, path: &str, recorded: &RecordedTrack) 
         offset_us: recorded.offset_us,
         volume: 1.0,
         muted: false,
+        name: None,
     }
 }
 
@@ -172,6 +173,7 @@ impl ProjectRecording {
             offset_us: 0,
             volume: 1.0,
             muted: false,
+            name: None,
         }];
         if let Some(track) = &recording.system_audio {
             project.tracks.push(media_track(

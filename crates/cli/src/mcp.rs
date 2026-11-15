@@ -19,7 +19,9 @@ use shotmaxxing_capture::{DeviceChoice, FinishedProject, ProjectOptions, Project
 use shotmaxxing_control::{Client, FromApp, TakeRequest, TakeResult, ToApp};
 use shotmaxxing_core::bundle::{ProjectBundle, sanitize_file_name};
 use shotmaxxing_core::project::ExportPreset;
-use shotmaxxing_core::project::{AspectRatio, Background, Project, TimeRange, ZoomDepth};
+use shotmaxxing_core::project::{
+    AspectRatio, Background, MediaTrack, Project, TimeRange, TrackKind, ZoomDepth,
+};
 use shotmaxxing_core::take::{OutputMode, TakeScript};
 use shotmaxxing_render::{ExportOptions, Format, RenderProject, default_bitrate, output_size, unique_path};
 
@@ -33,7 +35,7 @@ shows its window, then perform_take films a script while Shotmaxxing moves the p
 pace (try dry_run first). When the Shotmaxxing app is open, it asks the person before each planned take and \
 shows it live. To film something else doing the work: list_sources, start_recording, the demo, \
 stop_recording. Then export_project. project_info shows what a project holds; cut_silences, clean_voice, \
-plan_zooms and style_project tidy it up before exporting. Recording needs the Screen Recording permission, and \
+plan_zooms, style_project and set_music (only with a music file the person chose) tidy it up before exporting. Recording needs the Screen Recording permission, and \
 planned takes also Accessibility, for the app that started this server.";
 
 type Reply = Result<Value, String>;
@@ -314,6 +316,23 @@ fn tools() -> Value {
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
         },
         {
+            "name": "set_music",
+            "title": "Set the music",
+            "description": "Puts music under the whole video. It plays on the finished video's timeline from its start (or `start` seconds in), straight through cuts and speed changes, and fades out at the end. The file is copied into the project. Give only `volume` or `start` to change the music that's there, or `remove: true` to take it out.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": project,
+                    "file": { "type": "string", "description": "An MP3, M4A, AAC, WAV, AIFF, CAF or FLAC file." },
+                    "volume": { "type": "number", "minimum": 0, "maximum": 1.5, "description": "1 is as loud as the file. Defaults to 0.3 under a voice and 0.8 without one." },
+                    "start": { "type": "number", "minimum": 0, "description": "Seconds into the finished video where the music starts. Defaults to 0." },
+                    "remove": { "type": "boolean", "default": false },
+                },
+                "required": ["project"],
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false },
+        },
+        {
             "name": "plan_zooms",
             "title": "Plan zooms again",
             "description": "Plans the automatic zooms again from the recorded clicks and typing, replacing the current ones.",
@@ -421,6 +440,7 @@ fn call(
         "cut_silences" => cut_silences(args),
         "clean_voice" => clean_voice(args, progress, cancel),
         "plan_zooms" => plan_zooms(args),
+        "set_music" => set_music(args),
         "style_project" => style(args),
         "validate_take" => validate(args),
         "prepare_take" => prepare_take(state, args),
@@ -443,7 +463,7 @@ pub fn summary(root: &Path, project: &Project) -> Value {
         "app": project.source.app_name,
         "window": project.source.window_title,
         "tracks": project.tracks.iter().map(|t| json!({
-            "kind": t.kind, "seconds": sec(t.duration_us), "offset_seconds": t.offset_us as f64 / 1e6, "volume": t.volume,
+            "kind": t.kind, "name": t.name, "seconds": sec(t.duration_us), "offset_seconds": t.offset_us as f64 / 1e6, "volume": t.volume,
         })).collect::<Vec<_>>(),
         "zooms": project.zooms.iter().map(|z| json!({
             "start": sec(z.start_us), "end": sec(z.end_us), "scale": z.scale, "reason": z.reason,
@@ -659,6 +679,59 @@ fn cut_silences(args: &Value) -> Reply {
         "pauses_cut": found.len(),
         "seconds_cut": (seconds * 100.0).round() / 100.0,
         "note": if found.is_empty() { "No long pauses to cut: every pause over a second has something happening on screen, or there's no clear voice." } else { "Cut. The editor can bring them back." },
+    }))
+}
+
+fn set_music(args: &Value) -> Reply {
+    let path = project_arg(args)?;
+    let (bundle, mut project) = open(&path)?;
+    let current = project.tracks.iter().find(|t| t.kind == TrackKind::Music).cloned();
+    if args.get("remove").and_then(Value::as_bool).unwrap_or(false) {
+        project.tracks.retain(|t| t.kind != TrackKind::Music);
+        bundle.save(&mut project).map_err(|e| e.to_string())?;
+        let note = if current.is_some() { "Took the music out." } else { "There was no music to take out." };
+        return Ok(json!({ "music": null, "note": note }));
+    }
+    let mut track = match (text(args, "file"), current) {
+        (Some(file), current) => {
+            let music = shotmaxxing_render::import_music(bundle.root(), &expand(file))
+                .map_err(|e| format!("couldn't add the music: {e}"))?;
+            let voice = project.tracks.iter().any(|t| t.kind == TrackKind::Microphone && !t.muted);
+            MediaTrack {
+                id: "music".into(),
+                kind: TrackKind::Music,
+                path: music.path,
+                duration_us: (music.seconds * 1e6).round() as u64,
+                // New music keeps the old music's place and level.
+                offset_us: current.as_ref().map_or(0, |t| t.offset_us),
+                volume: current.as_ref().map_or(if voice { 0.3 } else { 0.8 }, |t| t.volume),
+                muted: false,
+                name: Some(music.name),
+            }
+        }
+        (None, Some(current)) => current,
+        (None, None) => return Err("give a music file: this project has no music yet".into()),
+    };
+    if let Some(volume) = args.get("volume").and_then(Value::as_f64) {
+        track.volume = volume.clamp(0.0, 1.5);
+    }
+    if let Some(start) = args.get("start").and_then(Value::as_f64) {
+        track.offset_us = (start.max(0.0) * 1e6).round() as i64;
+    }
+    project.tracks.retain(|t| t.kind != TrackKind::Music);
+    project.tracks.push(track.clone());
+    bundle.save(&mut project).map_err(|e| e.to_string())?;
+    let seconds = track.duration_us as f64 / 1e6;
+    let start = track.offset_us as f64 / 1e6;
+    Ok(json!({
+        "music": {
+            "name": track.name,
+            "file": track.path,
+            "seconds": (seconds * 100.0).round() / 100.0,
+            "volume": track.volume,
+            "start": start,
+        },
+        "note": "It plays under the export from the start you gave, through cuts, and fades out at the end.",
     }))
 }
 

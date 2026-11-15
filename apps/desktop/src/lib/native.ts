@@ -460,6 +460,23 @@ export async function mediaUrl(path: string): Promise<string> {
   return convertFileSrc(path);
 }
 
+/** Music the person picked, copied into the project. */
+export interface MusicFile {
+  /** The copy, relative to the project folder. */
+  path: string;
+  /** The file's own name, to show. */
+  name: string;
+  seconds: number;
+}
+
+/** Asks for a music file and copies it into the project's media folder. `null` when the person cancels. */
+export function chooseMusic(project: string): Promise<MusicFile | null> {
+  return call('choose_music', { project }, () => SAMPLE_MUSIC);
+}
+
+/** What the browser preview and the sample project "pick". */
+export const SAMPLE_MUSIC: MusicFile = { path: 'media/music.mp3', name: 'Sunrise drive.mp3', seconds: 154 };
+
 /** Editor routes carry a project path; it is encoded so it survives as one route segment. */
 export function editorTarget(path: string): string {
   return path === 'sample' ? path : encodeURIComponent(path);

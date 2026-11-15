@@ -61,6 +61,7 @@ and reopen that app.
 | `project_info` | A project's length, size, zooms, tracks, cuts, voice settings and canvas |
 | `cut_silences` | Shortens pauses over a second where nothing happens on screen |
 | `clean_voice` | Turns down hum, fan noise and hiss in the microphone, and evens out its level |
+| `set_music` | Puts a music file under the whole video (through cuts, fading out at the end), changes its volume or start, or takes it out |
 | `plan_zooms` | Plans the automatic zooms again, subtle, standard or bold |
 | `style_project` | Wallpaper, canvas shape, padding, corners, shadow and cursor size |
 | `export_project` | Renders MP4 (H.264), HEVC or GIF, with progress, and can be cancelled. `png` saves one frame (`at`, in seconds into the recording) styled like the video |
@@ -113,7 +114,7 @@ Targets can be any of these:
    - the project folder and its length;
    - the planned zooms;
    - any warnings, such as a microphone that wasn't allowed.
-5. Optionally `cut_silences`, `clean_voice` or `style_project`.
+5. Optionally `cut_silences`, `clean_voice`, `style_project` or `set_music`.
 6. `export_project` with `{ "project": "<folder>", "format": "mp4" }`. The reply has the file's path.
 
 Anything an agent does can be changed later in the editor: open the project from the Library.

@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 mod animated;
 pub mod click;
@@ -118,6 +118,54 @@ pub fn output_size(aspect: f64, short_side: u32) -> (u32, u32) {
 pub fn default_bitrate(width: u32, height: u32, fps: u32, format: Format) -> f64 {
     let bits_per_pixel = if format == Format::Hevc { 0.065 } else { 0.1 };
     (f64::from(width) * f64::from(height) * f64::from(fps) * bits_per_pixel).clamp(2e6, 120e6)
+}
+
+/// How long the sound file at `path` plays, in seconds; `None` when it holds no sound this system can play.
+pub fn audio_seconds(path: &Path) -> Option<f64> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::audio_seconds(path)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Music copied into a project.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ImportedMusic {
+    /// The copy, relative to the project folder, e.g. `media/music.mp3`.
+    pub path: String,
+    /// The file's own name, to show.
+    pub name: String,
+    pub seconds: f64,
+}
+
+/// The kinds of music file the mix can play.
+pub const MUSIC_TYPES: [&str; 8] = ["mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac"];
+
+/// Copies a music file into the project's media folder. It never overwrites earlier music, which undo may still
+/// need. Adding the track to the project is up to the caller.
+pub fn import_music(root: &Path, file: &Path) -> Result<ImportedMusic, RenderError> {
+    let ext = file
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| MUSIC_TYPES.contains(&e.as_str()))
+        .ok_or_else(|| RenderError::Project("music can be MP3, M4A, AAC, WAV, AIFF, CAF or FLAC".into()))?;
+    if !root.join("project.json").exists() {
+        return Err(RenderError::Project(format!("{} isn't a Shotmaxxing project", root.display())));
+    }
+    let seconds = audio_seconds(file)
+        .ok_or_else(|| RenderError::Project(format!("{} has no sound that can be played", file.display())))?;
+    let media = root.join("media");
+    std::fs::create_dir_all(&media)?;
+    let copy = unique_path(&media, "music", &ext);
+    std::fs::copy(file, &copy)?;
+    let name_of = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(ImportedMusic { path: format!("media/{}", name_of(&copy)), name: name_of(file), seconds })
 }
 
 /// `<dir>/<stem>.<ext>`, or `<stem> 2.<ext>` and so on when that file exists.

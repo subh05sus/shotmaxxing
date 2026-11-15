@@ -8,15 +8,18 @@
     Captions,
     Droplets,
     Lock,
+    Music,
     RefreshCw,
     Sparkles,
     Type,
     WandSparkles,
+    X,
   } from '@lucide/svelte';
   import {
     Advanced,
     Button,
     CheckDraw,
+    IconButton,
     InfoTip,
     Keycap,
     ProgressRing,
@@ -26,6 +29,7 @@
     Switch,
     toast,
   } from '@shotmaxxing/ui';
+  import { timecode } from '../../lib/format';
   import { WALLPAPERS } from '../../lib/wallpapers';
   import { go } from '../../lib/router.svelte';
   import type { EditorState, ToolId } from './store.svelte';
@@ -40,7 +44,7 @@
     zoom: { title: 'Zoom', blurb: 'Push in where the action is.', guide: 'auto-zoom' },
     annotate: { title: 'Annotate', blurb: 'Titles, arrows and blur.', guide: 'blur' },
     camera: { title: 'Camera', blurb: 'You, in a bubble.', guide: 'record-camera' },
-    audio: { title: 'Audio', blurb: 'Voice and system sound.' },
+    audio: { title: 'Audio', blurb: 'Voice, system sound and music.' },
     ai: { title: 'AI helpers', blurb: 'Captions, cleanup and cuts, made on this computer.' },
   };
 
@@ -504,12 +508,13 @@
           onchange={(v) => ed.change('Mirror', () => (p.webcam.mirror = v))}
         />
       </label>
-    {:else if ed.tool === 'audio' && !p.has.mic && !p.has.system}
-      <p class="text-footnote text-fg-muted">
-        This take was recorded without sound. Turn on Microphone or System audio in the record dialog to
-        record it next time.
-      </p>
     {:else if ed.tool === 'audio'}
+      {#if !p.has.mic && !p.has.system}
+        <p class="mb-1 text-footnote text-fg-muted">
+          This take was recorded without sound. Turn on Microphone or System audio in the record dialog to
+          record it next time.
+        </p>
+      {/if}
       {#if p.has.mic}<Slider
           label="Microphone"
           value={p.audio.mic}
@@ -554,6 +559,45 @@
             disabled={ed.voiceBusy !== null}
           />
         </label>{/if}
+      <section class="mt-3 rounded-[10px] border border-border p-3" aria-label="Music">
+        {#if p.audio.music}
+          {@const music = p.audio.music}
+          {@const runsOver = music.start + music.seconds > ed.outputDuration + 0.001}
+          <div class="flex items-center gap-2.5">
+            <span class="grid size-8 shrink-0 place-items-center rounded-[8px] bg-fill text-fg-muted">
+              <Music size={15} aria-hidden="true" />
+            </span>
+            <span class="min-w-0 flex-1">
+              <span class="block truncate text-callout font-semibold" title={music.name}>{music.name}</span>
+              <span class="block text-footnote text-fg-muted tabular"
+                >{timecode(music.seconds)} · {runsOver ? 'fades out' : 'stops before the end'}</span
+              >
+            </span>
+            <IconButton icon={X} label="Remove music" size="sm" onclick={() => ed.removeMusic()} />
+          </div>
+          <Slider
+            label="Music"
+            value={music.volume}
+            min={0}
+            max={1}
+            step={0.05}
+            format={pct}
+            onchange={(v) => ed.change('Music volume', () => (music.volume = v))}
+          />
+          <!-- Pulled left so its words line up with the card's other text. -->
+          <Button class="-ml-2.5" size="sm" variant="ghost" onclick={() => void ed.addMusic()}
+            >Choose other music…</Button
+          >
+        {:else}
+          <h3 class="flex items-center gap-2 text-callout font-semibold">
+            <Music size={15} aria-hidden="true" /> Music
+          </h3>
+          <p class="mt-1 text-footnote text-fg-muted">
+            Plays under the whole video, straight through cuts, and fades out at the end.
+          </p>
+          <Button class="mt-2.5" size="sm" onclick={() => void ed.addMusic()}>Add music…</Button>
+        {/if}
+      </section>
     {:else if !p.has.mic}
       <p class="flex items-center gap-1.5 rounded-[8px] bg-fill px-2.5 py-2 text-footnote text-fg-muted">
         <Lock size={13} aria-hidden="true" /> Everything here runs on this computer. Nothing is uploaded.

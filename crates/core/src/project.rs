@@ -99,13 +99,17 @@ pub struct MediaTrack {
     pub path: String,
     pub duration_us: u64,
     /// Where the track starts on the screen recording's timeline. Negative when it started first: the microphone
-    /// and camera start a moment before the screen so no words are lost.
+    /// and camera start a moment before the screen so no words are lost. Music is the exception: it plays on the
+    /// finished video's timeline, untouched by cuts and speed changes, starting this far in.
     #[serde(default)]
     pub offset_us: i64,
     #[serde(default = "one")]
     pub volume: f64,
     #[serde(default)]
     pub muted: bool,
+    /// What to call the track, e.g. the music's own file name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 fn one() -> f64 {
@@ -675,6 +679,7 @@ mod tests {
             offset_us: 0,
             volume: 1.0,
             muted: false,
+            name: None,
         });
         assert_eq!(p.duration_us(), 42_000_000);
     }

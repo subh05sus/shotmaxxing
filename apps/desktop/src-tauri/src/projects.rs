@@ -255,6 +255,34 @@ pub async fn pick_folder<R: Runtime>(
     Ok(picked.and_then(|p| p.into_path().ok()).map(|p| tildify(&p, home.as_deref())))
 }
 
+/// Asks for a music file and copies it into the project's media folder. `None` when the person cancels. The
+/// editor then adds the track, so undo takes it out again; the copy stays for redo.
+#[tauri::command]
+pub async fn choose_music<R: Runtime>(
+    app: AppHandle<R>,
+    window: tauri::WebviewWindow<R>,
+    project: String,
+) -> Result<Option<shotmaxxing_render::ImportedMusic>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose music")
+        .set_parent(&window)
+        .add_filter("Music", &shotmaxxing_render::MUSIC_TYPES)
+        .pick_file(move |picked| {
+            let _ = tx.send(picked);
+        });
+    let picked =
+        tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten()).await.map_err(text)?;
+    let Some(file) = picked.and_then(|p| p.into_path().ok()) else { return Ok(None) };
+    tauri::async_runtime::spawn_blocking(move || shotmaxxing_render::import_music(Path::new(&project), &file))
+        .await
+        .map_err(text)?
+        .map(Some)
+        .map_err(text)
+}
+
 fn scan(folder: &Path) -> Vec<ProjectSummary> {
     let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
     let mut out: Vec<ProjectSummary> = entries

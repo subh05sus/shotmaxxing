@@ -43,6 +43,8 @@ export interface CoreProject {
     offset_us: number;
     volume: number;
     muted: boolean;
+    /** What to call the track, e.g. the music's own file name. */
+    name?: string | null;
   }[];
   canvas: {
     aspect: string | { custom: { width: number; height: number } };
@@ -209,6 +211,7 @@ export function fromCore(core: CoreProject, os: Os): Project {
   const theme = core.cursor.theme;
   const mic = core.tracks.find((t) => t.kind === 'microphone');
   const system = core.tracks.find((t) => t.kind === 'system_audio');
+  const music = core.tracks.find((t) => t.kind === 'music' && !t.muted);
   return {
     id: core.id,
     title: core.name,
@@ -264,6 +267,15 @@ export function fromCore(core: CoreProject, os: Os): Project {
       cleanup: core.voice?.cleanup ?? false,
       silence: core.voice?.cut_silences ?? false,
       silences: (core.voice?.silences ?? []).map((r) => ({ start: sec(r.start_us), end: sec(r.end_us) })),
+      music: music
+        ? {
+            path: music.path,
+            name: music.name || music.path.split('/').pop() || 'Music',
+            volume: music.volume,
+            start: Math.max(0, sec(music.offset_us)),
+            seconds: sec(music.duration_us),
+          }
+        : null,
     },
     captions: { state: core.captions.length ? 'ready' : 'none', style: 'bar', show: true },
     keystrokes: core.zoom.keystrokes,
@@ -388,6 +400,21 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
   for (const track of core.tracks) {
     if (track.kind === 'microphone') track.volume = p.audio.mic;
     if (track.kind === 'system_audio') track.volume = p.audio.system;
+  }
+  // Music plays on the finished video's timeline, from `start`.
+  core.tracks = core.tracks.filter((t) => t.kind !== 'music');
+  const music = p.audio.music;
+  if (music) {
+    core.tracks.push({
+      id: 'music',
+      kind: 'music',
+      path: music.path,
+      duration_us: us(music.seconds),
+      offset_us: us(music.start),
+      volume: music.volume,
+      muted: false,
+      name: music.name,
+    });
   }
   core.voice = {
     cleanup: p.audio.cleanup,

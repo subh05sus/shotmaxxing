@@ -13,6 +13,8 @@ import {
   type ZoomBlock,
 } from '../../lib/sample';
 import {
+  SAMPLE_MUSIC,
+  chooseMusic,
   cleanVoice,
   cursorPath,
   findPauses,
@@ -91,6 +93,11 @@ export interface Project {
     silence: boolean;
     /** The pauses that were cut, in seconds of the recording, so turning it off brings exactly those back. */
     silences: { start: number; end: number }[];
+    /**
+     * Music under the video. It plays on the finished video's timeline from `start` (seconds), untouched by cuts
+     * and speed changes, and fades out with the video when it runs past the end. `path` is in the project folder.
+     */
+    music: { path: string; name: string; volume: number; start: number; seconds: number } | null;
   };
   captions: { state: 'none' | 'busy' | 'ready'; style: 'bar' | 'bold'; show: boolean };
   keystrokes: boolean;
@@ -151,7 +158,7 @@ function sampleProject(): Project {
     zooms: SAMPLE_PROJECT.zooms.map((z) => ({ ...z, focus: { ...z.focus } })),
     effects: SAMPLE_PROJECT.effects.map((e) => ({ ...e })),
     webcam: { on: false, shape: 'circle', size: 0.2, corner: 'br', shrink: true, mirror: true, shadow: true },
-    audio: { mic: 0.9, system: 0.6, cleanup: true, silence: false, silences: [] },
+    audio: { mic: 0.9, system: 0.6, cleanup: true, silence: false, silences: [], music: null },
     captions: { state: 'none', style: 'bar', show: true },
     keystrokes: true,
     has: { mic: true, system: true, camera: true },
@@ -202,6 +209,9 @@ export class EditorState {
   #cameraVideo: HTMLVideoElement | null = null;
   /** The recorded sound, each on the screen's timeline. The microphone may also have a cleaned-up copy. */
   #sounds: { kind: string; el: HTMLAudioElement; offset: number; raw: string; clean: string | null }[] = [];
+  /** The music's player, and the file it's for. It follows the project, so undo and redo bring it back. */
+  #music: HTMLAudioElement | null = null;
+  #musicFile: string | null = null;
 
   constructor() {
     const json = JSON.stringify(this.project);
@@ -228,6 +238,9 @@ export class EditorState {
         const offset = track.offset_us / 1e6;
         if (track.kind === 'camera') {
           this.camera = { url, offset };
+        } else if (track.kind === 'music') {
+          // Music follows the project's audio settings instead; see #syncMusic.
+          continue;
         } else {
           const el = new Audio();
           el.preload = 'auto';
@@ -311,6 +324,78 @@ export class EditorState {
       this.#follow(sound.el, sound.offset, t, speed);
     }
     if (this.#cameraVideo && this.camera) this.#follow(this.#cameraVideo, this.camera.offset, t, speed);
+    this.#syncMusic(t);
+  }
+
+  /** Music plays on the finished video's timeline: it keeps going across cuts and ignores speed changes. */
+  #syncMusic(t: number): void {
+    const music = this.project.audio.music;
+    const file = music && this.path ? `${this.path}/${music.path}` : null;
+    if (file !== this.#musicFile) {
+      this.#musicFile = file;
+      this.#releaseMusic();
+      if (file) {
+        void mediaUrl(file).then((url) => {
+          if (this.#musicFile !== file) return;
+          const el = new Audio();
+          el.preload = 'auto';
+          el.src = url;
+          this.#music = el;
+          this.#syncMedia(this.time);
+        });
+      }
+      return;
+    }
+    const el = this.#music;
+    if (!el || !music) return;
+    const out = this.outputTimeAt(t);
+    const total = this.outputDuration;
+    // Music longer than the video fades out over its end, as the export does.
+    const fade = music.start + music.seconds > total + 1e-3 ? Math.min(2, (total - music.start) / 2) : 0;
+    const level = fade > 0 ? Math.min(1, Math.max(0, (total - out) / fade)) : 1;
+    el.volume = Math.min(1, Math.max(0, music.volume * level));
+    this.#follow(el, music.start, out, this.rate);
+  }
+
+  #releaseMusic(): void {
+    const el = this.#music;
+    this.#music = null;
+    if (!el) return;
+    el.pause();
+    el.removeAttribute('src');
+    el.load();
+  }
+
+  /** Asks for a music file, copies it into the project and lays it under the whole video. */
+  async addMusic(): Promise<void> {
+    let file;
+    try {
+      // The sample has no folder to copy into; it shows a typical song.
+      file = this.path ? await chooseMusic(this.path) : SAMPLE_MUSIC;
+    } catch (error) {
+      toast(`Couldn’t add the music: ${error instanceof Error ? error.message : String(error)}`, {
+        tone: 'danger',
+        timeout: 8000,
+      });
+      return;
+    }
+    if (!file) return;
+    const p = this.project;
+    // Under a voice, music sits well back; on its own, it carries the video.
+    const music = {
+      path: file.path,
+      name: file.name,
+      volume: p.has.mic ? 0.3 : 0.8,
+      start: 0,
+      seconds: file.seconds,
+    };
+    this.change(p.audio.music ? 'Change music' : 'Add music', () => (p.audio.music = music));
+    this.#syncMedia(this.time);
+  }
+
+  removeMusic(): void {
+    this.change('Remove music', () => (this.project.audio.music = null));
+    this.#syncMedia(this.time);
   }
 
   /** Turns voice cleanup on or off. The cleaned-up copy is made the first time, on this computer. */
@@ -386,6 +471,8 @@ export class EditorState {
       sound.el.load();
     }
     this.#sounds = [];
+    this.#releaseMusic();
+    this.#musicFile = null;
   }
 
   /** Applies an edit with undo history. Repeats of the same edit within 800 ms count as one step. */
@@ -412,6 +499,7 @@ export class EditorState {
     this.#lastLabel = '';
     this.canUndo = this.#past.length > 0;
     this.canRedo = true;
+    this.#syncMedia(this.time);
     this.#scheduleSave('Undo');
   }
 
@@ -423,6 +511,7 @@ export class EditorState {
     this.#lastLabel = '';
     this.canUndo = true;
     this.canRedo = this.#future.length > 0;
+    this.#syncMedia(this.time);
     this.#scheduleSave('Redo');
   }
 
@@ -568,6 +657,13 @@ export class EditorState {
 
   clipAt(t: number): Clip | undefined {
     return this.project.clips.find((c) => t >= c.start && t < c.end);
+  }
+
+  /** Where moment `t` of the recording lands in the finished video, after cuts and speed changes. */
+  outputTimeAt(t: number): number {
+    let out = 0;
+    for (const c of this.project.clips) if (t > c.start) out += (Math.min(t, c.end) - c.start) / c.speed;
+    return out;
   }
 
   /** Length after cuts and speed changes. */

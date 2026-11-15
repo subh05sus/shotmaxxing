@@ -58,7 +58,9 @@ When you can see the app's controls, plan the whole performance and let Shotmaxx
    - `cut_silences`, when there's narration with long pauses;
    - `clean_voice`, when there's a microphone;
    - `plan_zooms` with `subtle` or `bold`, when the zooms feel too strong or too weak;
-   - `style_project`, for the wallpaper, shape (`16:9`, `1:1`, `9:16` for phones), padding and corners.
+   - `style_project`, for the wallpaper, shape (`16:9`, `1:1`, `9:16` for phones), padding and corners;
+   - `set_music`, only with a music file the person gave you: it plays under the whole video and fades out at the
+     end (`volume` 0.3 sits well under a voice).
 8. **Export.** Call `export_project`:
    - the default MP4 at 1080p suits most uses;
    - `"format": "gif"` gives a 480p, 15 fps loop for docs and chats;

@@ -28,6 +28,7 @@ fn track(kind: TrackKind, path: &str) -> MediaTrack {
         offset_us: 0,
         volume: 1.0,
         muted: false,
+        name: None,
     }
 }
 

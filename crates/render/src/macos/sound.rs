@@ -24,6 +24,8 @@ use crate::voice::soft_limit;
 
 /// How long each cut edge fades, in seconds.
 const FADE: f64 = 0.008;
+/// How long music fades out when the video ends before it does.
+const MUSIC_FADE_OUT: f64 = 2.0;
 /// The sample rate of the mix and of the exported sound.
 pub const RATE: u32 = 48_000;
 
@@ -165,6 +167,7 @@ impl Sound {
             let composition = AVMutableComposition::composition();
             let mut tracks: Vec<Retained<AVAssetTrack>> = Vec::new();
             let mut inputs: Vec<Retained<AVAudioMixInputParameters>> = Vec::new();
+            let total = project.output_duration();
             for sound in &project.sounds {
                 let Some(url) = NSURL::from_file_path(&sound.path) else { continue };
                 let asset = AVURLAsset::URLAssetWithURL_options(&url, None);
@@ -182,6 +185,35 @@ impl Sound {
                 let level = (sound.volume / loudest) as f32;
                 let params = AVMutableAudioMixInputParameters::audioMixInputParametersWithTrack(Some(&track));
                 params.setVolume_atTime(level, time(0.0));
+                if sound.continuous {
+                    // Music plays on the finished video's timeline, untouched by cuts and speed changes.
+                    let start = sound.offset.max(0.0);
+                    let length = (to - from).min(total - start);
+                    if length <= 0.002 {
+                        composition.removeTrack(&track);
+                        continue;
+                    }
+                    track
+                        .insertTimeRange_ofTrack_atTime_error(span(from, length), &source, time(start))
+                        .map_err(|e| {
+                            system(format!("couldn't lay out the music: {}", e.localizedDescription()))
+                        })?;
+                    // In without a click, and out with the video when it runs past the end.
+                    let fade = if start + (to - from) > total + 1e-3 {
+                        MUSIC_FADE_OUT.min(length / 2.0)
+                    } else {
+                        FADE
+                    };
+                    params.setVolumeRampFromStartVolume_toEndVolume_timeRange(0.0, level, span(start, FADE));
+                    params.setVolumeRampFromStartVolume_toEndVolume_timeRange(
+                        level,
+                        0.0,
+                        span(start + length - fade, fade),
+                    );
+                    tracks.push(Retained::into_super(Retained::into_super(track)));
+                    inputs.push(Retained::into_super(params));
+                    continue;
+                }
                 // `out` is where the clip starts in the export; `end` is where this track's sound ends so far.
                 let (mut out, mut end) = (0.0, 0.0);
                 for clip in &project.clips {
@@ -225,7 +257,7 @@ impl Sound {
                 tracks.push(Retained::into_super(Retained::into_super(track)));
                 inputs.push(Retained::into_super(params));
             }
-            let length = project.output_duration();
+            let length = total;
             let file = sound_file().inspect_err(|e| tracing::warn!("no click sound or quiet bed: {e}")).ok();
             // Click sounds sit at their own level: the overall gain below brings them back to it.
             if let Some(file) = &file
@@ -364,4 +396,13 @@ impl Drop for Sound {
         // SAFETY: cancelling is allowed in any state.
         unsafe { self.reader.cancelReading() };
     }
+}
+
+/// How long the sound file at `path` plays, in seconds.
+pub fn audio_seconds(path: &Path) -> Option<f64> {
+    // SAFETY: reading a framework constant.
+    let audio = unsafe { AVMediaTypeAudio }?;
+    // SAFETY: reading the time range of a track that was just loaded.
+    let seconds = unsafe { source_track(path, audio)?.timeRange().duration.seconds() };
+    (seconds.is_finite() && seconds > 0.0).then_some(seconds)
 }

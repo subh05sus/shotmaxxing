@@ -8,6 +8,8 @@
 
 mod decode;
 mod sound;
+
+pub use sound::audio_seconds;
 mod text;
 mod video;
 pub mod voice;
