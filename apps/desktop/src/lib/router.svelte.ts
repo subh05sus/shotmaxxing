@@ -21,16 +21,16 @@ export function startRouter(): () => void {
 }
 
 /**
- * Shows `path`. In the app, Home pages live in the Home window and each project in its own editor window, so a page
- * of the other kind opens in its own window and this one stays as it is.
+ * Shows `path`. In the app, Home pages live in the Home window and each project in its own editor window, so a Home
+ * page, or a project other than this window's, opens in its own window and this one stays as it is.
  */
 export function go(path: string): void {
   const next = path.startsWith('#') ? path : `#/${path.replace(/^\//, '')}`;
   const target = next.replace(/^#\/?/, '');
-  const kind = target.split(/[/?]/)[0];
-  if (isTauri && kind !== route.path[0] && (kind === 'home' || kind === 'editor')) {
-    void openWindow(kind, kind === 'home' ? target : target.slice('editor/'.length) || undefined);
-    return;
-  }
+  const [kind, project] = target.split('?')[0].split('/');
+  const [here, shown] = route.path;
+  if (isTauri && kind === 'home' && here !== 'home') return void openWindow('home', target);
+  if (isTauri && kind === 'editor' && (here !== 'editor' || shown !== project))
+    return void openWindow('editor', target.slice('editor/'.length) || undefined);
   if (location.hash !== next) location.hash = next;
 }
