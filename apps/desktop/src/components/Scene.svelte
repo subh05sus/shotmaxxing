@@ -5,6 +5,7 @@
    * the sample project's sign-up page and changes with time (typing, the success state) so playback has something
    * real to show. The real app shows decoded video frames here instead.
    */
+  import { env } from '@shotmaxxing/ui';
   import '../lib/scenes.css';
 
   let { variant = 0, t = 42, width }: { variant?: number; t?: number; width: number } = $props();
@@ -17,6 +18,20 @@
   const done = $derived(t >= 20.2);
   const faces = ['oklch(0.8 0.1 30)', 'oklch(0.78 0.1 200)', 'oklch(0.82 0.12 90)', 'oklch(0.74 0.12 300)'];
 </script>
+
+<!-- The made-up browser's window buttons, as the system draws them: traffic lights on the Mac, caption buttons on
+     Windows. -->
+{#snippet controls()}
+  {#if env.os === 'windows'}
+    <div class="scn-cap min" style="left:1266px"></div>
+    <div class="scn-cap max" style="left:1324px"></div>
+    <div class="scn-cap close" style="left:1382px"></div>
+  {:else}
+    <div class="scn-dot r"></div>
+    <div class="scn-dot y"></div>
+    <div class="scn-dot g"></div>
+  {/if}
+{/snippet}
 
 <div class="scn" class:scn-dark={variant === 1} style:transform="scale({scale})" aria-hidden="true">
   {#if variant === 1}
@@ -39,9 +54,7 @@
     <div class="scn-row" style="left:780px;top:270px;width:150px;background:oklch(0.9 0.005 260)"></div>
   {:else if variant === 2}
     <div class="scn-bar"></div>
-    <div class="scn-dot r"></div>
-    <div class="scn-dot y"></div>
-    <div class="scn-dot g"></div>
+    {@render controls()}
     <div
       class="scn-row"
       style="left:80px;top:140px;width:500px;height:22px;background:oklch(0.9 0.005 260)"
@@ -93,9 +106,7 @@
     <div class="scn-cell scn-active" style="left:360px;top:434px;font-weight:700">28,700</div>
   {:else if variant === 4}
     <div class="scn-bar"></div>
-    <div class="scn-dot r"></div>
-    <div class="scn-dot y"></div>
-    <div class="scn-dot g"></div>
+    {@render controls()}
     <div class="scn-url t">northwind.app/pricing</div>
     <div
       class="t"
@@ -122,9 +133,7 @@
     {/each}
   {:else if variant === 5}
     <div class="scn-bar" style="background:oklch(0.97 0.01 85)"></div>
-    <div class="scn-dot r"></div>
-    <div class="scn-dot y"></div>
-    <div class="scn-dot g"></div>
+    {@render controls()}
     <div style="left:0;top:72px;width:1440px;height:828px;background:oklch(0.99 0.008 85)"></div>
     <div class="t" style="left:260px;top:140px;font-size:46px;font-weight:750;letter-spacing:-0.02em">
       Release notes 0.3
@@ -145,9 +154,7 @@
     {/each}
   {:else}
     <div class="scn-bar"></div>
-    <div class="scn-dot r"></div>
-    <div class="scn-dot y"></div>
-    <div class="scn-dot g"></div>
+    {@render controls()}
     <div class="scn-url t">northwind.app/signup</div>
     <div class="scn-logo t">Northwind</div>
     <div class="scn-link t" style="left:340px">Product</div>

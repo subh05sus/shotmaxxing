@@ -99,6 +99,13 @@
       why: 'To notice clicks and typing for auto zoom, and to let agents press buttons for you.',
     },
   ];
+  // Windows asks nothing before recording the screen or watching for clicks; only its privacy switches for the
+  // microphone and camera can stand in the way.
+  const shownPermissions = $derived(
+    env.os === 'windows'
+      ? PERMISSIONS.filter((p) => p.kind === 'microphone' || p.kind === 'camera')
+      : PERMISSIONS,
+  );
   let states = $state<Record<string, PermissionState>>({});
   let waiting = $state<PermissionKind | null>(null);
   let poll: ReturnType<typeof setInterval> | undefined;
@@ -121,7 +128,9 @@
     await openPermissionSettings(kind);
   }
 
-  const screenReady = $derived(states.screen === 'granted' || states.screen === 'not_needed');
+  const screenReady = $derived(
+    env.os === 'windows' || states.screen === 'granted' || states.screen === 'not_needed',
+  );
 
   // Agents
   let connected = $state<Record<string, 'idle' | 'busy' | 'done'>>({});
@@ -260,15 +269,18 @@
               </ul>
             </div>
           {:else if step === 1}
-            <h1 class="text-title-1">Allow what Shotmaxxing needs</h1>
+            <h1 class="text-title-1">
+              {env.os === 'windows' ? 'Allow the microphone and camera' : 'Allow what Shotmaxxing needs'}
+            </h1>
             <p class="measure mt-2 text-body text-fg-muted">
-              Only Screen Recording is required. This page checks live, so it updates the moment you allow
-              something.
+              {env.os === 'windows'
+                ? 'Windows records the screen without asking. The microphone and camera are up to you; this page checks live, so it updates the moment you turn one on.'
+                : 'Only Screen Recording is required. This page checks live, so it updates the moment you allow something.'}
             </p>
             <ul
               class="mt-6 divide-y divide-border rounded-card border border-border bg-surface px-4 shadow-[var(--elev-1)]"
             >
-              {#each PERMISSIONS as p (p.kind)}
+              {#each shownPermissions as p (p.kind)}
                 {@const Icon = p.icon}
                 {@const state = states[p.kind]}
                 <li class="flex items-center gap-3.5 py-3.5">
@@ -308,7 +320,7 @@
             <p class="mt-3 text-footnote text-fg-muted">
               {env.os === 'mac'
                 ? 'Allow opens System Settings › Privacy & Security. Turn on Shotmaxxing, then come back here.'
-                : 'Allow opens Settings › Privacy & security. Turn on access for Shotmaxxing, then come back here.'}
+                : 'Allow opens Settings › Privacy & security. Turn on access, including for desktop apps, then come back here.'}
             </p>
           {:else if step === 2}
             <h1 class="flex items-center gap-2.5 text-title-1">
@@ -445,7 +457,8 @@
               <h1 class="mt-5 text-title-1">You're all set</h1>
               <ul class="mt-4 flex flex-col gap-2 text-callout">
                 <li class="flex items-center gap-2">
-                  <Check size={16} class="text-success" aria-hidden="true" /> Screen Recording allowed
+                  <Check size={16} class="text-success" aria-hidden="true" />
+                  {env.os === 'windows' ? 'Ready to record your screen' : 'Screen Recording allowed'}
                 </li>
                 <li class="flex items-center gap-2">
                   <Check

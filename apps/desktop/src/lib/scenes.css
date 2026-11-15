@@ -50,6 +50,40 @@
   left: 68px;
   background: oklch(0.75 0.18 145);
 }
+/* Windows' caption buttons, where the Mac has its traffic lights */
+.scn-cap {
+  top: 0;
+  width: 58px;
+  height: 44px;
+}
+.scn-cap::before,
+.scn-cap::after {
+  content: '';
+  position: absolute;
+  box-sizing: border-box;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 1.5px;
+  background: oklch(0.38 0.01 260);
+  transform: translate(-50%, -50%);
+}
+.scn-cap.min::after,
+.scn-cap.max::after {
+  display: none;
+}
+.scn-cap.max::before {
+  width: 13px;
+  height: 13px;
+  background: none;
+  border: 1.5px solid oklch(0.38 0.01 260);
+}
+.scn-cap.close::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.scn-cap.close::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
 .scn-url {
   left: 470px;
   top: 18px;

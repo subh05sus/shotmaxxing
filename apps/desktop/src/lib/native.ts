@@ -4,6 +4,7 @@
  */
 
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { env } from '@shotmaxxing/ui';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -52,8 +53,17 @@ const previewGrants = new Set<PermissionKind>(['screen', 'microphone']);
 export function permissionStatus(): Promise<PermissionStatus[]> {
   const kinds: PermissionKind[] = ['screen', 'microphone', 'camera', 'accessibility', 'input_monitoring'];
   return call('permission_status', undefined, () =>
-    kinds.map((kind) => ({ kind, state: previewGrants.has(kind) ? 'granted' : 'not_determined' })),
+    kinds.map((kind) => ({ kind, state: previewState(kind) })),
   );
+}
+
+/** What each system reports: Windows asks nothing for the screen or for input, and never says "not yet". */
+function previewState(kind: PermissionKind): PermissionState {
+  if (env.os === 'windows') {
+    if (kind !== 'microphone' && kind !== 'camera') return 'not_needed';
+    return previewGrants.has(kind) ? 'granted' : 'denied';
+  }
+  return previewGrants.has(kind) ? 'granted' : 'not_determined';
 }
 
 export function openPermissionSettings(kind: PermissionKind): Promise<void> {
