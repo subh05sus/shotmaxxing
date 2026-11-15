@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use shotmaxxing_capture::{DeviceChoice, FinishedProject, ProjectOptions, ProjectRecording, Target};
 use shotmaxxing_control::{RecordRequest, Recorded, RecordingStatus};
+use shotmaxxing_core::geometry::Rect;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::{takes, tray, windows};
@@ -168,9 +169,11 @@ fn start_session(
     source: String,
     name: String,
     options: StartOptions,
+    left_out: Vec<Rect>,
 ) -> Result<(Session, PathBuf), String> {
     let target = parse_source(&source)?;
     let mut capture = ProjectOptions::new(target);
+    capture.left_out = left_out;
     capture.max_fps = options.fps.unwrap_or(60).clamp(15, 120);
     capture.hide_desktop_icons = options.hide_desktop_icons;
     capture.system_audio = options.system_audio;
@@ -260,8 +263,9 @@ pub async fn start_recording<R: Runtime>(
     let folder = projects_folder(&app, options.folder.as_deref())?;
     let name =
         name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| "Recording".into());
+    let left_out = tray::area(&app);
     let (session, root) =
-        tauri::async_runtime::spawn_blocking(move || start_session(folder, source, name, options))
+        tauri::async_runtime::spawn_blocking(move || start_session(folder, source, name, options, left_out))
             .await
             .map_err(|e| e.to_string())??;
     let mut slot = state.0.lock().map_err(|_| "The recorder is busy.".to_string())?;
@@ -314,10 +318,11 @@ pub async fn restart_recording<R: Runtime>(
     let session = state.take()?;
     let folder = projects_folder(&app, session.options.folder.as_deref())?;
     let agent = session.agent.clone();
+    let left_out = tray::area(&app);
     let (mut session, root) = tauri::async_runtime::spawn_blocking(move || {
         let (source, name, options) = (session.source.clone(), session.name.clone(), session.options.clone());
         session.end(Finish::Discard)?;
-        start_session(folder, source, name, options)
+        start_session(folder, source, name, options, left_out)
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -369,7 +374,7 @@ pub fn start_for_agent<R: Runtime>(
     };
     let name = Some(request.name.trim()).filter(|n| !n.is_empty()).unwrap_or("Recording").to_string();
     let limit = Duration::from_secs_f64(request.max_seconds.clamp(1.0, 4.0 * 60.0 * 60.0));
-    let (mut session, root) = start_session(request.folder, source, name, options)?;
+    let (mut session, root) = start_session(request.folder, source, name, options, tray::area(app))?;
     session._timer = Some(stop_when_due(app, root.clone(), limit));
     session.agent = Some((owner, limit));
     {

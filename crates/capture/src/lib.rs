@@ -223,6 +223,9 @@ pub struct RecordOptions {
     pub microphone: Option<DeviceRecording>,
     /// Record a camera into an `.mp4` file.
     pub camera: Option<DeviceRecording>,
+    /// Places on the desktop, in points, that are Shotmaxxing's own though no window of its is there: its menu-bar
+    /// icon. Clicks there are left out of the telemetry, like clicks on its windows (macOS).
+    pub left_out: Vec<shotmaxxing_core::geometry::Rect>,
 }
 
 impl RecordOptions {
@@ -236,6 +239,7 @@ impl RecordOptions {
             system_audio: None,
             microphone: None,
             camera: None,
+            left_out: Vec::new(),
         }
     }
 }

@@ -22,7 +22,7 @@ use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventFlags, CGEventMask, CGEventTapLocation, CGEventTapOptions,
     CGEventTapPlacement, CGEventTapProxy, CGEventType,
 };
-use shotmaxxing_core::geometry::Rect;
+use shotmaxxing_core::geometry::{Point, Rect};
 use shotmaxxing_core::telemetry::{
     AGENT_EVENT_MARK, CursorSample, CursorShape, InputEvent, InputSource, MouseButton,
 };
@@ -47,8 +47,10 @@ enum Raw {
 struct TapState {
     events: Mutex<Vec<Raw>>,
     clicks: Mutex<Sender<(f64, f64, f64)>>,
-    /// Processes whose windows are never in a take (Shotmaxxing's own).
+    /// Processes whose windows are never in a take (Shotmaxxing's own)...
     left_out: Vec<i32>,
+    /// ...and places that are its own without a window: its menu-bar icon.
+    areas: Vec<Rect>,
     /// Whether the left and the right button's last press was on one of those windows, so its release is left out too.
     dropped: [AtomicBool; 2],
 }
@@ -119,7 +121,8 @@ pub struct Telemetry {
 }
 
 impl Telemetry {
-    pub fn start(origin: Origin, _started: f64) -> Self {
+    /// `left_out`: places on the desktop whose clicks are Shotmaxxing's own, as [`crate::RecordOptions::left_out`].
+    pub fn start(origin: Origin, _started: f64, left_out: Vec<Rect>) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
 
         let places = match origin {
@@ -144,6 +147,7 @@ impl Telemetry {
             events: Mutex::new(Vec::new()),
             clicks: Mutex::new(click_tx),
             left_out: window::left_out_processes(),
+            areas: left_out,
             dropped: [AtomicBool::new(false), AtomicBool::new(false)],
         });
 
@@ -332,8 +336,10 @@ unsafe extern "C-unwind" fn tap_callback(
         CGEventType::LeftMouseDown | CGEventType::RightMouseDown => {
             let right = kind == CGEventType::RightMouseDown;
             // Shotmaxxing's own windows (the recording pill, its menu-bar icon's menu) are never in a take, so a
-            // click on them isn't either: it would ripple on, and be zoomed into, nothing.
-            let ours = window::owner_at(p).is_some_and(|pid| state.left_out.contains(&pid));
+            // click on them isn't either: it would ripple on, and be zoomed into, nothing. Nor is one on its
+            // menu-bar icon (opening the menu to stop the take).
+            let ours = state.areas.iter().any(|area| area.contains(Point::new(p.x, p.y)))
+                || window::owner_at(p).is_some_and(|pid| state.left_out.contains(&pid));
             state.dropped[usize::from(right)].store(ours, Ordering::Relaxed);
             if ours {
                 None

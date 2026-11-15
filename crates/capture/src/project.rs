@@ -49,6 +49,8 @@ pub struct ProjectOptions {
     pub system_audio: bool,
     pub microphone: DeviceChoice,
     pub camera: DeviceChoice,
+    /// Places whose clicks are Shotmaxxing's own: see [`RecordOptions::left_out`].
+    pub left_out: Vec<shotmaxxing_core::geometry::Rect>,
 }
 
 impl ProjectOptions {
@@ -61,6 +63,7 @@ impl ProjectOptions {
             system_audio: false,
             microphone: DeviceChoice::Off,
             camera: DeviceChoice::Off,
+            left_out: Vec::new(),
         }
     }
 }
@@ -181,6 +184,7 @@ impl ProjectRecording {
         record.system_audio = options.system_audio.then(|| bundle.root().join(SYSTEM_AUDIO_TRACK));
         record.microphone = device(&options.microphone, bundle.root(), MIC_TRACK);
         record.camera = device(&options.camera, bundle.root(), CAMERA_TRACK);
+        record.left_out = options.left_out;
         let recorder = match Recorder::start(record) {
             Ok(recorder) => recorder,
             Err(error) => {

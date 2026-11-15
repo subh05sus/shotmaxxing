@@ -600,7 +600,7 @@ impl Recorder {
                     },
                     None => input::Origin::Fixed(origin.x, origin.y),
                 };
-                input::Telemetry::start(origin, started)
+                input::Telemetry::start(origin, started, options.left_out.clone())
             });
 
             Ok(Self {
