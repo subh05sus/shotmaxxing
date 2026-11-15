@@ -169,7 +169,7 @@ pub fn sources() -> Result<Sources, CaptureError> {
                 on_screen: w.isOnScreen(),
             })
             .collect();
-        let windows = window::listed(&seen, &display_frames(&content))
+        let mut windows: Vec<WindowInfo> = window::listed(&seen, &display_frames(&content))
             .into_iter()
             .map(|(index, full_screen)| {
                 let (w, app) = &candidates[index];
@@ -188,6 +188,9 @@ pub fn sources() -> Result<Sources, CaptureError> {
                 }
             })
             .collect();
+        // This Space's windows first, in the order they came (the record dialog picks the first window), then
+        // full-screen apps on other Spaces, so the dialog doesn't start on one that would switch Spaces.
+        windows.sort_by_key(|w| w.away);
         Ok(Sources { displays, windows })
     }
 }
