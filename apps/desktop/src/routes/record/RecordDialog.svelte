@@ -40,6 +40,7 @@
     startRecording,
     takeScreenshot,
     type CaptureSource,
+    type SourcePicture,
   } from '../../lib/native';
   import { route } from '../../lib/router.svelte';
   import { recordingOptions, settings } from '../../lib/settings.svelte';
@@ -90,11 +91,14 @@
       return;
     }
     // Pictures arrive a moment later; tiles show a placeholder until then.
-    const pictures = await sourceThumbnails(sources.map((s) => s.id)).catch(() => ({}));
-    sources = sources.map((s) => ({
-      ...s,
-      thumbnail: pictures[s.id as keyof typeof pictures] ?? s.thumbnail,
-    }));
+    const pictures = await sourceThumbnails(sources.map((s) => s.id)).catch(
+      (): Record<string, SourcePicture> => ({}),
+    );
+    sources = sources.map((s) => {
+      const picture = pictures[s.id];
+      if (!picture) return s;
+      return { ...s, thumbnail: picture.url ?? undefined, parked: picture.parked };
+    });
   }
 
   async function loadDevices() {
@@ -286,7 +290,24 @@
               ? wallpaper(i % 2 ? 'ocean' : 'aurora-lime').css
               : 'var(--fill-strong)'}
           >
-            {#if source.thumbnail && source.kind === 'display'}
+            {#if source.parked}
+              <!-- Stage Manager parked it in its strip, where it could only be pictured small and tilted. -->
+              <span
+                class="absolute inset-0 grid place-items-center"
+                title={kind === 'screenshot'
+                  ? 'It comes forward for the picture.'
+                  : 'It comes forward when the recording starts.'}
+              >
+                <span class="flex flex-col items-center gap-1.5">
+                  {#if source.thumbnail}
+                    <img src={source.thumbnail} alt="" class="size-14" in:fade />
+                  {:else}
+                    <Icon icon={AppWindow} size={28} class="text-fg-subtle" aria-hidden="true" />
+                  {/if}
+                  <span class="text-caption text-fg-muted">Parked by Stage Manager</span>
+                </span>
+              </span>
+            {:else if source.thumbnail && source.kind === 'display'}
               <img src={source.thumbnail} alt="" class="absolute inset-0 size-full object-cover" in:fade />
             {:else if source.thumbnail}
               <!-- A window floats on the tile, its own shape, so its rounded corners stay rounded. -->

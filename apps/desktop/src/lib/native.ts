@@ -32,6 +32,14 @@ export interface CaptureSource {
   height: number;
   /** A small picture of the source, as a data URL, when the platform can take one. */
   thumbnail?: string;
+  /** A window Stage Manager parked in its strip: `thumbnail` is its app's icon, and it comes forward to be taken. */
+  parked?: boolean;
+}
+
+export interface SourcePicture {
+  /** A data URL: a picture of the source, or a parked window's app icon. */
+  url: string | null;
+  parked: boolean;
 }
 
 /**
@@ -633,8 +641,8 @@ export function listDevices(): Promise<{ microphones: Device[]; cameras: Device[
   }));
 }
 
-/** Small pictures of sources, as data URLs keyed by source id. Empty in a browser preview. */
-export function sourceThumbnails(ids: string[]): Promise<Record<string, string>> {
+/** Small pictures of sources, keyed by source id. Empty in a browser preview. */
+export function sourceThumbnails(ids: string[]): Promise<Record<string, SourcePicture>> {
   return call('source_thumbnails', { ids }, () => ({}));
 }
 

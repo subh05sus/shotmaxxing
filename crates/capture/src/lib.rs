@@ -54,6 +54,9 @@ pub enum CaptureError {
     SourceNotFound(String),
     #[error("Recording isn't available on this platform yet.")]
     Unsupported,
+    /// A window Stage Manager has parked in its strip that couldn't be brought back to the stage.
+    #[error("That window is parked in Stage Manager's strip. Click it to bring it back, then try again.")]
+    Parked,
     #[error("The capture system reported a problem: {0}")]
     System(String),
     #[error("Couldn't write the recording: {0}")]
@@ -255,9 +258,19 @@ pub fn sources() -> Result<Sources, CaptureError> {
     imp::sources()
 }
 
-/// A JPEG of each target, at most `max_width` pixels wide, in the same order; `None` where no picture could be
-/// taken. Used for the source picker.
-pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
+/// A small picture of a source, for the picker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Thumbnail {
+    /// A JPEG of it.
+    Picture(Vec<u8>),
+    /// A window that Stage Manager has parked in its strip, which can't be pictured as it is there (it would come out
+    /// small and tilted). It comes forward when it's recorded or pictured. Its app's icon, as a PNG, when it has one.
+    Parked { icon: Option<Vec<u8>> },
+}
+
+/// A picture of each target, at most `max_width` pixels wide, in the same order; `None` where none could be taken.
+/// Used for the source picker.
+pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Thumbnail>>, CaptureError> {
     imp::thumbnails(targets, max_width)
 }
 

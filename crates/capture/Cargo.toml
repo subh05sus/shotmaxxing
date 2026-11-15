@@ -25,7 +25,16 @@ objc2-core-video = "0.3"
 objc2-core-graphics = "0.3"
 objc2-av-foundation = { version = "0.3", features = ["objc2-core-media"] }
 objc2-screen-capture-kit = "0.3"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "libc",
+    "objc2-core-graphics",
+    "NSGraphicsContext",
+    "NSImage",
+    "NSImageRep",
+    "NSPasteboard",
+    "NSRunningApplication",
+] }
 dispatch2 = "0.3"
 
 [target.'cfg(windows)'.dependencies]

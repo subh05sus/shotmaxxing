@@ -1,127 +1,164 @@
-//! A window's real size and place.
+//! Where a window is, and Stage Manager.
 //!
-//! A window's frame isn't always the window. With Stage Manager on, a window parked in the strip at the side of the
-//! screen reports the thumbnail's frame: a Finder window reads as about 124 × 111 points, off the left edge.
-//! Recording at that size gave a tiny video with the window shrunk into its top (a gap below it), blown up again by
-//! the export. ScreenCaptureKit still draws the window itself, at its real size, so a picture's content rect and
-//! scale say how big the window really is. Where it is comes from the window server, trusted only while the window
-//! shows at that size.
+//! With Stage Manager on, only the active app's windows are on the stage, and the rest wait in a strip at the side
+//! of the screen as small tilted pictures. A window parked there reports the thumbnail's frame (a Finder window
+//! reads as about 124 × 111 points, off the left edge), ScreenCaptureKit pictures it small, tilted and soft, and
+//! while it isn't changing it isn't drawn at all, so a picture of it may never come. Nothing says how big it really
+//! is: a picture's frame info would, but window pictures carry none (macOS 27), and a stream of a still, parked window
+//! sends no frames. So a window is brought back to the stage before it's pictured or recorded ([`bring_forward`]):
+//! its app is asked to come forward, and the window slides back to its place in about half a second, where its frame
+//! is its own again. The picker, which mustn't move windows about, tells a parked window by where it is
+//! ([`in_strip`]).
 
-use std::sync::mpsc::{Sender, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use block2::RcBlock;
-use objc2_core_foundation::{CFDictionary, CFString, CGRect, CGSize};
+use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+use objc2_core_foundation::{
+    CFBoolean, CFDictionary, CFNumber, CFPreferencesCopyAppValue, CFRetained, CFString, CFType, CGRect,
+};
 use objc2_core_graphics::{
-    CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption,
-};
-use objc2_core_media::CMSampleBuffer;
-use objc2_foundation::{NSError, NSNumber, NSString};
-use objc2_screen_capture_kit::{
-    SCContentFilter, SCScreenshotManager, SCStreamConfiguration, SCStreamFrameInfoContentRect,
-    SCStreamFrameInfoContentScale, SCStreamFrameInfoScaleFactor,
+    CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption, kCGWindowBounds,
+    kCGWindowIsOnscreen, kCGWindowOwnerPID,
 };
 
-/// A window's real size in points, and its pixels per point.
+/// A window as the window server has it now.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Measured {
-    pub width: f64,
-    pub height: f64,
-    pub scale: f64,
+pub struct Placed {
+    /// Its frame on the desktop, in points from the top left.
+    pub bounds: CGRect,
+    /// Showing on this desktop: not minimised, hidden, or on another desktop.
+    pub on_screen: bool,
+    /// The process that owns it.
+    pub pid: i32,
 }
 
-/// What ScreenCaptureKit attached to a frame: where the content sits in it (in points), how much it was scaled to
-/// fit, and pixels per point.
+/// A value in one of the window server's window dictionaries.
 ///
 /// # Safety
-/// `sample` must be a frame from ScreenCaptureKit, valid for the call.
-unsafe fn frame_info(sample: &CMSampleBuffer) -> Option<(CGRect, f64, f64)> {
-    // SAFETY: the attachments are an array of dictionaries keyed by ScreenCaptureKit's NSString constants (toll-free
-    // bridged to CFString); the rect is a CGRect's dictionary form and the scales are numbers.
-    unsafe {
-        let attachments = sample.sample_attachments_array(false)?;
-        if attachments.count() < 1 {
-            return None;
-        }
-        let info = (attachments.value_at_index(0) as *const CFDictionary).as_ref()?;
-        let get = |key: &NSString| info.value((key as *const NSString).cast());
-        let mut rect = CGRect::default();
-        let rect_info = (get(SCStreamFrameInfoContentRect) as *const CFDictionary).as_ref();
-        if !CGRectMakeWithDictionaryRepresentation(rect_info, &mut rect) {
-            return None;
-        }
-        let number = |key: &NSString| (get(key) as *const NSNumber).as_ref().map(NSNumber::as_f64);
-        Some((
-            rect,
-            number(SCStreamFrameInfoContentScale)?,
-            number(SCStreamFrameInfoScaleFactor).unwrap_or(1.0),
-        ))
-    }
+/// `info` must be a dictionary from `CGWindowListCopyWindowInfo`.
+unsafe fn entry<'a>(info: &'a CFDictionary, key: &CFString) -> Option<&'a CFType> {
+    // SAFETY: the dictionary's values are CF objects, valid while it is.
+    unsafe { (info.value((key as *const CFString).cast()) as *const CFType).as_ref() }
 }
 
-/// Asks for one picture of the window `filter` shows, in a frame of `room` points, and sends its real size (or
-/// `None`, when no picture comes) with `index` once it arrives. As OBS does: the content rect divided by the content
-/// scale is the window's size in points.
-pub fn request_measure(
-    filter: &SCContentFilter,
-    room: CGSize,
-    index: usize,
-    answer: Sender<(usize, Option<Measured>)>,
-) {
-    // SAFETY: the configuration is made and set here; the handler only reads the frame it's given and sends.
-    unsafe {
-        let scale = f64::from(filter.pointPixelScale()).max(1.0);
-        let config = SCStreamConfiguration::new();
-        config.setWidth(((room.width * scale).round() as usize).max(2));
-        config.setHeight(((room.height * scale).round() as usize).max(2));
-        config.setShowsCursor(false);
-        // Drawn at its own size when it fits, scaled down only when it doesn't: either way the info says.
-        config.setScalesToFit(false);
-        let handler = RcBlock::new(move |sample: *mut CMSampleBuffer, _error: *mut NSError| {
-            // A frame ScreenCaptureKit just made, valid for the call.
-            let info = sample.as_ref().and_then(|sample| frame_info(sample));
-            let measured = info.and_then(|(rect, content_scale, scale)| {
-                let (width, height) = (rect.size.width / content_scale, rect.size.height / content_scale);
-                (content_scale > 0.0 && width >= 1.0 && height >= 1.0).then_some(Measured {
-                    width,
-                    height,
-                    scale,
-                })
-            });
-            let _ = answer.send((index, measured));
-        });
-        SCScreenshotManager::captureSampleBufferWithFilter_configuration_completionHandler(
-            filter,
-            &config,
-            Some(&handler),
-        );
-    }
-}
-
-/// The real size of the window `filter` shows, from one picture of it in a frame of `room` points (big enough that
-/// the window needn't be scaled down, for an exact size). `None` when no picture comes back: the window closed, or
-/// the screen is asleep or locked.
-pub fn measure(filter: &SCContentFilter, room: CGSize) -> Option<Measured> {
-    let (tx, rx) = channel();
-    request_measure(filter, room, 0, tx);
-    rx.recv_timeout(Duration::from_secs(3)).ok().and_then(|(_, measured)| measured)
-}
-
-/// A window's frame on the desktop, in points from the top left, as the window server has it now.
-pub fn bounds(id: u32) -> Option<CGRect> {
+/// Where the window is, whether it shows, and whose it is, as the window server has it now. `None` once it has
+/// closed.
+pub fn placed(id: u32) -> Option<Placed> {
     let list = CGWindowListCopyWindowInfo(CGWindowListOption::OptionIncludingWindow, id)?;
     if list.count() < 1 {
         return None;
     }
-    // SAFETY: the window server answers with an array of dictionaries keyed by its CFString constants, the bounds
-    // being a CGRect's dictionary form.
+    // SAFETY: the window server answers with an array of dictionaries keyed by its CFString constants: the bounds a
+    // CGRect's dictionary form, the owner a number, and on-screen a boolean that's left out when it isn't.
     unsafe {
         let info = (list.value_at_index(0) as *const CFDictionary).as_ref()?;
-        let key: &CFString = objc2_core_graphics::kCGWindowBounds;
-        let found = (info.value((key as *const CFString).cast()) as *const CFDictionary).as_ref();
-        let mut rect = CGRect::default();
-        CGRectMakeWithDictionaryRepresentation(found, &mut rect).then_some(rect)
+        let found =
+            entry(info, kCGWindowBounds).map(|value| &*(value as *const CFType).cast::<CFDictionary>());
+        let mut bounds = CGRect::default();
+        if !CGRectMakeWithDictionaryRepresentation(found, &mut bounds) {
+            return None;
+        }
+        let pid = entry(info, kCGWindowOwnerPID)?.downcast_ref::<CFNumber>()?.as_i32()?;
+        let on_screen = entry(info, kCGWindowIsOnscreen)
+            .and_then(|value| value.downcast_ref::<CFBoolean>())
+            .is_some_and(CFBoolean::as_bool);
+        Some(Placed { bounds, on_screen, pid })
     }
+}
+
+/// A window's frame on the desktop, in points from the top left, as the window server has it now.
+pub fn bounds(id: u32) -> Option<CGRect> {
+    placed(id).map(|placed| placed.bounds)
+}
+
+/// One of another app's settings, as the person has it.
+fn preference(domain: &'static str, key: &'static str) -> Option<CFRetained<CFType>> {
+    CFPreferencesCopyAppValue(&CFString::from_static_str(key), &CFString::from_static_str(domain))
+}
+
+/// Whether Stage Manager is on.
+pub fn stage_manager_on() -> bool {
+    let Some(value) = preference("com.apple.WindowManager", "GloballyEnabled") else { return false };
+    // A boolean, or a number when it was set by hand.
+    match value.downcast_ref::<CFBoolean>() {
+        Some(flag) => flag.as_bool(),
+        None => value.downcast_ref::<CFNumber>().and_then(CFNumber::as_i64).is_some_and(|n| n != 0),
+    }
+}
+
+/// Whether Stage Manager keeps its strip on the right of the screen: it does when the Dock is on the left.
+pub fn strip_on_right() -> bool {
+    preference("com.apple.dock", "orientation")
+        .and_then(|value| value.downcast_ref::<CFString>().map(ToString::to_string))
+        .is_some_and(|side| side == "left")
+}
+
+/// The most a strip thumbnail measures either way, in points. Those seen were 92 × 107 to 147 × 97.
+const THUMBNAIL_MOST: f64 = 300.0;
+/// How far from the screen's edge a strip thumbnail's middle can be, in points, either way: they sit a few dozen
+/// points in, and a tilted one can hang off the edge.
+const STRIP_BAND: f64 = 260.0;
+
+/// Whether a window with this frame is in Stage Manager's strip, going by where it is: small, with its middle in
+/// the band along the strip's side (the right when `right`) of one of `displays` (their frames). Only meaningful with
+/// Stage Manager on, where windows on the stage keep out of that band.
+pub fn in_strip(frame: CGRect, displays: &[CGRect], right: bool) -> bool {
+    let (w, h) = (frame.size.width, frame.size.height);
+    if w > THUMBNAIL_MOST || h > THUMBNAIL_MOST {
+        return false;
+    }
+    let (x, y) = (frame.origin.x + w / 2.0, frame.origin.y + h / 2.0);
+    displays.iter().any(|display| {
+        let edge = if right { display.origin.x + display.size.width } else { display.origin.x };
+        (x - edge).abs() <= STRIP_BAND && y >= display.origin.y && y <= display.origin.y + display.size.height
+    })
+}
+
+/// Brings a window that Stage Manager parked in its strip back to the stage, so it's pictured or recorded upright at
+/// its real size, and waits (at most two seconds) for it to settle there. Its app is asked to come forward, which
+/// macOS allows while Shotmaxxing is the active app, as it is when someone has just clicked Record or picked a
+/// window. Does nothing with Stage Manager off or the app already in front, so nothing moves without need.
+pub fn bring_forward(id: u32) {
+    if !stage_manager_on() {
+        return;
+    }
+    let Some(before) = placed(id) else { return };
+    let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(before.pid) else { return };
+    if app.isActive() {
+        return;
+    }
+    if !app.activateWithOptions(NSApplicationActivationOptions::empty()) {
+        tracing::debug!(id, "the window's app didn't come forward");
+        return;
+    }
+    settle(id, before.bounds, Duration::from_secs(2));
+}
+
+/// Waits for a window to come to rest after its app was asked forward: once it has started to move, until its frame
+/// reads the same three times in a row 30 ms apart; and when it hasn't moved within 0.4 s, it was already in place.
+fn settle(id: u32, before: CGRect, most: Duration) {
+    let start = Instant::now();
+    let (mut last, mut same, mut moved) = (Some(before), 0, false);
+    while start.elapsed() < most {
+        std::thread::sleep(Duration::from_millis(30));
+        let now = bounds(id);
+        if now == last {
+            same += 1;
+        } else {
+            moved = true;
+            (last, same) = (now, 0);
+        }
+        if (moved && same >= 3) || (!moved && start.elapsed() >= Duration::from_millis(400)) {
+            return;
+        }
+    }
+}
+
+/// Whether `frame` is a Stage Manager strip thumbnail of a window whose real size is `size`. A thumbnail is a sixth
+/// of the window or so and never big, where a window someone resized rarely shrinks below half both ways.
+pub fn thumbnail_of(frame: CGRect, size: (f64, f64)) -> bool {
+    let (w, h) = (frame.size.width, frame.size.height);
+    w < size.0 * 0.5 && h < size.1 * 0.5 && w <= THUMBNAIL_MOST && h <= THUMBNAIL_MOST
 }
 
 /// Whether `frame` is the window at its real size, not a Stage Manager thumbnail or a frame mid-animation.
@@ -131,56 +168,62 @@ pub fn at_real_size(frame: CGRect, size: (f64, f64)) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use objc2::AllocAnyThread;
+    use objc2_core_foundation::{CGPoint, CGSize};
 
     use super::*;
 
-    #[test]
-    fn a_thumbnail_frame_is_not_the_real_size() {
-        let frame = |w: f64, h: f64| {
-            CGRect::new(objc2_core_foundation::CGPoint::new(-201.0, 419.0), CGSize::new(w, h))
-        };
-        assert!(at_real_size(frame(860.0, 501.5), (860.0, 500.0)));
-        assert!(!at_real_size(frame(147.0, 97.0), (860.0, 500.0)), "a Stage Manager thumbnail");
+    fn rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+        CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
     }
 
-    /// Run by hand on a Mac with Screen Recording allowed for the terminal, ideally with Stage Manager on and a
-    /// window parked in its strip: every window measures at least its frame, and a parked one its real size.
     #[test]
-    #[ignore = "pictures the windows on screen"]
-    fn windows_measure_at_least_their_frame() {
-        super::super::ensure_window_server();
-        if !super::super::has_permission() {
-            eprintln!("Screen Recording isn't allowed for this process: skipped");
-            return;
+    fn a_thumbnail_frame_is_not_the_real_size() {
+        assert!(at_real_size(rect(-201.0, 419.0, 860.0, 501.5), (860.0, 500.0)));
+        assert!(!at_real_size(rect(-201.0, 419.0, 147.0, 97.0), (860.0, 500.0)), "a Stage Manager thumbnail");
+    }
+
+    #[test]
+    fn strip_thumbnails_are_told_from_resized_windows() {
+        let frame = |w: f64, h: f64| rect(32.0, 661.0, w, h);
+        // Thumbnails seen in the strip, for windows of 600 × 412, 860 × 500 and 920 × 464 points.
+        assert!(thumbnail_of(frame(92.0, 114.0), (600.0, 412.0)));
+        assert!(thumbnail_of(frame(147.0, 97.0), (860.0, 500.0)));
+        assert!(thumbnail_of(frame(124.0, 111.0), (920.0, 464.0)));
+        // A window made smaller, narrower or shorter is followed instead.
+        assert!(!thumbnail_of(frame(500.0, 300.0), (920.0, 464.0)));
+        assert!(!thumbnail_of(frame(300.0, 460.0), (920.0, 464.0)));
+        assert!(
+            !thumbnail_of(rect(32.0, 661.0, 400.0, 180.0), (920.0, 464.0)),
+            "under half both ways, but too big for one"
+        );
+        // A small window is never mistaken for its own thumbnail.
+        assert!(!thumbnail_of(frame(200.0, 150.0), (240.0, 180.0)));
+    }
+
+    #[test]
+    fn strip_thumbnails_are_found_by_where_they_are() {
+        let laptop = rect(0.0, 0.0, 1470.0, 956.0);
+        let beside = rect(1470.0, 0.0, 1920.0, 1080.0);
+        let displays = [laptop, beside];
+        // Thumbnails seen in the strip on a laptop's display, one of them tilted off its edge.
+        for parked in [
+            rect(32.0, 661.0, 92.0, 114.0),
+            rect(15.0, 661.0, 95.0, 114.0),
+            rect(32.0, 589.0, 92.0, 107.0),
+            rect(-201.0, 419.0, 147.0, 97.0),
+        ] {
+            assert!(in_strip(parked, &displays, false), "{parked:?}");
         }
-        let content = super::super::shareable_content().expect("the windows");
-        let room = super::super::room(&content);
-        // SAFETY: read-only use of `content`, and a filter made from one of its windows.
-        unsafe {
-            for w in content.windows().iter().filter(|w| w.windowLayer() == 0 && w.isOnScreen()) {
-                let Some(app) = w.owningApplication() else { continue };
-                let frame = w.frame();
-                if frame.size.width < 80.0 || frame.size.height < 60.0 {
-                    continue;
-                }
-                let filter = SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &w);
-                let real = measure(&filter, room);
-                eprintln!(
-                    "{} #{}: frame {:.0}×{:.0} at ({:.0}, {:.0}), measured {:?}, window server {:?}",
-                    app.applicationName(),
-                    w.windowID(),
-                    frame.size.width,
-                    frame.size.height,
-                    frame.origin.x,
-                    frame.origin.y,
-                    real.map(|r| (r.width.round(), r.height.round(), r.scale)),
-                    bounds(w.windowID()).map(|b| (b.origin.x, b.origin.y, b.size.width, b.size.height)),
-                );
-                if let Some(real) = real {
-                    assert!(real.width >= frame.size.width - 2.0 && real.height >= frame.size.height - 2.0);
-                }
-            }
-        }
+        // Windows on the stage: a normal one, a small one in the middle, a small one on the side with no strip.
+        assert!(!in_strip(rect(319.0, 304.0, 600.0, 412.0), &displays, false));
+        assert!(!in_strip(rect(600.0, 400.0, 200.0, 150.0), &displays, false));
+        assert!(!in_strip(rect(1300.0, 400.0, 150.0, 120.0), &[laptop], false));
+        // With the Dock on the left, the strip is on the right.
+        assert!(in_strip(rect(1300.0, 400.0, 150.0, 120.0), &[laptop], true));
+        assert!(!in_strip(rect(32.0, 661.0, 92.0, 114.0), &[laptop], true));
+        // Each display has its own strip.
+        assert!(in_strip(rect(1500.0, 500.0, 100.0, 100.0), &displays, false));
+        // Below every display isn't in a strip.
+        assert!(!in_strip(rect(20.0, 1200.0, 100.0, 100.0), &[laptop], false));
     }
 }

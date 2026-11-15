@@ -46,7 +46,7 @@ fn imaging() -> Result<IWICImagingFactory, CaptureError> {
         .map_err(|e| CaptureError::System(e.message()))
 }
 
-pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
+pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<crate::Thumbnail>>, CaptureError> {
     let factory = imaging()?;
     let max_width = max_width.clamp(16, 4096) as i32;
     Ok(targets
@@ -56,7 +56,7 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
                 Target::Display(number) => display(monitor(number).ok()?.bounds, max_width),
                 Target::Window(id) => window(HWND(id as usize as *mut c_void), max_width),
             }?;
-            encode(&factory, &picture, &GUID_ContainerFormatJpeg)
+            encode(&factory, &picture, &GUID_ContainerFormatJpeg).map(crate::Thumbnail::Picture)
         })
         .collect())
 }
@@ -277,9 +277,12 @@ mod tests {
         assert_eq!(pictures.len(), targets.len());
         for (target, picture) in targets.iter().zip(&pictures) {
             match picture {
-                Some(bytes) => {
+                Some(crate::Thumbnail::Picture(bytes)) => {
                     assert_eq!(bytes[..3], [0xFF, 0xD8, 0xFF], "{target:?} isn't a JPEG");
                     eprintln!("{target:?}: a {} byte JPEG", bytes.len());
+                }
+                Some(crate::Thumbnail::Parked { .. }) => {
+                    panic!("{target:?}: parked, but Windows has no Stage Manager")
                 }
                 None => eprintln!("{target:?}: no picture"),
             }

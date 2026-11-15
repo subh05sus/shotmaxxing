@@ -1,5 +1,6 @@
 //! Small pictures of screens and windows for the source picker, and the microphones and cameras on this Mac.
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
@@ -7,14 +8,15 @@ use std::time::{Duration, Instant};
 use block2::RcBlock;
 use objc2::AllocAnyThread;
 use objc2::rc::Retained;
+use objc2_app_kit::NSRunningApplication;
 use objc2_av_foundation::{AVCaptureDevice, AVMediaTypeAudio, AVMediaTypeVideo};
-use objc2_core_foundation::{CFRetained, CFString};
+use objc2_core_foundation::{CFRetained, CFString, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGImage, kCGColorSpaceSRGB};
 use objc2_foundation::{NSArray, NSError};
 use objc2_screen_capture_kit::{SCContentFilter, SCScreenshotManager, SCStreamConfiguration};
 
-use super::{room, shareable_content, window};
-use crate::{CaptureError, Device, Screenshot, Target};
+use super::{display_frames, shareable_content, window};
+use crate::{CaptureError, Device, Screenshot, Target, Thumbnail};
 
 #[link(name = "ImageIO", kind = "framework")]
 unsafe extern "C" {
@@ -63,10 +65,36 @@ fn encode(image: *const c_void, kind: &'static str) -> Option<Vec<u8>> {
     }
 }
 
-/// A JPEG of each target, at most `max_width` pixels wide, in the same order. Targets that can't be pictured (gone,
-/// or not on screen) get `None`. All pictures are taken at once and the whole call waits at most about two seconds.
-pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
+/// An app's icon as a PNG `px` pixels square, for a picker card.
+fn app_icon(pid: i32, px: f64) -> Option<Vec<u8>> {
+    let icon = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?.icon()?;
+    let mut rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(px, px));
+    // SAFETY: a valid rect to fill in, with no context or hints.
+    let image = unsafe { icon.CGImageForProposedRect_context_hints(&mut rect, None, None) }?;
+    encode(Retained::as_ptr(&image) as *const c_void, "public.png")
+}
+
+/// A JPEG of each target, at most `max_width` pixels wide, in the same order, or for a window parked in Stage
+/// Manager's strip its app's icon. Targets that can't be pictured (gone, or not on screen) get `None`. All pictures
+/// are taken at once and the whole call waits at most about two seconds.
+pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Thumbnail>>, CaptureError> {
     let content = shareable_content()?;
+    let displays = display_frames(&content);
+    let (stage_manager, strip_on_right) = (window::stage_manager_on(), window::strip_on_right());
+    // Each window's frame and owner, to tell a parked one.
+    // SAFETY: read-only property access on objects owned by `content`.
+    let windows: Vec<Option<(CGRect, i32)>> = unsafe {
+        targets
+            .iter()
+            .map(|target| match *target {
+                Target::Display(_) => None,
+                Target::Window(id) => content.windows().iter().find(|w| w.windowID() == id).and_then(|w| {
+                    let pid = w.owningApplication()?.processID();
+                    Some((w.frame(), pid))
+                }),
+            })
+            .collect()
+    };
     // SAFETY: read-only use of `content`; each filter is made from one of its displays or windows.
     let filters: Vec<Option<Retained<SCContentFilter>>> =
         unsafe {
@@ -88,31 +116,17 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
                 })
                 .collect()
         };
-    // A window parked in Stage Manager reports a thumbnail's frame, which would letterbox its picture, so each
-    // window's shape comes from a small picture first, all asked for at once.
-    let (measure_tx, measure_rx) = channel();
-    let mut measuring = 0;
-    for (index, filter) in filters.iter().enumerate() {
-        if let (Target::Window(_), Some(filter)) = (targets[index], filter) {
-            window::request_measure(
-                filter,
-                objc2_core_foundation::CGSize::new(160.0, 160.0),
-                index,
-                measure_tx.clone(),
-            );
-            measuring += 1;
-        }
-    }
-    drop(measure_tx);
-    let mut shapes: Vec<Option<(f64, f64)>> = vec![None; targets.len()];
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while measuring > 0 {
-        match measure_rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-            Ok((index, measured)) => {
-                shapes[index] = measured.map(|m| (m.width, m.height));
-                measuring -= 1;
+    // A window parked in Stage Manager's strip can only be pictured small and tilted, and a still one not at all: its
+    // card shows its app's icon instead.
+    let mut out: Vec<Option<Thumbnail>> = vec![None; targets.len()];
+    let mut icons: HashMap<i32, Option<Vec<u8>>> = HashMap::new();
+    if stage_manager {
+        for (index, found) in windows.iter().enumerate() {
+            let Some((frame, pid)) = *found else { continue };
+            if window::in_strip(frame, &displays, strip_on_right) {
+                let icon = icons.entry(pid).or_insert_with(|| app_icon(pid, 128.0)).clone();
+                out[index] = Some(Thumbnail::Parked { icon });
             }
-            Err(_) => break,
         }
     }
 
@@ -122,8 +136,11 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
     unsafe {
         for (index, filter) in filters.iter().enumerate() {
             let Some(filter) = filter else { continue };
+            if out[index].is_some() {
+                continue;
+            }
             let rect = filter.contentRect();
-            let (w, h) = shapes[index].unwrap_or((rect.size.width, rect.size.height));
+            let (w, h) = (rect.size.width, rect.size.height);
             if w < 1.0 || h < 1.0 {
                 continue;
             }
@@ -148,13 +165,12 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
         }
     }
     drop(tx);
-    let mut out = vec![None; targets.len()];
     let deadline = Instant::now() + Duration::from_secs(2);
     while pending > 0 {
         let left = deadline.saturating_duration_since(Instant::now());
         match rx.recv_timeout(left) {
             Ok((index, bytes)) => {
-                out[index] = bytes;
+                out[index] = bytes.map(Thumbnail::Picture);
                 pending -= 1;
             }
             Err(_) => break,
@@ -164,8 +180,12 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
 }
 
 /// A full-size PNG of `target` in sRGB, without the pointer. A window comes alone, its rounded corners clear, and
-/// whatever covers it doesn't show. Waits at most five seconds.
+/// whatever covers it doesn't show; one Stage Manager parked comes back to the stage first. Waits at most five
+/// seconds for the picture.
 pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
+    if let Target::Window(id) = target {
+        window::bring_forward(id);
+    }
     let content = shareable_content()?;
     let (tx, rx) = channel::<Option<Vec<u8>>>();
     // SAFETY: read-only use of `content`; the filter, configuration and handler live until the request is made,
@@ -191,6 +211,12 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
                     .iter()
                     .find(|w| w.windowID() == id)
                     .ok_or_else(|| CaptureError::SourceNotFound("that window".into()))?;
+                // Still in Stage Manager's strip, it would come out small and tilted.
+                if window::stage_manager_on()
+                    && window::in_strip(window.frame(), &display_frames(&content), window::strip_on_right())
+                {
+                    return Err(CaptureError::Parked);
+                }
                 let app = window.owningApplication().map(|a| a.applicationName().to_string());
                 let title = window.title().map(|t| t.to_string()).filter(|t| !t.is_empty());
                 let filter =
@@ -199,15 +225,8 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
             }
         };
         let rect = filter.contentRect();
-        let mut scale = f64::from(filter.pointPixelScale());
-        let (mut width, mut height) = (rect.size.width, rect.size.height);
-        // A window's frame can be a Stage Manager thumbnail's, so its size comes from a picture of it.
-        if matches!(target, Target::Window(_))
-            && let Some(real) = window::measure(&filter, room(&content))
-        {
-            (width, height, scale) = (real.width, real.height, real.scale);
-        }
-        let (width, height) = ((width * scale).round(), (height * scale).round());
+        let scale = f64::from(filter.pointPixelScale());
+        let (width, height) = ((rect.size.width * scale).round(), (rect.size.height * scale).round());
         if width < 1.0 || height < 1.0 {
             return Err(CaptureError::System(
                 "there's nothing to picture there. Is the window minimised?".into(),

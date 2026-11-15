@@ -303,7 +303,7 @@ fn wide_text(buffer: &[u16]) -> String {
     String::from_utf16_lossy(&buffer[..buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len())])
 }
 
-pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
+pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<crate::Thumbnail>>, CaptureError> {
     preview::thumbnails(targets, max_width)
 }
 

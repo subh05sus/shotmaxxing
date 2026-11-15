@@ -163,14 +163,24 @@ pub async fn list_sources<R: Runtime>(app: AppHandle<R>) -> Result<Vec<CaptureSo
     Ok(displays.chain(windows).collect())
 }
 
-/// Small pictures of the given sources (ids from `list_sources`), as JPEG data URLs keyed by id. Sources that can't
-/// be pictured are left out, and the picker keeps its placeholder for them.
+/// A source's picture for the picker.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourcePicture {
+    /// A data URL: a JPEG of the source, or a parked window's app icon as a PNG.
+    url: Option<String>,
+    /// A window Stage Manager parked in its strip: it comes forward when it's recorded or pictured.
+    parked: bool,
+}
+
+/// Small pictures of the given sources (ids from `list_sources`), keyed by id. Sources that can't be pictured are
+/// left out, and the picker keeps its placeholder for them.
 #[tauri::command]
 pub async fn source_thumbnails(
     ids: Vec<String>,
-) -> Result<std::collections::HashMap<String, String>, String> {
+) -> Result<std::collections::HashMap<String, SourcePicture>, String> {
     use base64::Engine;
-    use shotmaxxing_capture::Target;
+    use shotmaxxing_capture::{Target, Thumbnail};
     tauri::async_runtime::spawn_blocking(move || {
         let parsed: Vec<(String, Target)> = ids
             .into_iter()
@@ -185,12 +195,22 @@ pub async fn source_thumbnails(
             .collect();
         let targets: Vec<Target> = parsed.iter().map(|(_, t)| *t).collect();
         let pictures = shotmaxxing_capture::thumbnails(&targets, 480).map_err(|e| e.to_string())?;
+        let url = |kind: &str, bytes: Vec<u8>| {
+            format!("data:image/{kind};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+        };
         Ok(parsed
             .into_iter()
             .zip(pictures)
-            .filter_map(|((id, _), bytes)| {
-                let encoded = base64::engine::general_purpose::STANDARD.encode(bytes?);
-                Some((id, format!("data:image/jpeg;base64,{encoded}")))
+            .filter_map(|((id, _), picture)| {
+                let picture = match picture? {
+                    Thumbnail::Picture(bytes) => {
+                        SourcePicture { url: Some(url("jpeg", bytes)), parked: false }
+                    }
+                    Thumbnail::Parked { icon } => {
+                        SourcePicture { url: icon.map(|bytes| url("png", bytes)), parked: true }
+                    }
+                };
+                Some((id, picture))
             })
             .collect())
     })

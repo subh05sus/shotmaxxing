@@ -3,6 +3,7 @@
 mod audio;
 mod clock;
 mod devices;
+mod follow;
 mod input;
 mod preview;
 mod window;
@@ -20,7 +21,7 @@ use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AllocAnyThread, DefinedClass, define_class, msg_send};
-use objc2_core_foundation::CFString;
+use objc2_core_foundation::{CFString, CGRect};
 use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_screen_capture_kit::{
@@ -169,16 +170,50 @@ pub fn sources() -> Result<Sources, CaptureError> {
     }
 }
 
-/// The largest display's size, in points: room to picture any ordinary window at its own size.
-fn room(content: &SCShareableContent) -> objc2_core_foundation::CGSize {
-    let mut room = objc2_core_foundation::CGSize::new(1920.0, 1080.0);
+/// The frames of the displays, on the desktop.
+fn display_frames(content: &SCShareableContent) -> Vec<CGRect> {
     // SAFETY: read-only property access on objects owned by `content`.
-    for display in unsafe { content.displays() }.iter() {
-        let frame = unsafe { display.frame() };
-        room.width = room.width.max(frame.size.width);
-        room.height = room.height.max(frame.size.height);
+    unsafe { content.displays().iter().map(|display| display.frame()).collect() }
+}
+
+/// How to record a window, when it can be done the better way: its app's windows on the display it's on, cropped to
+/// it ([`follow::Crop`] says why). Not when it isn't showing or isn't all on one display: then it's recorded by
+/// itself, as before.
+///
+/// # Safety
+/// `window` must be one of `content`'s windows.
+unsafe fn crop_for(content: &SCShareableContent, window: &SCWindow) -> Option<follow::Crop> {
+    let app = unsafe { window.owningApplication() }?;
+    let id = unsafe { window.windowID() };
+    let placed = window::placed(id)?;
+    if !placed.on_screen {
+        return None;
     }
-    room
+    // SAFETY: read-only property access on objects owned by `content`.
+    unsafe {
+        let screens: Vec<follow::Screen> = content
+            .displays()
+            .iter()
+            .map(|display| follow::Screen { frame: display.frame(), display })
+            .collect();
+        let screen = follow::screen_for(&screens, placed.bounds)?;
+        // The app's other windows, as the picker lists them.
+        let pid = app.processID();
+        let excepted = content
+            .windows()
+            .iter()
+            .filter(|w| {
+                let frame = w.frame();
+                w.windowID() != id
+                    && w.windowLayer() == 0
+                    && w.isOnScreen()
+                    && frame.size.width >= 80.0
+                    && frame.size.height >= 60.0
+                    && w.owningApplication().is_some_and(|a| a.processID() == pid)
+            })
+            .collect();
+        Some(follow::Crop { app, excepted, screens, screen, rect: placed.bounds })
+    }
 }
 
 /// Parts of macOS itself that own windows but aren't worth recording on their own (overlays, the Dock, menus).
@@ -203,6 +238,45 @@ struct Shared {
     writer: Mutex<Option<Writer>>,
     /// What the computer plays, when it's being recorded.
     audio: Mutex<Option<AudioWriter>>,
+    /// For a window take: holds frames while the window isn't under the crop.
+    gate: Option<Arc<follow::Gate>>,
+}
+
+/// How a stream is set up, kept so a window take's crop can move without changing the rest.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StreamSettings {
+    width_px: usize,
+    height_px: usize,
+    max_fps: u32,
+    /// The computer's sound is recorded too.
+    audio: bool,
+}
+
+impl StreamSettings {
+    /// A configuration with these settings, cropped to `source` (in the display's points) when there is one.
+    fn configuration(&self, source: Option<CGRect>) -> Retained<SCStreamConfiguration> {
+        // SAFETY: a new configuration, set up before any stream sees it.
+        unsafe {
+            let config = SCStreamConfiguration::new();
+            config.setWidth(self.width_px);
+            config.setHeight(self.height_px);
+            config.setMinimumFrameInterval(CMTime::with_seconds(1.0 / f64::from(self.max_fps.max(1)), 600));
+            config.setPixelFormat(YUV_420V);
+            config.setShowsCursor(false);
+            config.setQueueDepth(6);
+            if self.audio {
+                config.setCapturesAudio(true);
+                config.setSampleRate(48_000);
+                config.setChannelCount(2);
+                // This app's own sounds (the countdown) stay out of the take.
+                config.setExcludesCurrentProcessAudio(true);
+            }
+            if let Some(source) = source {
+                config.setSourceRect(source);
+            }
+            config
+        }
+    }
 }
 
 struct OutputIvars {
@@ -223,6 +297,11 @@ define_class!(
         fn stream_did_output(&self, _stream: &SCStream, sample: &CMSampleBuffer, kind: SCStreamOutputType) {
             let shared = &self.ivars().shared;
             if kind == SCStreamOutputType::Screen {
+                // SAFETY: a frame from ScreenCaptureKit, valid for the call, and its timestamp.
+                let pts = unsafe { sample.presentation_time_stamp().seconds() };
+                if shared.gate.as_ref().is_some_and(|gate| !gate.admits(pts)) {
+                    return;
+                }
                 if let Ok(mut guard) = shared.writer.lock()
                     && let Some(writer) = guard.as_mut()
                 {
@@ -254,6 +333,8 @@ pub struct Recorder {
     shared: Arc<Shared>,
     devices: Option<DeviceCapture>,
     input: Option<input::Telemetry>,
+    /// Moves a window take's crop with the window.
+    follower: Option<follow::Follower>,
     started: f64,
     options: RecordOptions,
     size: (f64, f64),
@@ -265,6 +346,10 @@ pub struct Recorder {
 impl Recorder {
     pub fn start(options: RecordOptions) -> Result<Self, CaptureError> {
         ensure_window_server();
+        // A window Stage Manager parked comes back to the stage first, to be recorded upright and at its place.
+        if let Target::Window(id) = options.target {
+            window::bring_forward(id);
+        }
         let content = shareable_content()?;
         let own_pid = std::process::id() as i32;
         // The microphone and camera start first: a camera takes a moment to wake, and the first words of a take
@@ -274,7 +359,7 @@ impl Recorder {
         // SAFETY: ScreenCaptureKit objects are created and configured before the stream starts; all arguments are
         // valid objects from `content`.
         unsafe {
-            let (filter, origin, app_name, window_title) = match options.target {
+            let (filter, origin, app_name, window_title, picked, crop) = match options.target {
                 Target::Display(id) => {
                     let displays = content.displays();
                     let display = match id {
@@ -323,7 +408,7 @@ impl Recorder {
                             &NSArray::from_retained_slice(&kept),
                         )
                     };
-                    (filter, display.frame().origin, None, None)
+                    (filter, display.frame().origin, None, None, None, None)
                 }
                 Target::Window(id) => {
                     let window = content
@@ -331,53 +416,67 @@ impl Recorder {
                         .iter()
                         .find(|w| w.windowID() == id)
                         .ok_or_else(|| CaptureError::SourceNotFound("that window".into()))?;
+                    // Still in Stage Manager's strip, it would come out as a small tilted picture.
+                    if window::stage_manager_on()
+                        && window::in_strip(
+                            window.frame(),
+                            &display_frames(&content),
+                            window::strip_on_right(),
+                        )
+                    {
+                        return Err(CaptureError::Parked);
+                    }
                     let app = window.owningApplication().map(|a| a.applicationName().to_string());
                     let title = window.title().map(|t| t.to_string());
-                    let filter =
-                        SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &window);
-                    (filter, window.frame().origin, app, title)
+                    match crop_for(&content, &window) {
+                        Some(crop) => {
+                            let filter = crop.filter();
+                            let scale = f64::from(filter.pointPixelScale()).max(1.0);
+                            let size = (crop.rect.size.width, crop.rect.size.height, scale);
+                            (filter, crop.rect.origin, app, title, Some(size), Some(crop))
+                        }
+                        None => {
+                            let alone = SCContentFilter::initWithDesktopIndependentWindow(
+                                SCContentFilter::alloc(),
+                                &window,
+                            );
+                            (alone, window.frame().origin, app, title, None, None)
+                        }
+                    }
                 }
             };
 
-            let rect = filter.contentRect();
-            let mut scale = f64::from(filter.pointPixelScale()).max(1.0);
-            let (mut width_pt, mut height_pt) = (rect.size.width, rect.size.height);
-            // A window's frame can be a Stage Manager thumbnail's, so its size comes from a picture of it.
+            let (width_pt, height_pt, scale) = picked.unwrap_or_else(|| {
+                let rect = filter.contentRect();
+                (rect.size.width, rect.size.height, f64::from(filter.pointPixelScale()).max(1.0))
+            });
             let window_id = match options.target {
                 Target::Window(id) => Some(id),
                 Target::Display(_) => None,
             };
-            if window_id.is_some()
-                && let Some(real) = window::measure(&filter, room(&content))
-            {
-                (width_pt, height_pt, scale) = (real.width, real.height, real.scale.max(1.0));
-            }
             // Encoders want even dimensions.
             let width_px = ((width_pt * scale).round() as usize) & !1;
             let height_px = ((height_pt * scale).round() as usize) & !1;
 
-            let config = SCStreamConfiguration::new();
-            config.setWidth(width_px);
-            config.setHeight(height_px);
-            config
-                .setMinimumFrameInterval(CMTime::with_seconds(1.0 / f64::from(options.max_fps.max(1)), 600));
-            config.setPixelFormat(YUV_420V);
-            config.setShowsCursor(false);
-            config.setQueueDepth(6);
+            let settings = StreamSettings {
+                width_px,
+                height_px,
+                max_fps: options.max_fps,
+                audio: options.system_audio.is_some(),
+            };
+            let config = settings.configuration(crop.as_ref().map(follow::Crop::source));
             let audio = match &options.system_audio {
-                Some(path) => {
-                    config.setCapturesAudio(true);
-                    config.setSampleRate(48_000);
-                    config.setChannelCount(2);
-                    // This app's own sounds (the countdown) stay out of the take.
-                    config.setExcludesCurrentProcessAudio(true);
-                    Some(AudioWriter::new(path, 2)?)
-                }
+                Some(path) => Some(AudioWriter::new(path, 2)?),
                 None => None,
             };
 
             let writer = Writer::new(&options.output, width_px, height_px, options.max_fps)?;
-            let shared = Arc::new(Shared { writer: Mutex::new(Some(writer)), audio: Mutex::new(audio) });
+            let gate = crop.as_ref().map(|_| Arc::new(follow::Gate::default()));
+            let shared = Arc::new(Shared {
+                writer: Mutex::new(Some(writer)),
+                audio: Mutex::new(audio),
+                gate: gate.clone(),
+            });
             let output = StreamOutput::new(shared.clone());
             let stream =
                 SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, None);
@@ -415,6 +514,18 @@ impl Recorder {
             }
 
             let started = clock::now();
+            // A window take's crop follows the window.
+            let follower = match (crop, window_id, gate) {
+                (Some(crop), Some(id), Some(gate)) => Some(follow::Follower::start(
+                    stream.clone(),
+                    crop,
+                    settings,
+                    id,
+                    (width_pt, height_pt),
+                    gate,
+                )),
+                _ => None,
+            };
             let input = options.telemetry.then(|| {
                 let origin = match window_id {
                     Some(id) => {
@@ -433,6 +544,7 @@ impl Recorder {
                 shared,
                 devices,
                 input,
+                follower,
                 started,
                 options,
                 size: (width_pt, height_pt),
@@ -453,6 +565,8 @@ impl Recorder {
 
     pub fn stop(self) -> Result<Recording, CaptureError> {
         let stopped = clock::now();
+        // The crop stops following before the stream stops.
+        drop(self.follower);
         let (tx, rx) = sync_channel::<()>(1);
         let handler = RcBlock::new(move |_error: *mut NSError| {
             let _ = tx.send(());
