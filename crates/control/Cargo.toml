@@ -1,0 +1,21 @@
+[package]
+name = "shotmaxxing-control"
+description = "The control API between the shotmaxxing command and the running Shotmaxxing app: JSON lines over a private local socket."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+shotmaxxing-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

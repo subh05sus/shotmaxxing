@@ -355,6 +355,58 @@ export async function onExportProgress(
   );
 }
 
+// Agent takes ---------------------------------------------------------------------------------------------------
+
+/** What the take card shows: an agent's take, from asking the person through to the saved project. */
+export interface TakeCardState {
+  id: number;
+  phase: 'asking' | 'running' | 'waiting' | 'done' | 'stopped';
+  client: string;
+  app: string;
+  beats: string[];
+  /** The beat in progress, counting from 0; `beats.length` while the take is being saved. */
+  beat: number;
+  done: number;
+  seconds: number;
+  /** What the person was asked to do, while the take waits for them. */
+  waiting: string | null;
+  result: {
+    beats_done: number;
+    stopped: string | null;
+    project: string | null;
+    video: string | null;
+    seconds: number;
+  } | null;
+}
+
+export function takeCard(): Promise<TakeCardState | null> {
+  return call('take_card', undefined, () => null);
+}
+
+/** Allows the take or not. With `session`, the agent's later takes start without asking until it disconnects. */
+export function answerTake(id: number, allow: boolean, session: boolean): Promise<void> {
+  return call('answer_take', { id, allow, session }, () => undefined);
+}
+
+export function stopTake(id: number): Promise<void> {
+  return call('stop_take', { id }, () => undefined);
+}
+
+export function handBackTake(id: number): Promise<void> {
+  return call('hand_back_take', { id }, () => undefined);
+}
+
+export function dismissTake(id: number): Promise<void> {
+  return call('dismiss_take', { id }, () => undefined);
+}
+
+/** Calls `listener` whenever the take card changes. Returns a function that stops listening. */
+export async function onTakeCard(listener: (card: TakeCardState) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+  return getCurrentWebviewWindow().listen<TakeCardState>('take-card', (event) => listener(event.payload));
+}
+
 export function chooseExportFolder(current?: string): Promise<string | null> {
   return call('choose_export_folder', { current: current || null }, () => null);
 }

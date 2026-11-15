@@ -12,6 +12,7 @@ mod projects;
 mod recording;
 mod shortcuts;
 mod system;
+mod takes;
 mod tray;
 mod windows;
 
@@ -41,10 +42,12 @@ pub fn run() {
         .manage(recording::Notices::default())
         .manage(system::MenuBarIcon::default())
         .manage(export::Exports::default())
+        .manage(takes::Takes::default())
         .setup(|app| {
             let handle = app.handle();
             tray::create(handle)?;
             shortcuts::register(handle)?;
+            takes::listen(handle);
             windows::open_home(handle, None)?;
             Ok(())
         })
@@ -86,6 +89,11 @@ pub fn run() {
             system::set_menu_bar_icon,
             system::launch_at_login,
             system::set_launch_at_login,
+            takes::take_card,
+            takes::answer_take,
+            takes::stop_take,
+            takes::hand_back_take,
+            takes::dismiss_take,
         ])
         .build(tauri::generate_context!())
         .expect("Shotmaxxing could not start");

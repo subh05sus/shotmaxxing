@@ -6,6 +6,8 @@ mod keys;
 use std::ffi::c_void;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use objc2_core_foundation::{CFRetained, CFString, CGPoint};
@@ -176,6 +178,8 @@ struct MacDesk<'a> {
     source: Option<CFRetained<CGEventSource>>,
     /// The click count of the last press, for its release.
     clicks: i64,
+    /// The take card's Hand back button.
+    hand_back: Arc<AtomicBool>,
 }
 
 impl MacDesk<'_> {
@@ -315,6 +319,9 @@ impl Desk for MacDesk<'_> {
     }
 
     fn hand_back_down(&self) -> bool {
+        if self.hand_back.swap(false, Ordering::SeqCst) {
+            return true;
+        }
         let flags = CGEventSource::flags_state(CGEventSourceStateID::HIDSystemState);
         CGEventSource::key_state(CGEventSourceStateID::HIDSystemState, keys::RETURN)
             && flags.contains(CGEventFlags::MaskCommand | CGEventFlags::MaskAlternate)
@@ -407,7 +414,7 @@ pub fn run_take(
     if !ax::trusted() {
         return Err(AgentError::Permission(ACCESSIBILITY_PERMISSION.into()));
     }
-    progress(Progress { done: 0.0, message: "Getting the app ready".into() });
+    progress(Progress { done: 0.0, message: "Getting the app ready".into(), ..Progress::default() });
     let (pid, window) = locate(script.app.as_deref(), script.window.as_deref())?;
     let target = match (&window, script.framing) {
         (Some(window), Framing::Window) => Target::Window(window.id),
@@ -435,6 +442,7 @@ pub fn run_take(
         tree: pid.and_then(|pid| ax::Tree::new(pid, window.as_ref().map(bounds))),
         source: CGEventSource::new(CGEventSourceStateID::HIDSystemState),
         clicks: 1,
+        hand_back: options.hand_back.clone(),
     };
     // Refs are checked against fresh element handles, so the first walk happens before the clock starts.
     if let Some(tree) = desk.tree.as_mut() {

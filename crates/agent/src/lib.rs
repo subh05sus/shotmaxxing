@@ -96,7 +96,7 @@ pub trait Desk {
     fn secure_input(&self) -> bool;
     /// Whether Escape is held down right now.
     fn escape_down(&self) -> bool;
-    /// Whether the person is pressing ⌥⌘Return to hand control back.
+    /// Whether the person is handing control back: pressing ⌥⌘Return, or Hand back on the take card.
     fn hand_back_down(&self) -> bool;
     /// Whether any modifier key is held.
     fn modifiers_held(&self) -> bool;
@@ -118,12 +118,16 @@ pub struct Performed {
     pub handoffs: Vec<(f64, f64)>,
 }
 
-/// A step along the way, for progress messages.
-#[derive(Clone, Debug)]
+/// A step along the way, for progress messages and the take card.
+#[derive(Clone, Debug, Default)]
 pub struct Progress {
     /// From 0 to 1.
     pub done: f64,
     pub message: String,
+    /// The beat now playing, counting from 0.
+    pub beat: Option<usize>,
+    /// What the person was asked to do, while the take waits for them to hand back.
+    pub waiting: Option<String>,
 }
 
 /// What `prepare` found: the window to film and the controls an agent can name by ref.
@@ -148,6 +152,8 @@ pub struct TakeOptions {
     /// The agent filming, e.g. "Claude Code".
     pub client: Option<String>,
     pub cancel: Arc<AtomicBool>,
+    /// Set by the take card's Hand back button; it counts as pressing ⌥⌘Return.
+    pub hand_back: Arc<AtomicBool>,
 }
 
 /// A filmed take: the saved project and how the performance went.
@@ -488,6 +494,8 @@ impl Stage<'_> {
         progress(Progress {
             done,
             message: format!("Waiting for you: {message}. Press ⌥⌘Return when you're done."),
+            waiting: Some(message.to_string()),
+            ..Progress::default()
         });
         let start = self.desk.now_ms();
         // The pointer is the person's now, and their Escape presses are part of what they're doing.
@@ -514,7 +522,7 @@ impl Stage<'_> {
         handoffs.push((start, self.desk.now_ms()));
         self.escapes.clear();
         self.escape_was_down = self.desk.escape_down();
-        progress(Progress { done, message: "Thanks, carrying on.".into() });
+        progress(Progress { done, message: "Thanks, carrying on.".into(), ..Progress::default() });
         Ok(())
     }
 
@@ -631,7 +639,12 @@ pub fn perform(
     }
     for (index, beat) in script.beats.iter().enumerate() {
         let done = index as f64 / total.max(1) as f64;
-        progress(Progress { done, message: format!("Beat {} of {total}: {}", index + 1, describe(beat)) });
+        progress(Progress {
+            done,
+            message: format!("Beat {} of {total}: {}", index + 1, describe(beat)),
+            beat: Some(index),
+            waiting: None,
+        });
         let result = match beat {
             Beat::Wait(wait) => stage.wait(wait, &mut out.warnings),
             Beat::UserStep(step) => stage.hand_over(step, done, progress, &mut out.handoffs),
@@ -645,7 +658,7 @@ pub fn perform(
     }
     // The ending stays on screen for a moment. Stepping in now doesn't spoil anything.
     let _ = stage.rest(script.tail_ms.map_or(base.tail_ms, f64::from));
-    progress(Progress { done: 1.0, message: "Done".into() });
+    progress(Progress { done: 1.0, message: "Done".into(), ..Progress::default() });
     out
 }
 

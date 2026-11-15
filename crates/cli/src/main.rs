@@ -569,6 +569,7 @@ fn run_take(
         system_audio,
         client: Some("Shotmaxxing CLI".into()),
         cancel,
+        hand_back: Default::default(),
     };
     let take = shotmaxxing_agent::run_take(&script, options, &mut |p| {
         if !json {

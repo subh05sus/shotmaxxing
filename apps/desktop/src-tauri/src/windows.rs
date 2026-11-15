@@ -150,7 +150,9 @@ fn floating<'a, R: Runtime>(
         .always_on_top(true)
         .skip_taskbar(true)
         .visible_on_all_workspaces(true)
-        .focused(false);
+        .focused(false)
+        // A click on Stop or Allow works straight away, without first bringing the app forward.
+        .accept_first_mouse(true);
     // Keeping these windows out of recordings: on macOS the capture filter leaves out the whole app, so screenshots
     // and screen sharing still see them. Windows has no such filter, so there the window opts out of capture.
     #[cfg(windows)]

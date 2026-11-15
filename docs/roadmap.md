@@ -35,14 +35,15 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 
 ## Milestone 3: Agents
 
-- [ ] Control API for the running app (Unix socket / named pipe)
+- [x] Control API for the running app (Unix socket on macOS and Linux)
+- [ ] Control API on Windows (named pipe)
 - [x] `shotmaxxing mcp` and the CLI
 - [x] Take script schema and checks
 - [x] Beats compiler and performer (macOS)
 - [x] Accessibility refs with fingerprints (macOS)
 - [ ] Accessibility refs on Windows (UI Automation)
 - [x] Safety stops (Esc three times, the person moving the mouse, password fields) and hand-off (⌥⌘Return)
-- [ ] Take card in the app, and a per-session consent prompt
+- [x] Take card in the app, and a per-session consent prompt
 - [ ] macOS virtual display
 - [x] One-click connect for Claude Code, Claude Desktop, Codex, Cursor, VS Code, Windsurf, OpenCode, Gemini CLI
 - [x] Agent skill ([skills/shotmaxxing](../skills/shotmaxxing/SKILL.md))

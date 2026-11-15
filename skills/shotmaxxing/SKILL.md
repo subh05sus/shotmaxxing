@@ -24,11 +24,13 @@ When you can see the app's controls, plan the whole performance and let Shotmaxx
 3. Add `say:` beats for short captions. Use a `user_step:` beat for anything only the person may do, such as
    signing in.
 4. Call `perform_take` with `"dry_run": true`, check the timeline, then call it again for real. Use
-   `output: { mode: video }` to get a file straight away.
+   `output: { mode: video }` to get a file straight away. When the Shotmaxxing app is open, the person allows the
+   take there first, so the call can wait a minute or two for them. If they say no, don't try again: ask them what
+   they'd like instead.
 5. If the reply says the take stopped:
    - a control was gone or disabled, or Esc was pressed: tell the person, fix the script, and ask before trying
      again;
-   - the person moved the mouse: they took over, so leave the rest to them.
+   - the person moved the mouse or pressed Stop: they took over, so leave the rest to them.
 
 ## Filming by hand
 

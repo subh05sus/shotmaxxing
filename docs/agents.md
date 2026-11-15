@@ -93,7 +93,9 @@ while it records:
    ```
 
 3. `perform_take` with `{ "script": …, "dry_run": true }` shows the timeline. Then run it without `dry_run`.
-4. The reply has the project, how far the take got and, for `mode: video`, the exported file.
+4. When the Shotmaxxing app is open, the take card asks you first, listing every step. Allow it, or allow the rest
+   of that agent's session. The card then follows the take live.
+5. The reply has the project, how far the take got and, for `mode: video`, the exported file.
 
 Targets can be any of these:
 
@@ -118,9 +120,14 @@ Anything an agent does can be changed later in the editor: open the project from
 
 ## Safety
 
-- **Stopping a take.** Press Esc three times, or move the mouse. The take stops at once and leaves the rest to you.
+- **Asking first.** When the Shotmaxxing app is open, an agent's take starts only after you allow it on the take
+  card. You can allow the rest of that agent's session too. If nobody answers within two minutes, the take doesn't
+  start. When the app isn't open, the agent's own approval prompt is the only check, and the agent is told there
+  was no take card.
+- **Stopping a take.** Press Stop on the take card, press Esc three times, or move the mouse. The take stops at once
+  and leaves the rest to you.
 - **Passwords.** A take never types into a password field. A `user_step` beat hands that part to you:
-  - the take waits until you press ⌥⌘Return;
+  - the take waits until you press ⌥⌘Return or Hand back on the card;
   - that stretch is cut from the video.
 - **Marked input.** Every click and key a take performs is marked as the agent's in the project.
 - **Limits.** One take records at a time. A recording started with `start_recording` stops by itself after
@@ -133,7 +140,13 @@ Anything an agent does can be changed later in the editor: open the project from
 `shotmaxxing mcp` speaks MCP on stdin and stdout, one JSON-RPC message per line. It supports protocol versions
 2025-06-18, 2025-03-26 and 2024-11-05. Tool replies carry the result as text and as `structuredContent`.
 Long calls send `notifications/progress` when the request has a `progressToken`, and stop on
-`notifications/cancelled`. The same work is available from the terminal:
+`notifications/cancelled`.
+
+The command reaches the running app through a control socket that only you can open, at
+`~/Library/Application Support/dev.shotmaxxing.desktop/control.sock` (JSON, one message per line). It carries the
+take card today. Set `SHOTMAXXING_CONTROL_SOCKET` to point both ends somewhere else while developing.
+
+The same work is available from the terminal:
 
 - `shotmaxxing record`
 - `shotmaxxing export`

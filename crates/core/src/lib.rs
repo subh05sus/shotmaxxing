@@ -21,3 +21,7 @@ pub mod timeparse;
 pub mod zoom;
 
 pub use geometry::{Point, Rect, Size};
+
+/// The app's bundle identifier. It names the app's support folder, where the control socket lives, and lets
+/// recordings leave the app's own windows out.
+pub const APP_ID: &str = "dev.shotmaxxing.desktop";

@@ -3916,11 +3916,22 @@ dependencies = [
  "serde_json",
  "shotmaxxing-agent",
  "shotmaxxing-capture",
+ "shotmaxxing-control",
  "shotmaxxing-core",
  "shotmaxxing-render",
  "tempfile",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "shotmaxxing-control"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shotmaxxing-core",
+ "tempfile",
 ]
 
 [[package]]
@@ -3949,6 +3960,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shotmaxxing-capture",
+ "shotmaxxing-control",
  "shotmaxxing-core",
  "shotmaxxing-render",
  "tauri",

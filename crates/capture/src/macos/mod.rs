@@ -268,10 +268,16 @@ impl Recorder {
                         None => displays.iter().next(),
                     }
                     .ok_or_else(|| CaptureError::SourceNotFound("that display".into()))?;
-                    // Leave this app out of the video, including windows it opens later (the recording pill and
-                    // the take card).
-                    let mut left_out: Vec<Retained<SCRunningApplication>> =
-                        content.applications().iter().filter(|a| a.processID() == own_pid).collect();
+                    // Leave Shotmaxxing out of the video, including windows it opens later (the recording pill and
+                    // the take card): this process, and the app when the command records.
+                    let mut left_out: Vec<Retained<SCRunningApplication>> = content
+                        .applications()
+                        .iter()
+                        .filter(|a| {
+                            a.processID() == own_pid
+                                || a.bundleIdentifier().to_string() == shotmaxxing_core::APP_ID
+                        })
+                        .collect();
                     let mut kept: Vec<Retained<SCWindow>> = Vec::new();
                     if options.hide_desktop_icons {
                         // Desktop icons are Finder windows below the normal window layer. Finder is left out and

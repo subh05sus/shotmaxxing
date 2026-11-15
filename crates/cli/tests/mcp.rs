@@ -18,9 +18,16 @@ struct Server {
 }
 
 impl Server {
+    /// Starts the server out of reach of a Shotmaxxing app running on this computer.
     fn start() -> Self {
+        Self::start_with(&std::env::temp_dir().join(format!("no-shotmaxxing-{}.sock", std::process::id())))
+    }
+
+    /// Starts the server with `socket` as the app's control socket.
+    fn start_with(socket: &Path) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_shotmaxxing"))
             .arg("mcp")
+            .env("SHOTMAXXING_CONTROL_SOCKET", socket)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -99,6 +106,41 @@ fn make_project(dir: &Path, media: bool) -> PathBuf {
         assert!(status.success());
     }
     bundle.root().to_path_buf()
+}
+
+/// The app asks the person before an agent's take. When they say no, nothing moves and the agent hears why.
+#[test]
+fn a_take_the_person_declines_in_the_app_never_starts() {
+    use shotmaxxing_control::{FromApp, ToApp};
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("control.sock");
+    let app = shotmaxxing_control::Server::bind(&socket).unwrap();
+    let (asked, questions) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        app.run(move |mut peer| {
+            if let Ok(Some(ToApp::Ask { take })) = peer.receive() {
+                asked.send(take).unwrap();
+                peer.send(&FromApp::Answer { allowed: false, reason: Some("Not today.".into()) }).unwrap();
+            }
+        })
+    });
+
+    let mut server = Server::start_with(&socket);
+    let client = json!({ "name": "test-agent", "title": "Test agent", "version": "1" });
+    server.request(
+        "initialize",
+        json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": client }),
+    );
+    let yaml = "app: Notes\nbeats:\n  - click: { point: { x: 400, y: 300 } }\n  - type: hello\n";
+    let result = server.tool("perform_take", json!({ "script": yaml }));
+    assert_eq!(result["isError"], json!(true), "{result}");
+    assert!(result["content"][0]["text"].as_str().is_some_and(|t| t.contains("Not today.")), "{result}");
+
+    let take = questions.recv_timeout(std::time::Duration::from_secs(5)).expect("the app was never asked");
+    assert_eq!((take.client.as_str(), take.app.as_str()), ("Test agent", "Notes"));
+    assert_eq!(take.beats.len(), 2);
+    assert!(take.seconds > 0.5, "{take:?}");
+    assert!(!take.session.is_empty());
 }
 
 #[test]
