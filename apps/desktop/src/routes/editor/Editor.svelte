@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import {
     Ai,
     AudioLines,
@@ -245,6 +245,27 @@
       else if (tourParam === '1' || !(ed.still ? settings.stillTourDone : settings.tourDone)) startTour();
     }, 450);
     return () => clearTimeout(id);
+  });
+
+  // ?export=1, ?tool= and ?tour= are one-off requests (⌘E in the Library, the guides). One that arrives while the
+  // project is already open applies too, and each is taken off the address once read, so asking again works.
+  let routeRead = false;
+  $effect(() => {
+    const query = route.query;
+    untrack(() => {
+      if (routeRead) {
+        const tool = query.get('tool');
+        const tour = query.get('tour');
+        if (query.get('export') === '1' && !ed.still) exportOpen = true;
+        if (tool && tools.some((t) => t.id === tool)) ed.tool = tool as ToolId;
+        if (tour && ed.status === 'ready') {
+          if (tour !== '1' && tools.some((t) => t.id === tour)) toolHelp(tour as ToolId);
+          else if (tour === '1') startTour();
+        }
+      }
+      routeRead = true;
+      if (query.toString()) history.replaceState(history.state, '', `#/${route.path.join('/')}`);
+    });
   });
 
   // Progress for this window's exports arrives as events; each job picks out its own.
