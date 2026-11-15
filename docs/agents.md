@@ -28,6 +28,9 @@ computer. Inside the app it is `/Applications/Shotmaxxing.app/Contents/MacOS/sho
 | OpenCode | `~/.config/opencode/opencode.json` | `mcp`, with `"type": "local"` and `"command": ["<path>", "mcp"]` |
 | Gemini CLI | `~/.gemini/settings.json` | `mcpServers` |
 
+On Windows, `~` is your user folder, and the two files under `~/Library/Application Support` are in `%APPDATA%`
+instead: `%APPDATA%\Claude\claude_desktop_config.json` and `%APPDATA%\Code\User\mcp.json`.
+
 An `mcpServers` entry looks like this:
 
 ```json

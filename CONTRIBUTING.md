@@ -7,11 +7,14 @@ needs before it can be merged.
 
 You need:
 
-- Rust (stable, 1.88 or later), from [rustup.rs](https://rustup.rs)
+- Rust 1.90 or later, from [rustup.rs](https://rustup.rs)
 - Node.js 22 or later and pnpm (`corepack enable` gives you the right pnpm version)
-- macOS 14 or later, or Windows 10 (version 2004) or later
-- On Windows, the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (already installed on
-  Windows 11)
+- [CMake](https://cmake.org), which builds whisper.cpp for the captions
+- macOS 14 or later with the Xcode command line tools (`xcode-select --install`), or Windows 10 (version 2004) or later
+- On Windows:
+  - Visual Studio's C++ build tools;
+  - [LLVM](https://llvm.org), whose libclang generates whisper.cpp's Rust bindings;
+  - the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/), already installed on Windows 11.
 
 ```sh
 pnpm install
@@ -27,10 +30,18 @@ In a browser, add `?os=windows` or `?theme=light` to the address to preview the 
 | Path | What lives there |
 | --- | --- |
 | `crates/core` | The project format, take scripts, auto zoom, camera and cursor maths, power policy. No platform code. |
-| `apps/desktop/src-tauri` | The desktop app: windows, menu bar, permissions, and the bridge to the core. |
+| `crates/capture` | Recording: the screen, windows, sound, camera, the pointer and input, and screenshots. |
+| `crates/render` | Export: the compositor, the sound mix and voice tools, MP4, GIF and PNG. |
+| `crates/captions` | On-device captions with whisper.cpp. |
+| `crates/control` | The control API between the `shotmaxxing` command and the running app. |
+| `crates/agent` | The take performer: accessibility refs, the human-paced pointer and typing, safety stops and hand-off. |
+| `crates/cli` | The `shotmaxxing` command and its MCP server. |
+| `apps/desktop/src-tauri` | The desktop app: windows, menu bar, permissions, and the bridge to the crates. |
 | `apps/desktop/src` | The Svelte UI for every window. |
 | `packages/ui` | The design system: tokens, motion and shared components. |
-| `docs/` | Architecture, roadmap and design principles. |
+| `skills/shotmaxxing` | The agent skill that teaches agents the workflow. |
+| `scripts/` | The design guard, the icon and CLI sidecar builds, and the docs' screenshots. |
+| `docs/` | Architecture, agents, roadmap and design principles. |
 
 [docs/architecture.md](docs/architecture.md) explains how the pieces fit together.
 
@@ -44,7 +55,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-CI runs the same checks on macOS and Windows.
+CI runs the same checks on macOS and Windows. On Windows it also runs the capture and agent tests that need a real
+desktop (`cargo test -p shotmaxxing-capture -- --ignored`, and the same for `shotmaxxing-agent`), and reports how they
+went without failing the build, since hosted runners may lack a screen to capture.
 
 ### House rules
 

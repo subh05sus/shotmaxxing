@@ -16,24 +16,24 @@ how it fits together and why. Design rules for the interface live in [design/pri
 ```
 ┌──────────────────────────────── Shotmaxxing app (Tauri 2) ────────────────────────────────┐
 │                                                                                            │
-│  Svelte 5 UI (system webview)            Native surfaces                                   │
-│  panels · timeline · onboarding          recording pill · take card · canvas surface       │
-│        │  typed commands + events               │                                          │
-│        ▼                                        ▼                                          │
+│  Svelte 5 UI in the system webview                                                         │
+│  Home · editor · record dialog · recording pill · take card                                │
+│        │  typed commands + events                                                          │
+│        ▼                                                                                   │
 │  ┌──────────────────────────── Rust core ─────────────────────────────┐                    │
 │  │ control API ── the one API for the UI, CLI, MCP and scripts        │                    │
-│  │ project model (.smx) · timeline · undo · autosave                  │                    │
+│  │ project model (.smx) · timeline · autosave · version history       │                    │
 │  │ recorder ── capture → encode → fragmented MP4 + telemetry          │                    │
 │  │ renderer ── the export draws the editor's scene, frame for frame   │                    │
 │  │ takes ── beats compiler, performer, refs, consent, hand-off        │                    │
 │  │ analysis ── auto zoom, silence, captions (on demand)               │                    │
 │  └───────┬──────────────┬──────────────┬──────────────┬───────────────┘                    │
-│          │ traits       │              │              │                                    │
-│   capture backend  encode backend  input backend  a11y backend  display backend            │
+│          │              │              │              │                                    │
+│   capture backend  encode backend  input backend  a11y backend  display backend (planned)  │
 │   mac: SCK         VideoToolbox    CGEventTap     AXUIElement   CGVirtualDisplay           │
-│   win: WGC         Media Found.    LL hooks       UI Automation (IddCx, later)             │
+│   win: WGC         Media Found.    LL hooks       UI Automation IddCx                      │
 └──────────────────────────────────────────────┬─────────────────────────────────────────────┘
-                                               │ local socket / named pipe + session token
+                                               │ local socket / named pipe, this user's only
                      ┌─────────────────────────┼─────────────────────────┐
                 shotmaxxing mcp          shotmaxxing CLI            your scripts / CI
                 (stdio, for agents)      (take run demo.yaml)
@@ -56,11 +56,13 @@ crates/
   agent/               the take performer: refs, human-paced pointer and typing, hand-off
   cli/                 the `shotmaxxing` binary: CLI subcommands and `shotmaxxing mcp`
 packages/ui/           design tokens, motion and shared Svelte components
-docs/                  architecture, design principles, schemas, guides
+skills/shotmaxxing/    the agent skill
+scripts/               the design guard, the icon and CLI sidecar builds, the docs' screenshots
+docs/                  architecture, agents, roadmap, design principles, and the screenshots (images/)
 ```
 
-Platform code lives behind traits in each crate, under `macos/` and `windows/` modules gated by `cfg(target_os)`.
-Adding Linux means adding a third module, not touching the editor.
+Platform code lives in `macos` and `win` modules in each crate, chosen by `cfg(target_os)` behind the same
+functions. Adding Linux means adding a third module, not touching the editor.
 
 ## Performance architecture
 
@@ -71,8 +73,9 @@ These are the rules the code is reviewed against.
 - **Zero-copy from capture to encoder.** ScreenCaptureKit hands us `IOSurface`-backed `CVPixelBuffer`s that go
   straight into VideoToolbox. Windows.Graphics.Capture hands us D3D11 textures that go straight into a Media
   Foundation hardware encoder. Frames never touch the CPU or the webview.
-- **Hardware HEVC, fragmented MP4.** Encoding runs on the media engine (Apple media engine, NVENC, Quick Sync,
-  AMF), with H.264 as the fallback. Fragments are flushed every second, so a crash loses at most a second.
+- **Hardware encoding, fragmented MP4.** Recordings are HEVC on macOS, from the Apple media engine, and H.264 on
+  Windows, from Media Foundation's hardware encoder (NVENC, Quick Sync or AMF). Fragments are flushed every two
+  seconds, so a crash loses at most two seconds.
 - **Adaptive frame rate.** Capture delivers frames only when pixels change (dirty rects), up to 60 fps. A still
   screen costs almost nothing, and export resamples to a constant rate.
 - **The real cursor is excluded from capture.** Cursor position, shape and clicks are recorded as compact telemetry
@@ -85,7 +88,9 @@ These are the rules the code is reviewed against.
   starts only once the window is at its own size: with Stage Manager on, macOS reports a window smaller than it is
   while it's parked or coming back to the stage, so the take waits until the size the app gives (through
   Accessibility, when allowed) is the one on screen. A full-screen app is recorded with its toolbars, which can be
-  windows of their own above its window.
+  windows of their own above its window. A menu that another process draws over the window is added as it appears
+  (System Settings' panes, for one, are app extensions), never a password or sign-in sheet. A menu that reaches past
+  the window's edge is cut at that edge: record the screen or an area to keep it whole.
 - **Other Spaces.** macOS only pictures the Space that's showing, so windows elsewhere are listed by their app's
   icon, and recording one takes the Mac to its Space first: full-screen apps (each has a Space of its own) and, from
   inside a full-screen app, windows on the desktop. Which Space a window is on comes from the window server's own
@@ -96,20 +101,17 @@ These are the rules the code is reviewed against.
 
 ### Editing and preview
 
-- **One scene for preview and export.** The editor draws its canvas in the webview. The export draws the same scene
-  (`render/src/scene.rs` mirrors the canvas maths): with Core Image on macOS, and on the CPU with tiny-skia on
-  Windows. Both blend in sRGB as the browser does, so what you see is what you export, and a test holds the two
-  export renderers to each other.
-- **Render on demand.** The preview redraws only when the playhead moves or a property changes. When paused and
-  idle, the GPU does nothing.
-- **Decode with hardware.** Preview decodes through VideoToolbox / Media Foundation into GPU textures, at preview
-  resolution, not source resolution.
-- **Preview resolution follows the window.** A 1,000 px wide canvas renders 1,000 px wide (times the backing
-  scale), and drops further during scrubbing.
-- **Proxies only when needed.** Sources above 4K, or slow machines, get a low-resolution proxy generated in the
-  background (plugged in, not hot).
-- **The UI layer stays light.** Svelte compiles to small, direct DOM updates. The timeline is drawn on a canvas
-  and virtualised. No animation runs while idle.
+- **One scene for preview and export.** The editor composes its preview in the webview, from the recording's video
+  and CSS (transforms, corners, shadows). The export draws the same scene (`render/src/scene.rs` mirrors the
+  editor's maths): with Core Image on macOS, and on the CPU with tiny-skia on Windows. Both blend in sRGB as the
+  browser does, so what you see is what you export, and a test holds the two export renderers to each other.
+- **Render on demand.** The preview changes only when the playhead moves or a property changes. When paused and
+  idle, nothing redraws.
+- **Decode with hardware.** The preview plays the recording with the webview's own video player, which decodes with
+  VideoToolbox on macOS and Media Foundation on Windows.
+- **No proxies yet.** Large sources play at full size. The power policy already has a switch for proxies, so that
+  when they come they're made only while plugged in and cool.
+- **The UI layer stays light.** Svelte compiles to small, direct DOM updates, and no animation runs while idle.
 
 ### Thermal and power awareness
 
@@ -133,16 +135,18 @@ A project is a folder bundle (macOS shows it as one file; Windows shows it as a 
 
 ```
 Launch demo.smx/
-├ project.json      timeline, styles, zooms, edits (versioned schema)
-├ media/            screen.mp4, camera.mp4, mic.m4a, system.m4a (fragmented MP4 / M4A)
-├ telemetry/        cursor.bin (compact samples), events.jsonl (clicks, keys, focus, screen changes)
-├ cache/            thumbnails, scrub sprites, waveforms (safe to delete)
+├ project.json      timeline, styles, zooms, edits and captions (schema_version)
+├ media/            screen.mp4, camera.mp4, microphone.m4a, system-audio.m4a (fragmented MP4 / M4A),
+│                   voice-overs and music added in the editor; a screenshot project has screenshot.png
+├ telemetry/        cursor.smxc (compact samples), events.jsonl (clicks, keys, focus, screen changes)
+├ cache/            kept for derived files (safe to delete)
 └ history/          snapshots for Version history
 ```
 
-- `project.json` is the only file that changes during editing. Saves are atomic (write a temp file, then rename).
-- The schema is versioned and documented in `docs/schemas/`, so agents and scripts can read and edit projects
-  directly.
+- Edits change only `project.json`; a voice-over or music adds its file to `media/`. Saves are atomic (write a
+  temporary file, flush it, then rename it over the old one).
+- `project.json` is plain JSON with a `schema_version`, so agents and scripts can read projects directly. A newer
+  version than the app knows is refused rather than guessed at.
 
 ## Agent control
 
@@ -195,8 +199,9 @@ What makes a take look human and stay safe:
 - **Ref fingerprints.** Each accessibility ref carries a fingerprint (role, label, enabled state, bounds). Right
   before performing, every ref is re-checked; a moved, covered or disabled control stops the take by name instead of
   clicking the wrong spot.
-- **Background first.** Accessibility actions (`AXPress`, UIA Invoke) run without touching the user's mouse. Keys
-  are delivered to the target process. On macOS the take runs on a virtual display, so the user can keep working.
+- **Real input, as a person gives it.** A take moves the real pointer and presses real keys through the system's
+  input (CGEvent on macOS, SendInput on Windows), so the recording shows exactly what happened, and the person
+  moving the mouse stops it. Takes on a virtual display of their own, so the person can keep working, are planned.
 - **The app does the work, after asking.** The command sends anything that takes the system's permissions to the
   running app (opening it when needed), which does it with its own: listing windows, preparing, recording and
   performing. It asks the person on the take card once per agent session before it sees or records the screen, and
@@ -204,14 +209,16 @@ What makes a take look human and stay safe:
   `LOCAL_PEERPID` on macOS, the pipe's client process on Windows), the agent that started it, the app that runs in
   and that app's code signature. On macOS a signer is named only when Apple vouches for it (Apple's own code, the
   Mac App Store or a Developer ID, never a self-signed or development certificate, which anyone can get in any name);
-  on Windows when the program's Authenticode signature, its own or a system catalog's, checks out to a trusted root.
+  on Windows when the program's Authenticode signature, its own or a system catalog's, checks out to a trusted root,
+  or, for a Store or MSIX app whose program isn't signed itself, when Windows installed its package as part of
+  Windows, from the Microsoft Store, or as an organisation's line-of-business app (named by its publisher).
   Typing into password fields and deleting files outside projects are always blocked. A Stop control is always on
   screen, and pressing Esc three times aborts any take.
-- **Hand-off.** When a step needs a person (signing in, a CAPTCHA), the take pauses and the take card asks the
-  user. Only the user's physical "Hand back" resumes it.
+- **Hand-off.** When a step needs a person (signing in, say), the take pauses and the take card asks them. Only the
+  person resumes it: Hand back on the card, or ⌥⌘Return (Ctrl+Alt+Enter on Windows). The wait is cut from the video.
 
-Three modes share this machinery: **planned takes** (best quality), **step mode** (act, look, act, with pauses cut
-out afterwards) and **computer-use mode** (record an agent's own computer-use actions, then clean them up).
+Besides planned takes, an agent can **record while something else does the work**: the person, or the agent's own
+computer-use tools. It starts and stops the recording, then tidies it up with auto zoom and silence cutting.
 
 ## Editor intelligence
 
@@ -225,10 +232,12 @@ out afterwards) and **computer-use mode** (record an agent's own computer-use ac
   icon, which are never in the video, aren't recorded at all.
 - **Cursor** is redrawn from telemetry: size, smoothing, native styles, snap-to-click, click effects, motion blur,
   arcs, loop and spotlight.
-- **Local AI helpers** (captions with Whisper, voice cleanup, silence cutting) run on device, only when asked, and
-  download their models on first use.
+- **Local AI helpers** (captions with Whisper, voice cleanup, silence cutting) run on device, only when asked.
+  Captions download their speech model on first use; the other two need none.
 
-## Plugins
+## Plugins (planned)
+
+Not built yet. The plan:
 
 - **Effect plugins:** WebAssembly modules plus WGSL shaders, run sandboxed inside the compositor.
 - **Content packs:** declarative bundles of wallpapers, cursor sets, device frames, presets and export targets.
@@ -237,9 +246,10 @@ No plugin gets unrestricted access to the system.
 
 ## Privacy
 
-Nothing leaves the machine. There is no telemetry, analytics or account. The app's one network request downloads the
-speech model, once, the first time someone asks for captions; the sound is transcribed on the computer and never
-sent. Crash logs stay local; "Report a problem" pre-fills a GitHub issue that the user reviews before sending.
+Recordings, projects and captions never leave the machine. There is no telemetry, analytics or account. The app
+makes two requests of its own: once a day it asks GitHub's API whether a newer release is out (Settings → Check for
+updates turns that off), and the first time someone asks for captions it downloads the speech model from Hugging
+Face, once, checked against a pinned hash. The sound is transcribed on the computer and never sent.
 
 ## Platform support
 
@@ -247,9 +257,10 @@ sent. Crash logs stay local; "Report a problem" pre-fills a GitHub issue that th
 | --- | --- | --- |
 | Minimum | 14 Sonoma | 10 20H1 (build 19041) |
 | Capture | ScreenCaptureKit | Windows.Graphics.Capture |
-| Audio | ScreenCaptureKit / Core Audio | WASAPI loopback |
-| Encode | VideoToolbox | Media Foundation (NVENC, Quick Sync, AMF) + software fallback |
-| GPU | Metal | Direct3D 12 |
+| Audio | ScreenCaptureKit (the computer's sound), AVFoundation (microphones) | WASAPI (loopback for the computer's sound) |
+| Encode | VideoToolbox (HEVC) | Media Foundation (H.264, on the hardware encoder) |
+| Export compositor | Core Image | Portable CPU compositor (tiny-skia) |
 | Accessibility | AXUIElement | UI Automation |
-| Isolated agent display | CGVirtualDisplay | Planned (IddCx driver) |
-| Distribution | GitHub Releases, Homebrew | GitHub Releases, winget, Microsoft Store |
+| Isolated agent display | Planned (CGVirtualDisplay) | Planned (IddCx driver) |
+| Distribution | GitHub Releases | GitHub Releases |
+| Status | Preview | Written, awaiting testing on Windows |
