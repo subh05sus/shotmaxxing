@@ -91,6 +91,16 @@
   const requestedTool = route.query.get('tool') as ToolId | null;
   if (requestedTool && TOOLS.some((t) => t.id === requestedTool)) ed.tool = requestedTool;
 
+  const toolIndex = $derived(TOOLS.findIndex((t) => t.id === ed.tool));
+  // The tool someone just switched to, by click or key, whose icon pops as the highlight lands. Not on first show.
+  let poppedTool = $state<ToolId | null>(null);
+  let shownTool: ToolId | null = null;
+  $effect(() => {
+    const tool = ed.tool;
+    if (shownTool !== null && tool !== shownTool) poppedTool = tool;
+    shownTool = tool;
+  });
+
   let exportOpen = $state(route.query.get('export') === '1');
   let historyOpen = $state(false);
   let editingTitle = $state(false);
@@ -526,10 +536,19 @@
 
   <div class="flex min-h-0 flex-1">
     <nav
-      class="flex w-[68px] shrink-0 flex-col items-center gap-1 border-r border-border bg-chrome py-2"
+      class="relative flex w-[84px] shrink-0 flex-col items-center gap-1 border-r border-border bg-chrome py-2"
       aria-label="Tools"
       data-tour="rail"
     >
+      <!-- The chosen tool's highlight slides between tiles on the tabs' spring: 54 px tiles, 4 px apart. -->
+      <span
+        aria-hidden="true"
+        class={[
+          'tab-thumb pointer-events-none absolute left-1 top-2 h-[54px] w-[76px] rounded-[12px] bg-fill-strong',
+          toolIndex < 0 && 'opacity-0',
+        ]}
+        style:translate="0 {Math.max(0, toolIndex) * 58}px"
+      ></span>
       {#each TOOLS as tool (tool.id)}
         {@const Icon = tool.icon}
         <Tooltip label={tool.label} chord={tool.chord} side="right">
@@ -537,15 +556,15 @@
             type="button"
             aria-pressed={ed.tool === tool.id}
             class={[
-              'press-icon flex w-14 flex-col items-center gap-1 rounded-[9px] py-2 text-caption font-medium transition-colors duration-[var(--dur-fast)]',
-              ed.tool === tool.id ? 'bg-fill-strong text-fg' : 'text-fg-muted hover:bg-fill hover:text-fg',
+              'press-tab relative flex h-[54px] w-[76px] flex-col items-center justify-center gap-1 rounded-[12px] text-caption font-medium',
+              ed.tool === tool.id ? 'text-fg' : 'text-fg-muted hover:bg-fill hover:text-fg',
             ]}
             onclick={() => (ed.tool = tool.id)}
           >
             <Icon
               size={19}
               strokeWidth={1.9}
-              class={ed.tool === tool.id ? 'text-accent-text' : undefined}
+              class={[ed.tool === tool.id && 'text-accent-text', poppedTool === tool.id && 'tab-pop']}
               aria-hidden="true"
             />
             {tool.label}

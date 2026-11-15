@@ -26,7 +26,11 @@
     ),
   );
 
+  /** The option the person last picked, which pops as the thumb lands. Nothing pops on first show. */
+  let picked = $state<T | null>(null);
+
   function select(v: T) {
+    if (v !== value) picked = v;
     value = v;
     onchange?.(v);
   }
@@ -46,21 +50,22 @@
   }
 </script>
 
-<!-- Equal-width segments, so the selection thumb only ever translates (a compositor-only animation). -->
+<!-- A capsule of equal-width segments, so the thumb only ever translates (a compositor-only animation), on the
+     tabs' spring. -->
 <div
   role="radiogroup"
   aria-label={label}
   tabindex="-1"
   {onkeydown}
   class={[
-    'relative grid rounded-control bg-fill p-[2px]',
+    'relative grid rounded-full bg-fill p-[2px]',
     size === 'sm' ? 'h-7' : 'h-[var(--os-control-height)] min-h-7',
   ]}
   style:grid-template-columns="repeat({options.length}, minmax(0, 1fr))"
 >
   <span
     aria-hidden="true"
-    class="absolute inset-y-[2px] left-[2px] rounded-[calc(var(--radius-control)-2px)] bg-segment-thumb shadow-[var(--elev-1)] transition-[translate] duration-[var(--dur-slow)] ease-[var(--ease-spring)]"
+    class="tab-thumb absolute inset-y-[2px] left-[2px] rounded-full bg-segment-thumb shadow-[var(--elev-1)]"
     style:width="calc((100% - 4px) / {options.length})"
     style:translate="{index * 100}% 0"
   ></span>
@@ -75,13 +80,20 @@
       tabindex={option.value === value ? 0 : -1}
       onclick={() => select(option.value)}
       class={[
-        'relative z-10 inline-flex min-w-0 items-center justify-center gap-1.5 truncate rounded-[calc(var(--radius-control)-2px)] px-2 font-medium transition-colors duration-[var(--dur-fast)]',
+        'press-tab relative z-10 inline-flex min-w-0 items-center justify-center rounded-full px-2.5 font-medium',
         size === 'sm' ? 'text-footnote' : 'text-callout',
         option.value === value ? 'text-fg' : 'text-fg-muted hover:text-fg',
       ]}
     >
-      {#if Icon}<Icon size={15} strokeWidth={2} aria-hidden="true" />{/if}
-      {#if !iconsOnly}<span class="truncate">{option.label}</span>{/if}
+      <span
+        class={[
+          'flex min-w-0 max-w-full items-center justify-center gap-1.5',
+          option.value === picked && 'tab-pop',
+        ]}
+      >
+        {#if Icon}<Icon size={15} strokeWidth={2} aria-hidden="true" />{/if}
+        {#if !iconsOnly}<span class="truncate">{option.label}</span>{/if}
+      </span>
     </button>
   {/each}
 </div>

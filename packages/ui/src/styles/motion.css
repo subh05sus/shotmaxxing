@@ -40,6 +40,37 @@
   }
 }
 
+/* ---------------------------------------------------------------- Tabs: a springy thumb, a pop where it lands */
+
+@utility tab-thumb {
+  transition-property: translate;
+  transition-duration: var(--dur-tab);
+  transition-timing-function: var(--ease-tab);
+}
+
+/* Runs once, when added: on the label or icon the person just picked. */
+@utility tab-pop {
+  animation: tab-pop 280ms var(--ease-out);
+}
+
+@keyframes tab-pop {
+  35% {
+    scale: 1.08;
+  }
+}
+
+/* A pressed tab squishes, then springs back on the tabs' curve; its colour changes without the bounce. */
+@utility press-tab {
+  transition-property: scale, color, background-color;
+  transition-duration: var(--dur-tab), var(--dur-fast), var(--dur-fast);
+  transition-timing-function: var(--ease-tab), var(--ease-out), var(--ease-out);
+  &:active:not(:disabled) {
+    scale: 0.96;
+    transition-duration: var(--dur-instant);
+    transition-timing-function: var(--ease-out);
+  }
+}
+
 /* ---------------------------------------------------------------- Sections rising in, once per visit */
 
 @utility rise-in {
@@ -168,11 +199,21 @@ svg.lucide-sparkles {
 
 :root[data-motion='fades'] {
   --ease-spring: var(--ease-out);
+  --ease-tab: var(--ease-out);
 }
 
 /* Only the motion utilities stand down; layout that uses translate for positioning is untouched. */
-:root[data-motion='fades'] :is(.press, .press-card, .press-icon):active {
+:root[data-motion='fades'] :is(.press, .press-card, .press-icon, .press-tab):active {
   scale: none !important;
+}
+
+/* A tab's thumb moves straight to its place, and nothing pops. */
+:root[data-motion='fades'] .tab-thumb {
+  transition-duration: 0ms;
+}
+
+:root[data-motion='fades'] .tab-pop {
+  animation: none;
 }
 
 :root[data-motion='fades'] .rise-in {

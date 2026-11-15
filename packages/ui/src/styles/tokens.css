@@ -89,6 +89,23 @@
     0.999 79.4%,
     1
   );
+  /* Tabs: a punchier spring, about 6% overshoot. It reaches the new tab a quarter of the way through its 360 ms and
+     settles over the rest, so the move reads as done in about 200 ms. */
+  --ease-tab: linear(
+    0,
+    0.12 5%,
+    0.38 10%,
+    0.64 15%,
+    0.84 20%,
+    0.97 25%,
+    1.04 30%,
+    1.06 36%,
+    1.045 44%,
+    1.01 55%,
+    0.995 66%,
+    0.999 80%,
+    1
+  );
 }
 
 :root {
@@ -97,6 +114,7 @@
   --dur-base: 200ms;
   --dur-slow: 280ms;
   --dur-exit: 140ms;
+  --dur-tab: 360ms;
 
   /* Brand: acid lime. Fills carry near-black text; text uses a deeper lime in light mode so it stays readable. */
   --lime: oklch(0.87 0.21 128);
