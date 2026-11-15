@@ -6,6 +6,7 @@ mod decode;
 mod encode;
 mod sound;
 mod text;
+pub(crate) use text::draw as draw_text;
 pub mod voice;
 
 use std::io::Write;

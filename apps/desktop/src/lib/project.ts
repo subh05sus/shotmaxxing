@@ -34,6 +34,8 @@ type ClickEffect = { kind: 'none' } | { kind: 'press' } | { kind: 'ripple'; colo
 export interface CoreProject {
   id: string;
   name: string;
+  /** A recording, or a screenshot framed the same way. Older projects leave it out. */
+  kind?: 'video' | 'screenshot';
   source: { kind: string; app_name: string | null; size: { width: number; height: number }; scale: number };
   tracks: {
     id: string;
@@ -215,6 +217,7 @@ export function fromCore(core: CoreProject, os: Os): Project {
   return {
     id: core.id,
     title: core.name,
+    kind: core.kind === 'screenshot' ? 'screenshot' : 'video',
     duration,
     capture: { width: core.source.size.width, height: core.source.size.height },
     canvas: {
@@ -296,6 +299,11 @@ export function effectDefaults(capture: { width: number; height: number }) {
   };
 }
 
+/** The editor's shadow strength (0 to 1) as the project's shadow opacity. */
+export function shadowOpacity(strength: number): number {
+  return Math.round(strength * 0.6 * 1000) / 1000;
+}
+
 export function toCore(p: Project, base: CoreProject): CoreProject {
   const core = plainCopy(base);
   core.name = p.title;
@@ -303,7 +311,7 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
   core.canvas.background = { kind: 'wallpaper', id: p.canvas.wallpaper };
   core.canvas.padding = p.canvas.padding;
   core.canvas.corner_radius = p.canvas.radius;
-  core.canvas.shadow = { ...core.canvas.shadow, opacity: Math.round(p.canvas.shadow * 0.6 * 1000) / 1000 };
+  core.canvas.shadow = { ...core.canvas.shadow, opacity: shadowOpacity(p.canvas.shadow) };
 
   const theme = { mac: 'macos_classic', windows: 'windows', dot: 'minimal' } as const;
   const wasNative = core.cursor.theme === 'native';

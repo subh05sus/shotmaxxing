@@ -20,11 +20,13 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent};
 
+mod clipboard;
 mod project;
 
+pub use clipboard::copy_image;
 pub use project::{
     CAMERA_TRACK, CURSOR_FILE, EVENTS_FILE, FinishedProject, MIC_TRACK, ProjectOptions, ProjectRecording,
-    SCREEN_TRACK, SYSTEM_AUDIO_TRACK,
+    SCREEN_TRACK, SCREENSHOT_FILE, SYSTEM_AUDIO_TRACK, save_screenshot,
 };
 
 #[cfg(target_os = "macos")]
@@ -211,6 +213,49 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
     imp::thumbnails(targets, max_width)
 }
 
+/// A full-size picture of a screen or a window, without the pointer.
+#[derive(Clone, Debug)]
+pub struct Screenshot {
+    /// The picture, as PNG, in sRGB.
+    pub png: Vec<u8>,
+    /// Its size in pixels.
+    pub width: u32,
+    pub height: u32,
+    /// Pixels per point.
+    pub scale: f64,
+    pub app_name: Option<String>,
+    pub window_title: Option<String>,
+}
+
+/// Takes a screenshot of `target` at its full resolution, without the pointer. A window comes alone, so whatever
+/// covers it doesn't show; a screen comes with everything on it, so hide your own windows first.
+pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
+    let mut shot = imp::screenshot(target)?;
+    // The size is read back from the picture itself, so it always matches what's saved.
+    (shot.width, shot.height) = png_size(&shot.png)
+        .ok_or_else(|| CaptureError::System("the picture couldn't be read back".into()))?;
+    // Name what was taken, as the source list does.
+    if let Target::Window(id) = target
+        && shot.app_name.is_none()
+        && let Ok(sources) = imp::sources()
+        && let Some(window) = sources.windows.iter().find(|w| w.id == id)
+    {
+        shot.app_name = Some(window.app.clone()).filter(|a| !a.is_empty());
+        shot.window_title = Some(window.title.clone()).filter(|t| !t.is_empty());
+    }
+    Ok(shot)
+}
+
+/// A PNG's size in pixels, from its header.
+pub(crate) fn png_size(png: &[u8]) -> Option<(u32, u32)> {
+    const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if png.len() < 24 || png[..8] != SIGNATURE || &png[12..16] != b"IHDR" {
+        return None;
+    }
+    let number = |at: usize| u32::from_be_bytes([png[at], png[at + 1], png[at + 2], png[at + 3]]);
+    Some((number(16), number(20))).filter(|&(w, h)| w > 0 && h > 0)
+}
+
 /// Microphones, the system default first.
 pub fn microphones() -> Vec<Device> {
     let mut found = imp::microphones();
@@ -259,5 +304,70 @@ impl Recorder {
 
     pub fn stop(self) -> Result<Recording, CaptureError> {
         self.inner.stop()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Screenshot, Target, png_size, save_screenshot};
+    use shotmaxxing_core::bundle::ProjectBundle;
+    use shotmaxxing_core::project::{ProjectKind, SourceKind, TrackKind};
+
+    /// The first bytes of a PNG `width` × `height` pixels: its signature and header.
+    fn png_header(width: u32, height: u32) -> Vec<u8> {
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&width.to_be_bytes());
+        png.extend_from_slice(&height.to_be_bytes());
+        png
+    }
+
+    #[test]
+    fn png_sizes_come_from_the_header() {
+        assert_eq!(png_size(&png_header(2880, 1800)), Some((2880, 1800)));
+        assert_eq!(png_size(&png_header(2880, 1800)[..20]), None, "too short");
+        assert_eq!(png_size(&png_header(0, 1800)), None, "empty");
+        assert_eq!(png_size(b"GIF89a, which is no PNG at all"), None);
+    }
+
+    #[test]
+    fn a_screenshot_is_saved_as_a_project_that_frames_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let shot = Screenshot {
+            png: png_header(2880, 1800),
+            width: 2880,
+            height: 1800,
+            scale: 2.0,
+            app_name: Some("Safari".into()),
+            window_title: Some("Docs".into()),
+        };
+        let saved = save_screenshot(dir.path(), "Screenshot", Target::Window(42), &shot, None).unwrap();
+        assert_eq!(saved.root.file_name().unwrap(), "Screenshot.smx");
+        let (bundle, project) = ProjectBundle::open(&saved.root).unwrap();
+        assert_eq!(project.kind, ProjectKind::Screenshot);
+        assert_eq!(project.source.kind, SourceKind::Window);
+        assert_eq!(project.source.app_name.as_deref(), Some("Safari"));
+        assert_eq!((project.source.size.width, project.source.size.height), (1440.0, 900.0), "in points");
+        assert_eq!(project.tracks.len(), 1);
+        assert_eq!(project.tracks[0].kind, TrackKind::Screen);
+        assert_eq!(std::fs::read(bundle.root().join(&project.tracks[0].path)).unwrap(), shot.png);
+        assert!(!project.zoom.auto && project.zooms.is_empty());
+        assert_eq!(project.canvas.aspect, shotmaxxing_core::project::AspectRatio::Original);
+
+        // A second one is numbered.
+        // The next one can start from the look of the last.
+        let look = shotmaxxing_core::project::Canvas {
+            background: shotmaxxing_core::project::Background::Wallpaper { id: "ocean".into() },
+            padding: 0.12,
+            corner_radius: 20.0,
+            ..Default::default()
+        };
+        let again =
+            save_screenshot(dir.path(), "Screenshot", Target::Display(None), &shot, Some(&look)).unwrap();
+        assert_eq!(again.root.file_name().unwrap(), "Screenshot 2.smx");
+        let (_, styled) = ProjectBundle::open(&again.root).unwrap();
+        assert_eq!(styled.canvas.background, look.background);
+        assert_eq!((styled.canvas.padding, styled.canvas.corner_radius), (0.12, 20.0));
+        assert_eq!(styled.canvas.aspect, shotmaxxing_core::project::AspectRatio::Original);
     }
 }

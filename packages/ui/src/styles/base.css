@@ -90,6 +90,14 @@
   }
 }
 
+/* A selected mark on a picture, like a blur: a dark hairline at its edge and a light dashed line just inside, so it
+   reads on light and dark pictures alike. Both are drawn inside the box, so the frame's edge never cuts them off. */
+@utility mark-selected {
+  outline: 2px dashed var(--cursor-light);
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 1px var(--cursor-dark);
+}
+
 /* Small caps section label. */
 @utility eyebrow {
   font-size: var(--text-caption);

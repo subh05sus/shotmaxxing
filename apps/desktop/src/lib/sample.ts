@@ -188,9 +188,9 @@ export const GUIDES: Guide[] = [
     group: 'Record',
     summary: 'A window on a background with a real shadow, copied in one step.',
     steps: [
-      'Press ⌥⇧4 and click a window.',
-      'Pick a background and padding, or keep the last ones you used.',
-      'Press ⌘C to copy, or drag the preview into any app.',
+      'Press ⌥⇧4, choose Screen or Window, and pick what to capture.',
+      'Pick a background, padding and corners. The next screenshot starts with the same look.',
+      'Add a title, an arrow or a blur, then press ⌘C to copy it at full resolution, or Save image for a PNG.',
     ],
   },
   {

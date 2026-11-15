@@ -108,7 +108,7 @@ export function openWindow(kind: WindowKind, target?: string): Promise<void> {
     const map: Record<WindowKind, string> = {
       home: target ?? 'home/library',
       editor: `editor/${target ?? 'sample'}`,
-      record: 'record',
+      record: target === 'screenshot' ? 'record?mode=screenshot' : 'record',
       onboarding: 'onboarding',
       pill: 'pill',
       take: 'take',
@@ -250,6 +250,7 @@ export interface LoadedProject {
 export interface ProjectSummary {
   path: string;
   name: string;
+  kind: 'video' | 'screenshot';
   duration_us: number;
   created_at_ms: number;
   updated_at_ms: number;
@@ -260,6 +261,42 @@ export interface ProjectSummary {
   height: number;
   media: string | null;
   size_bytes: number;
+}
+
+// Screenshots ------------------------------------------------------------------------------------------------
+
+/** A screenshot's look in the project's own units: what the next screenshot starts from. */
+export interface StillLook {
+  wallpaper: string;
+  padding: number;
+  cornerRadius: number;
+  shadowOpacity: number;
+}
+
+/**
+ * Takes a screenshot of `source` and saves it as a new project, starting from `look` when there is one. Resolves
+ * with the project's folder.
+ */
+export function takeScreenshot(source: string, folder?: string, look?: StillLook | null): Promise<string> {
+  return call(
+    'take_screenshot',
+    { source, folder: folder || null, look: look ?? null },
+    () => 'sample-still',
+  );
+}
+
+/** Copies a screenshot project to the clipboard, styled as the editor shows it, pixel for pixel. */
+export function copyScreenshot(path: string): Promise<void> {
+  return call('copy_screenshot', { path }, () => undefined);
+}
+
+/** Calls `listener` when the open record dialog is asked for a recording or a screenshot. */
+export async function onRecordMode(listener: (mode: 'video' | 'screenshot') => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+  return getCurrentWebviewWindow().listen<'video' | 'screenshot'>('record-mode', (event) =>
+    listener(event.payload),
+  );
 }
 
 export function loadProject(path: string): Promise<LoadedProject> {
@@ -336,7 +373,7 @@ export function exportProject(request: ExportRequest): Promise<ExportOutcome> {
       await new Promise((r) => setTimeout(r, 120));
     }
     previewExports.delete(request.id);
-    const ext = request.format === 'gif' ? 'gif' : 'mp4';
+    const ext = request.format === 'gif' ? 'gif' : request.format === 'png' ? 'png' : 'mp4';
     return job.cancelled
       ? { status: 'cancelled' }
       : {
@@ -529,7 +566,7 @@ export const SAMPLE_MUSIC: MusicFile = { path: 'media/music.mp3', name: 'Sunrise
 
 /** Editor routes carry a project path; it is encoded so it survives as one route segment. */
 export function editorTarget(path: string): string {
-  return path === 'sample' ? path : encodeURIComponent(path);
+  return path === 'sample' || path === 'sample-still' ? path : encodeURIComponent(path);
 }
 
 export interface AgentStatus {

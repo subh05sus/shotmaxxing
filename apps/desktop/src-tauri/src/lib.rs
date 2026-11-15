@@ -10,6 +10,7 @@ mod export;
 mod platform;
 mod projects;
 mod recording;
+mod screenshots;
 mod shortcuts;
 mod system;
 mod takes;
@@ -67,6 +68,8 @@ pub fn run() {
             agents::disconnect_agent,
             agents::mcp_command,
             recording::start_recording,
+            screenshots::take_screenshot,
+            screenshots::copy_screenshot,
             recording::stop_recording,
             recording::discard_recording,
             recording::restart_recording,

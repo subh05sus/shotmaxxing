@@ -72,7 +72,7 @@ warning shows when the request didn't come from the `shotmaxxing` command, or wh
 | `set_music` | Puts a music file under the whole video (through cuts, fading out at the end), changes its volume or start, or takes it out |
 | `plan_zooms` | Plans the automatic zooms again, subtle, standard or bold |
 | `style_project` | Wallpaper, canvas shape, padding, corners, shadow and cursor size |
-| `export_project` | Renders MP4 (H.264), HEVC or GIF, with progress, and can be cancelled. `png` saves one frame (`at`, in seconds into the recording) styled like the video |
+| `export_project` | Renders MP4 (H.264), HEVC or GIF, with progress, and can be cancelled. `png` saves one frame (`at`, in seconds into the recording) styled like the video. A screenshot project (`kind: screenshot` in `project_info`) exports only as PNG, at its own pixels unless `size` is given |
 | `prepare_take` | Opens an app, finds its window and lists its controls with ids to use as refs, plus a picture of the window |
 | `perform_take` | Films a take script: Shotmaxxing moves the pointer, clicks and types at a human pace while it records, then saves the project (and exports when the script asks). `dry_run` shows the timeline first |
 | `validate_take` | Checks a take script and lists any problems |

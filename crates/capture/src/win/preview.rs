@@ -1,32 +1,34 @@
-//! Pictures of the displays and windows for the source picker. GDI copies them: a display straight off the screen,
-//! a window through PrintWindow, which takes its full content from the compositor, so whatever covers it doesn't
-//! show and no capture border flashes. They are shrunk with halftone filtering and saved as JPEG with WIC.
+//! Pictures of the displays and windows: small ones for the source picker, and full-size screenshots. GDI copies
+//! them: a display straight off the screen, a window through PrintWindow, which takes its full content from the
+//! compositor, so whatever covers it doesn't show and no capture border flashes. Thumbnails are shrunk with halftone
+//! filtering and saved as JPEG with WIC; screenshots are copied pixel for pixel and saved as PNG.
 
 use std::ffi::c_void;
 
 use windows::Win32::Foundation::{HGLOBAL, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CAPTUREBLT, CreateCompatibleBitmap, CreateCompatibleDC,
-    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HALFTONE, HBITMAP, HDC, ROP_CODE, ReleaseDC,
-    SRCCOPY, SelectObject, SetBrushOrgEx, SetStretchBltMode, StretchBlt,
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CAPTUREBLT, COLORONCOLOR, CreateCompatibleBitmap,
+    CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HALFTONE, HBITMAP, HDC,
+    ROP_CODE, ReleaseDC, SRCCOPY, SelectObject, SetBrushOrgEx, SetStretchBltMode, StretchBlt,
 };
 use windows::Win32::Graphics::Imaging::{
-    CLSID_WICImagingFactory, GUID_ContainerFormatJpeg, GUID_WICPixelFormat24bppBGR, IWICImagingFactory,
-    WICBitmapEncoderNoCache,
+    CLSID_WICImagingFactory, GUID_ContainerFormatJpeg, GUID_ContainerFormatPng, GUID_WICPixelFormat24bppBGR,
+    IWICImagingFactory, WICBitmapEncoderNoCache,
 };
 use windows::Win32::Storage::Xps::{PRINT_WINDOW_FLAGS, PrintWindow};
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, CoCreateInstance, STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET,
 };
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowRect, IsHungAppWindow, IsIconic, PW_RENDERFULLCONTENT,
 };
-use windows::core::IUnknown;
+use windows::core::{GUID, IUnknown};
 
 use super::record::start_systems;
 use super::{dpi_aware, monitor, window_bounds};
-use crate::{CaptureError, Target};
+use crate::{CaptureError, Screenshot, Target};
 
 /// A picture: BGRA, top row first.
 struct Picture {
@@ -35,13 +37,17 @@ struct Picture {
     pixels: Vec<u8>,
 }
 
-pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
+/// WIC's factory, which any thread of this process may use.
+fn imaging() -> Result<IWICImagingFactory, CaptureError> {
     dpi_aware();
     start_systems()?;
-    // SAFETY: creates WIC's factory, which any thread of this process may use.
-    let factory: IWICImagingFactory =
-        unsafe { CoCreateInstance(&CLSID_WICImagingFactory, None::<&IUnknown>, CLSCTX_INPROC_SERVER) }
-            .map_err(|e| CaptureError::System(e.message()))?;
+    // SAFETY: creates a COM object on a thread start_systems set up for COM.
+    unsafe { CoCreateInstance(&CLSID_WICImagingFactory, None::<&IUnknown>, CLSCTX_INPROC_SERVER) }
+        .map_err(|e| CaptureError::System(e.message()))
+}
+
+pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
+    let factory = imaging()?;
     let max_width = max_width.clamp(16, 4096) as i32;
     Ok(targets
         .iter()
@@ -50,9 +56,41 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
                 Target::Display(number) => display(monitor(number).ok()?.bounds, max_width),
                 Target::Window(id) => window(HWND(id as usize as *mut c_void), max_width),
             }?;
-            jpeg(&factory, &picture)
+            encode(&factory, &picture, &GUID_ContainerFormatJpeg)
         })
         .collect())
+}
+
+/// A full-size PNG of `target`, without the pointer: a screen as it shows, everything on it included; a window alone.
+pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
+    let factory = imaging()?;
+    let (picture, scale) = match target {
+        Target::Display(number) => {
+            let monitor = monitor(number)?;
+            (display(monitor.bounds, i32::MAX), monitor.scale)
+        }
+        Target::Window(id) => {
+            let hwnd = HWND(id as usize as *mut c_void);
+            // SAFETY: a query on a window handle; one that's gone answers 0.
+            let dpi = unsafe { GetDpiForWindow(hwnd) };
+            (window(hwnd, i32::MAX), f64::from(dpi.max(48)) / 96.0)
+        }
+    };
+    let picture = picture.ok_or_else(|| {
+        CaptureError::System(
+            "Windows couldn't copy that picture. A minimised window has nothing to show.".into(),
+        )
+    })?;
+    let png = encode(&factory, &picture, &GUID_ContainerFormatPng)
+        .ok_or_else(|| CaptureError::System("couldn't save the picture as PNG".into()))?;
+    Ok(Screenshot {
+        png,
+        width: picture.width as u32,
+        height: picture.height as u32,
+        scale,
+        app_name: None,
+        window_title: None,
+    })
 }
 
 /// `width` × `height` shrunk to at most `max_width` wide, never enlarged.
@@ -129,7 +167,9 @@ unsafe fn shrink(screen: HDC, source: HDC, area: (i32, i32, i32, i32), size: (i3
         let memory = CreateCompatibleDC(Some(screen));
         let bitmap = CreateCompatibleBitmap(screen, size.0, size.1);
         let previous = SelectObject(memory, bitmap.into());
-        SetStretchBltMode(memory, HALFTONE);
+        // Halftone averages pixels even when nothing shrinks; a copy at full size stays exact.
+        let exact = (size.0, size.1) == (area.2, area.3);
+        SetStretchBltMode(memory, if exact { COLORONCOLOR } else { HALFTONE });
         // Halftone filtering wants the brush origin set after the mode.
         let _ = SetBrushOrgEx(memory, 0, 0, None);
         let copied = StretchBlt(
@@ -189,14 +229,15 @@ unsafe fn read(context: HDC, bitmap: HBITMAP, (width, height): (i32, i32)) -> Op
     (rows == height).then_some(Picture { width, height, pixels })
 }
 
-fn jpeg(factory: &IWICImagingFactory, picture: &Picture) -> Option<Vec<u8>> {
+/// The picture saved in `container`'s format (JPEG or PNG), without alpha.
+fn encode(factory: &IWICImagingFactory, picture: &Picture, container: &GUID) -> Option<Vec<u8>> {
     let (width, height) = (picture.width as u32, picture.height as u32);
     let bgr: Vec<u8> = picture.pixels.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
     // SAFETY: WIC calls with valid objects. The pixels outlive the call that reads them, and the stream is read
     // within the size it reports.
     unsafe {
         let stream = CreateStreamOnHGlobal(HGLOBAL::default(), true).ok()?;
-        let encoder = factory.CreateEncoder(&GUID_ContainerFormatJpeg, std::ptr::null()).ok()?;
+        let encoder = factory.CreateEncoder(container, std::ptr::null()).ok()?;
         encoder.Initialize(&stream, WICBitmapEncoderNoCache).ok()?;
         let (mut frame, mut options) = (None, None);
         encoder.CreateNewFrame(&mut frame, &mut options).ok()?;

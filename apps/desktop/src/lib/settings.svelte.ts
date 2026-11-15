@@ -4,7 +4,7 @@
  */
 
 import type { ThemeSetting } from '@shotmaxxing/ui';
-import type { RecordingOptions } from './native';
+import type { RecordingOptions, StillLook } from './native';
 
 export type LowPowerSetting = 'automatic' | 'always_on' | 'always_off';
 
@@ -14,6 +14,10 @@ interface Settings {
   onboardingDone: boolean;
   onboardingStep: number;
   tourDone: boolean;
+  /** The shorter tour a first screenshot gets. */
+  stillTourDone: boolean;
+  /** The look of the last screenshot someone styled, which the next one starts from. */
+  stillLook: StillLook | null;
   firstExportDone: boolean;
   countdown: boolean;
   showPill: boolean;
@@ -44,6 +48,8 @@ const DEFAULTS: Settings = {
   onboardingDone: false,
   onboardingStep: 0,
   tourDone: false,
+  stillTourDone: false,
+  stillLook: null,
   firstExportDone: false,
   countdown: true,
   showPill: true,

@@ -38,7 +38,10 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [x] Background export queue (exports wait in line and render one at a time)
 - [x] Autosave and version history
 - [x] Styled stills: any frame as a PNG, from the editor, the CLI and MCP
-- [ ] Screenshot mode in the record dialog (a styled still without recording first)
+- [x] Screenshot mode: ⌥⇧4 or the record dialog takes a full-resolution picture of a screen or a window (no
+      pointer), opens it in the editor to frame and mark up, and copies it at full resolution or saves a PNG. The
+      next screenshot starts with the last one's look. macOS (ScreenCaptureKit) and Windows (GDI, PrintWindow; awaits
+      testing on Windows)
 
 ## Milestone 3: Agents
 

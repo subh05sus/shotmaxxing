@@ -7,7 +7,7 @@ mod input;
 mod preview;
 mod writer;
 
-pub use preview::{cameras, microphones, thumbnails};
+pub use preview::{cameras, microphones, screenshot, thumbnails};
 
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex};

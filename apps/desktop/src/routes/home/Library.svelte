@@ -7,6 +7,7 @@
     Download,
     Film,
     FolderOpen,
+    Image,
     Pencil,
     RecordDot,
     SearchX,
@@ -21,6 +22,7 @@
     Segmented,
     Spinner,
     env,
+    matchesChord,
     spring,
     toast,
     type MenuItem,
@@ -30,8 +32,10 @@
   import { LIBRARY, type LibraryItem } from '../../lib/sample';
   import { onMount } from 'svelte';
   import {
+    copyScreenshot,
     duplicateProject,
     editorTarget,
+    exportProject,
     isTauri,
     listProjects,
     mediaUrl,
@@ -63,7 +67,7 @@
       wallpaper: 'aurora-lime',
       scene: 0,
       agent: p.agent ?? undefined,
-      kind: 'recording',
+      kind: p.kind === 'screenshot' ? 'screenshot' : 'recording',
       sizeMb: Math.max(1, Math.round(p.size_bytes / 1e6)),
       media: p.media ? await mediaUrl(p.media) : undefined,
     };
@@ -168,6 +172,44 @@
     });
   }
 
+  /** Copies a screenshot, styled, at full resolution. */
+  async function copyImage(item: LibraryItem) {
+    try {
+      await copyScreenshot(item.path ?? '');
+      toast('Copied. Paste it anywhere.', { tone: 'success' });
+    } catch (error) {
+      toast(`Couldn’t copy it: ${error instanceof Error ? error.message : String(error)}`, {
+        tone: 'danger',
+      });
+    }
+  }
+
+  /** Saves a screenshot as a PNG, pixel for pixel, in the export folder. */
+  async function saveImage(item: LibraryItem) {
+    try {
+      const outcome = await exportProject({
+        id: `library-${Date.now()}`,
+        project: item.path ?? '',
+        name: item.title,
+        width: 0,
+        height: 0,
+        fps: 1,
+        format: 'png',
+        bitrate: 0,
+        folder: settings.exportFolder || undefined,
+      });
+      if (outcome.status !== 'done') return;
+      toast(`Saved “${outcome.file}”`, {
+        tone: 'success',
+        action: { label: reveal, run: () => revealInFolder(outcome.path) },
+      });
+    } catch (error) {
+      toast(`Couldn’t save it: ${error instanceof Error ? error.message : String(error)}`, {
+        tone: 'danger',
+      });
+    }
+  }
+
   async function duplicate(item: LibraryItem) {
     if (item.path) {
       try {
@@ -191,17 +233,28 @@
     toast(`Duplicated “${item.title}”`);
   }
 
+  /** What ⌘E does to a card: export a video, or save a screenshot as a PNG. */
+  function exportItem(item: LibraryItem) {
+    if (item.kind === 'screenshot' && item.path) void saveImage(item);
+    else if (item.path) open(item, '?export=1');
+    else go(`editor/${item.id}?export=1`);
+  }
+
   function menuFor(item: LibraryItem): MenuItem[] {
+    const still = item.kind === 'screenshot' && !!item.path;
     return [
       { label: 'Open', icon: Film, chord: 'return', run: () => open(item) },
+      ...(still
+        ? [{ label: 'Copy image', icon: Image, chord: 'mod+c', run: () => void copyImage(item) }]
+        : []),
       { label: 'Rename', icon: Pencil, run: () => toast('Rename from the editor title for now') },
       { label: 'Duplicate', icon: Copy, chord: 'mod+d', run: () => duplicate(item) },
       { label: reveal, icon: FolderOpen, run: () => revealInFolder(item.path ?? item.id) },
       {
-        label: 'Export…',
+        label: still ? 'Save as PNG' : 'Export…',
         icon: Download,
         chord: 'mod+e',
-        run: () => (item.path ? open(item, '?export=1') : go(`editor/${item.id}?export=1`)),
+        run: () => exportItem(item),
       },
       {
         label: 'Move to Trash',
@@ -247,6 +300,20 @@
     if ((e.key === 'Backspace' || e.key === 'Delete') && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       remove(item);
+    } else if (matchesChord(e, 'mod+d', env.os)) {
+      e.preventDefault();
+      void duplicate(item);
+    } else if (matchesChord(e, 'mod+e', env.os)) {
+      e.preventDefault();
+      exportItem(item);
+    } else if (
+      matchesChord(e, 'mod+c', env.os) &&
+      item.kind === 'screenshot' &&
+      item.path &&
+      !window.getSelection()?.toString()
+    ) {
+      e.preventDefault();
+      void copyImage(item);
     }
   }
 
@@ -328,8 +395,11 @@
         <EmptyState
           icon={Camera}
           title="No screenshots yet"
-          body="Press ⌥⇧4 and click a window for a styled screenshot."
+          body="Press ⌥⇧4 for a styled screenshot of a screen or a window."
         >
+          <Button variant="primary" icon={Camera} onclick={() => openWindow('record', 'screenshot')}
+            >Take a screenshot</Button
+          >
           <Button onclick={() => (filter = 'all')}>Show everything</Button>
         </EmptyState>
       {/if}

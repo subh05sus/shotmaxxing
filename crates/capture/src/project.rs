@@ -8,13 +8,19 @@ use std::path::{Path, PathBuf};
 use shotmaxxing_core::bundle::ProjectBundle;
 use shotmaxxing_core::geometry::Size;
 use shotmaxxing_core::keys::Platform;
-use shotmaxxing_core::project::{AgentInfo, MediaTrack, Project, SourceKind, TrackKind};
+use shotmaxxing_core::project::{
+    AgentInfo, AspectRatio, Canvas, MediaTrack, Project, ProjectKind, SourceKind, TrackKind,
+};
 use shotmaxxing_core::telemetry::{encode_cursor, write_events};
 use shotmaxxing_core::zoom::{ZoomInput, plan_zooms};
 
-use crate::{CaptureError, DeviceChoice, DeviceRecording, RecordOptions, RecordedTrack, Recorder, Target};
+use crate::{
+    CaptureError, DeviceChoice, DeviceRecording, RecordOptions, RecordedTrack, Recorder, Screenshot, Target,
+};
 
 pub const SCREEN_TRACK: &str = "media/screen.mp4";
+/// A screenshot project's picture.
+pub const SCREENSHOT_FILE: &str = "media/screenshot.png";
 pub const SYSTEM_AUDIO_TRACK: &str = "media/system-audio.m4a";
 pub const MIC_TRACK: &str = "media/microphone.m4a";
 pub const CAMERA_TRACK: &str = "media/camera.mp4";
@@ -94,6 +100,72 @@ fn media_track(id: &str, kind: TrackKind, path: &str, recorded: &RecordedTrack) 
 
 fn project_error(error: impl std::fmt::Display) -> CaptureError {
     CaptureError::System(format!("couldn't save the project: {error}"))
+}
+
+/// Saves `shot`, taken of `target`, as a new screenshot project `<parent>/<name>.smx` (numbered if the name is
+/// taken): the picture, framed like a recording, ready to style, annotate and copy in the editor. With `look`, it
+/// starts with that canvas's background, padding, corners and shadow.
+pub fn save_screenshot(
+    parent: &Path,
+    name: &str,
+    target: Target,
+    shot: &Screenshot,
+    look: Option<&Canvas>,
+) -> Result<FinishedProject, CaptureError> {
+    std::fs::create_dir_all(parent)?;
+    let mut project = Project { name: name.to_string(), kind: ProjectKind::Screenshot, ..Project::default() };
+    let bundle = ProjectBundle::create(parent, &mut project).map_err(project_error)?;
+    let saved = (|| -> Result<(), CaptureError> {
+        let picture = bundle.root().join(SCREENSHOT_FILE);
+        if let Some(media) = picture.parent() {
+            std::fs::create_dir_all(media)?;
+        }
+        std::fs::write(&picture, &shot.png)?;
+        let scale = if shot.scale.is_finite() && shot.scale > 0.0 { shot.scale } else { 1.0 };
+        project.source.kind = match target {
+            Target::Display(_) => SourceKind::Display,
+            Target::Window(_) => SourceKind::Window,
+        };
+        project.source.app_name = shot.app_name.clone();
+        project.source.window_title = shot.window_title.clone();
+        project.source.size = Size::new(f64::from(shot.width) / scale, f64::from(shot.height) / scale);
+        project.source.scale = scale;
+        project.source.platform = Some(Platform::current());
+        project.tracks = vec![MediaTrack {
+            id: "screen".into(),
+            kind: TrackKind::Screen,
+            path: SCREENSHOT_FILE.into(),
+            duration_us: 0,
+            offset_us: 0,
+            volume: 1.0,
+            muted: false,
+            name: None,
+        }];
+        // Nothing moves in a still, so there's nothing to zoom to, and the frame takes the picture's own shape.
+        project.zoom.auto = false;
+        project.canvas.aspect = AspectRatio::Original;
+        // The look someone gave their last screenshot carries over: background, padding, corners and shadow.
+        if let Some(look) = look {
+            project.canvas.background = look.background.clone();
+            project.canvas.padding = look.padding;
+            project.canvas.corner_radius = look.corner_radius;
+            project.canvas.shadow = look.shadow.clone();
+        }
+        bundle.save(&mut project).map_err(project_error)?;
+        bundle.snapshot(&project, "Taken").map_err(project_error)?;
+        Ok(())
+    })();
+    if let Err(error) = saved {
+        let _ = std::fs::remove_dir_all(bundle.root());
+        return Err(error);
+    }
+    Ok(FinishedProject {
+        root: bundle.root().to_path_buf(),
+        project,
+        frames: 1,
+        dropped: 0,
+        warnings: Vec::new(),
+    })
 }
 
 impl ProjectRecording {

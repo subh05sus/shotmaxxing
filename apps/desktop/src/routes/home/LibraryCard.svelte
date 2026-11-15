@@ -68,7 +68,16 @@
         class="absolute left-[7%] top-[8%] aspect-[16/10] w-[86%] overflow-hidden rounded-[5px] shadow-[var(--elev-2)] transition-transform duration-[var(--dur-base)] ease-[var(--ease-out)]"
         style:transform="scale({push})"
       >
-        {#if item.media}
+        {#if item.media && item.kind === 'screenshot'}
+          <img
+            src={item.media}
+            alt=""
+            class="size-full object-cover"
+            loading="lazy"
+            decoding="async"
+            draggable="false"
+          />
+        {:else if item.media}
           <video
             bind:this={video}
             src={item.media}

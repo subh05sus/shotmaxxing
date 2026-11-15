@@ -224,7 +224,7 @@ pub fn open_window<R: Runtime>(
     let result = match kind.as_str() {
         "home" => windows::open_home(&app, target.as_deref().map(|t| t.trim_start_matches('/'))),
         "editor" => windows::open_editor(&app, target.as_deref().unwrap_or("sample")),
-        "record" => windows::open_record(&app),
+        "record" => windows::open_record(&app, target.as_deref()),
         "onboarding" => windows::open_onboarding(&app),
         "pill" => windows::open_pill(&app),
         "take" => windows::open_take_card(&app),

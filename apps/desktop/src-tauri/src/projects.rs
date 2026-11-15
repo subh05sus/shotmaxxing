@@ -6,7 +6,7 @@ use serde::Serialize;
 use shotmaxxing_capture::{CURSOR_FILE, EVENTS_FILE};
 use shotmaxxing_core::bundle::ProjectBundle;
 use shotmaxxing_core::cursor::{PathSettings, render_path};
-use shotmaxxing_core::project::{Project, TrackKind, ZoomDepth, ZoomRegion};
+use shotmaxxing_core::project::{Project, ProjectKind, TrackKind, ZoomDepth, ZoomRegion};
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent, decode_cursor, read_events};
 use shotmaxxing_core::zoom::{ZoomInput, plan_zooms};
 use tauri::{AppHandle, Manager, Runtime};
@@ -38,6 +38,7 @@ pub struct TrackMedia {
 pub struct ProjectSummary {
     path: String,
     name: String,
+    kind: ProjectKind,
     duration_us: u64,
     created_at_ms: u64,
     updated_at_ms: u64,
@@ -303,6 +304,7 @@ fn scan(folder: &Path) -> Vec<ProjectSummary> {
             Some(ProjectSummary {
                 path: root.to_string_lossy().into_owned(),
                 name: project.name.clone(),
+                kind: project.kind,
                 duration_us: project.duration_us(),
                 created_at_ms: project.created_at_ms,
                 updated_at_ms: project.updated_at_ms,

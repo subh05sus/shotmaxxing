@@ -3,6 +3,7 @@
   import {
     AppWindow,
     Bot,
+    Camera,
     ChevronDown,
     Crop,
     Mic,
@@ -27,22 +28,38 @@
   import Scene from '../../components/Scene.svelte';
   import {
     closeThisWindow,
+    editorTarget,
     handOff,
     isTauri,
     listDevices,
     listSources,
+    onRecordMode,
     openPermissionSettings,
     sourceThumbnails,
     type Device,
     startRecording,
+    takeScreenshot,
     type CaptureSource,
   } from '../../lib/native';
+  import { route } from '../../lib/router.svelte';
   import { recordingOptions, settings } from '../../lib/settings.svelte';
   import { wallpaper } from '../../lib/wallpapers';
 
   type Mode = 'display' | 'window' | 'area';
+  /** A recording, or a screenshot (⌥⇧4 opens the dialog ready for one). */
+  type Kind = 'video' | 'screenshot';
 
+  let kind = $state<Kind>('video');
+  // The window opens at `#/record?mode=screenshot` for a screenshot; an open dialog is told with an event.
+  $effect(() => {
+    const asked = route.query.get('mode');
+    if (asked === 'screenshot' || asked === 'video') kind = asked;
+  });
   let mode = $state<Mode>('window');
+  // A screenshot is of a screen or a window; a part of the screen is cropped in the editor.
+  $effect(() => {
+    if (kind === 'screenshot' && mode === 'area') mode = 'display';
+  });
   let sources = $state<CaptureSource[]>([]);
   let selected = $state<string | null>(null);
   let microphones = $state<Device[]>([]);
@@ -89,7 +106,12 @@
   onMount(() => {
     void load();
     void loadDevices();
-    return () => clearInterval(tick);
+    let stop: (() => void) | undefined;
+    void onRecordMode((asked) => (kind = asked)).then((unlisten) => (stop = unlisten));
+    return () => {
+      clearInterval(tick);
+      stop?.();
+    };
   });
 
   const shown = $derived(sources.filter((s) => (mode === 'area' ? s.kind === 'display' : s.kind === mode)));
@@ -99,6 +121,34 @@
   });
 
   const sceneFor: Record<string, number> = { Safari: 4, Figma: 1, Notes: 5, Terminal: 2, Xcode: 1 };
+
+  /** The button, Return and a double-click: record, or take the screenshot. */
+  function go() {
+    if (kind === 'screenshot') void shoot();
+    else record();
+  }
+
+  async function shoot() {
+    if (!selected || starting) return;
+    starting = true;
+    try {
+      // A picture of a whole screen is taken once this dialog has stepped aside.
+      // It starts with the look of the last screenshot that was styled.
+      const project = await takeScreenshot(selected, settings.saveFolder || undefined, settings.stillLook);
+      await handOff('editor', editorTarget(project));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast(message, {
+        tone: 'danger',
+        timeout: 8000,
+        action: /Screen Recording/i.test(message)
+          ? { label: 'Open settings', run: () => openPermissionSettings('screen') }
+          : undefined,
+      });
+    } finally {
+      starting = false;
+    }
+  }
 
   function record() {
     if (!selected || starting || countdown !== null) return;
@@ -155,7 +205,7 @@
   );
 
   function onkeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !(e.target instanceof HTMLInputElement) && countdown === null) record();
+    if (e.key === 'Enter' && !(e.target instanceof HTMLInputElement) && countdown === null) go();
     if (e.key === 'Escape' && countdown !== null) cancelCountdown();
   }
 </script>
@@ -167,23 +217,38 @@
     data-tauri-drag-region
     class="drag-region flex h-[var(--titlebar-height)] shrink-0 items-center gap-3 pl-[var(--titlebar-inset-start)] pr-4"
   >
-    <h1 class="text-title-3">New recording</h1>
-    <span class="flex-1"></span>
-    <div class="no-drag w-[300px]">
+    <h1 class="sr-only">{kind === 'screenshot' ? 'New screenshot' : 'New recording'}</h1>
+    <div class="no-drag w-[232px]">
       <Segmented
-        label="What to record"
-        bind:value={mode}
+        label="Record a video or take a screenshot"
+        bind:value={kind}
         options={[
-          { value: 'display', label: 'Screen', icon: Monitor },
-          { value: 'window', label: 'Window', icon: AppWindow },
-          { value: 'area', label: 'Area', icon: Crop },
+          { value: 'video', label: 'Video', icon: Video },
+          { value: 'screenshot', label: 'Screenshot', icon: Camera },
         ]}
+      />
+    </div>
+    <span class="flex-1"></span>
+    <div class={['no-drag', kind === 'screenshot' ? 'w-[208px]' : 'w-[300px]']}>
+      <Segmented
+        label={kind === 'screenshot' ? 'What to capture' : 'What to record'}
+        bind:value={mode}
+        options={kind === 'screenshot'
+          ? [
+              { value: 'display', label: 'Screen', icon: Monitor },
+              { value: 'window', label: 'Window', icon: AppWindow },
+            ]
+          : [
+              { value: 'display', label: 'Screen', icon: Monitor },
+              { value: 'window', label: 'Window', icon: AppWindow },
+              { value: 'area', label: 'Area', icon: Crop },
+            ]}
       />
     </div>
   </header>
 
   <div class="scroll-room min-h-0 flex-1 overflow-y-auto px-4 pb-2">
-    {#if mode === 'area'}
+    {#if mode === 'area' && kind === 'video'}
       <p class="px-1 pb-2 text-footnote text-fg-muted">
         Pick a screen, then drag over the part you want to record.
       </p>
@@ -209,7 +274,7 @@
           class="press-card rise-in group flex flex-col gap-1.5 rounded-card p-1.5 text-left hover:bg-fill"
           style="--i: {i}"
           onclick={() => (selected = source.id)}
-          ondblclick={record}
+          ondblclick={go}
         >
           <span
             bind:clientWidth={tileWidth}
@@ -261,81 +326,100 @@
     </div>
   </div>
 
-  <div class="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-t border-border px-5 py-3">
-    <span class="flex items-center gap-2">
-      <Icon icon={Mic} size={15} class="text-fg-muted" aria-hidden="true" />
-      <Switch
-        checked={micOn}
-        onchange={(on: boolean) => (settings.microphone = on)}
-        label="Microphone"
-        disabled={!microphones.length}
-      />
-      {#if microphones.length > 1}
-        <Menu items={micItems} label="Microphone">
-          {#snippet trigger({ props })}
-            <button
-              type="button"
-              disabled={!micOn}
-              class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
-              {...props}
-            >
-              {micName}<Icon icon={ChevronDown} size={12} aria-hidden="true" />
-            </button>
-          {/snippet}
-        </Menu>
-      {:else}
-        <span class={['px-1.5 text-footnote', micOn ? 'text-fg-muted' : 'text-fg-subtle']}>{micName}</span>
-      {/if}
-    </span>
-    <span class="flex items-center gap-2">
-      <Icon icon={Video} size={15} class="text-fg-muted" aria-hidden="true" />
-      <Switch
-        checked={cameraOn}
-        onchange={(on: boolean) => (settings.camera = on)}
-        label="Camera"
-        disabled={!cameras.length}
-      />
-      {#if cameras.length > 1}
-        <Menu items={cameraItems} label="Camera">
-          {#snippet trigger({ props })}
-            <button
-              type="button"
-              disabled={!cameraOn}
-              class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
-              {...props}
-            >
-              {cameraName}<Icon icon={ChevronDown} size={12} aria-hidden="true" />
-            </button>
-          {/snippet}
-        </Menu>
-      {:else}
-        <span class={['px-1.5 text-footnote', cameraOn ? 'text-fg-muted' : 'text-fg-subtle']}
-          >{cameraName}</span
-        >
-      {/if}
-    </span>
-    <span class="flex items-center gap-2">
-      <Icon icon={Volume2} size={15} class="text-fg-muted" aria-hidden="true" />
-      <Switch bind:checked={settings.systemAudio} label="System audio" hideLabel={false} />
-    </span>
-  </div>
+  {#if kind === 'screenshot'}
+    <p class="shrink-0 border-t border-border px-5 py-3 text-footnote text-fg-muted">
+      Taken at full resolution without the pointer. It opens in the editor, where you can frame it, mark it up
+      and copy it.
+    </p>
+  {:else}
+    <div class="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-t border-border px-5 py-3">
+      <span class="flex items-center gap-2">
+        <Icon icon={Mic} size={15} class="text-fg-muted" aria-hidden="true" />
+        <Switch
+          checked={micOn}
+          onchange={(on: boolean) => (settings.microphone = on)}
+          label="Microphone"
+          disabled={!microphones.length}
+        />
+        {#if microphones.length > 1}
+          <Menu items={micItems} label="Microphone">
+            {#snippet trigger({ props })}
+              <button
+                type="button"
+                disabled={!micOn}
+                class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
+                {...props}
+              >
+                {micName}<Icon icon={ChevronDown} size={12} aria-hidden="true" />
+              </button>
+            {/snippet}
+          </Menu>
+        {:else}
+          <span class={['px-1.5 text-footnote', micOn ? 'text-fg-muted' : 'text-fg-subtle']}>{micName}</span>
+        {/if}
+      </span>
+      <span class="flex items-center gap-2">
+        <Icon icon={Video} size={15} class="text-fg-muted" aria-hidden="true" />
+        <Switch
+          checked={cameraOn}
+          onchange={(on: boolean) => (settings.camera = on)}
+          label="Camera"
+          disabled={!cameras.length}
+        />
+        {#if cameras.length > 1}
+          <Menu items={cameraItems} label="Camera">
+            {#snippet trigger({ props })}
+              <button
+                type="button"
+                disabled={!cameraOn}
+                class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
+                {...props}
+              >
+                {cameraName}<Icon icon={ChevronDown} size={12} aria-hidden="true" />
+              </button>
+            {/snippet}
+          </Menu>
+        {:else}
+          <span class={['px-1.5 text-footnote', cameraOn ? 'text-fg-muted' : 'text-fg-subtle']}
+            >{cameraName}</span
+          >
+        {/if}
+      </span>
+      <span class="flex items-center gap-2">
+        <Icon icon={Volume2} size={15} class="text-fg-muted" aria-hidden="true" />
+        <Switch bind:checked={settings.systemAudio} label="System audio" hideLabel={false} />
+      </span>
+    </div>
+  {/if}
 
   <footer class="flex h-16 shrink-0 items-center gap-3 border-t border-border px-5">
-    <button
-      type="button"
-      class="press flex items-center gap-1.5 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill hover:text-fg"
-      onclick={() => handOff('home', 'home/agents')}
-    >
-      <Icon icon={Bot} size={14} aria-hidden="true" /> Let an agent film it instead
-    </button>
+    {#if kind === 'video'}
+      <button
+        type="button"
+        class="press flex items-center gap-1.5 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill hover:text-fg"
+        onclick={() => handOff('home', 'home/agents')}
+      >
+        <Icon icon={Bot} size={14} aria-hidden="true" /> Let an agent film it instead
+      </button>
+    {/if}
     <span class="flex-1"></span>
-    <span class="text-footnote text-fg-subtle"
-      >{settings.countdown ? '3-second countdown' : 'Starts right away'}</span
-    >
-    <Button variant="primary" size="lg" icon={RecordDot} disabled={!selected || starting} onclick={record}>
-      {starting ? 'Starting…' : 'Record'}
-      <Keycap chord="return" tone="on-accent" />
-    </Button>
+    {#if kind === 'screenshot'}
+      <span class="text-footnote text-fg-subtle"
+        >{mode === 'display' ? 'This window steps aside first' : 'Only the window, even if covered'}</span
+      >
+      <Button variant="primary" size="lg" icon={Camera} disabled={!selected || starting} onclick={go}>
+        {starting ? 'Taking…' : 'Take screenshot'}
+        <Keycap chord="return" tone="on-accent" />
+      </Button>
+    {:else}
+      <span class="text-footnote text-fg-subtle"
+        >{settings.countdown ? '3-second countdown' : 'Starts right away'}</span
+      >
+      <Button variant="primary" size="lg" icon={RecordDot} disabled={!selected || starting} onclick={go}>
+        {starting ? 'Starting…' : 'Record'}
+        <Keycap chord="return" tone="on-accent" />
+      </Button>
+    {/if}
   </footer>
 </div>
 

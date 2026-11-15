@@ -3,6 +3,7 @@
   import { Icon } from '@shotmaxxing/ui';
   import Scene from '../../components/Scene.svelte';
   import { effectDefaults } from '../../lib/project';
+  import type { EffectBlock } from '../../lib/sample';
   import { wallpaper } from '../../lib/wallpapers';
   import { ASPECTS, cameraAt, clamp, cursorAt, placeWindow } from './camera';
   import type { EditorState } from './store.svelte';
@@ -11,6 +12,8 @@
    * The live preview. The recording plays in a <video> (decoded in hardware), and the camera, cursor, clicks and
    * overlays are layers moved with transforms only, so the preview costs about what playing the video costs. The
    * built-in sample draws a stand-in scene instead of a video. Exports are drawn natively from the same settings.
+   * A screenshot shows its picture instead, with no cursor and every effect. Titles, arrows and blurs can be dragged
+   * into place, or nudged with the arrow keys once focused.
    */
   let { ed }: { ed: EditorState } = $props();
 
@@ -54,6 +57,9 @@
 
   const win = $derived(placeWindow(frame, capture, p.canvas.padding));
   const k = $derived(win.width / capture.width);
+  $effect(() => {
+    if (k > 0) ed.framePoints = { width: frame.width / k, height: frame.height / k };
+  });
   const cursor = $derived(cursorAt(ed.time, ed.cursorPath));
 
   // Motion blur, as the export draws it: copies from where the cursor was 15 ms ago to where it is, added together
@@ -128,13 +134,122 @@
   const privacyBlur = (px: number) =>
     `backdrop-filter: blur(${px}px); -webkit-backdrop-filter: blur(${px}px)`; // design-guard-allow backdrop
 
-  const blur = $derived(p.effects.filter((e) => e.kind === 'blur' && ed.time >= e.start && ed.time <= e.end));
-  const titles = $derived(
-    p.effects.filter((e) => e.kind === 'text' && ed.time >= e.start && ed.time <= e.end),
-  );
-  const arrows = $derived(
-    p.effects.filter((e) => e.kind === 'arrow' && ed.time >= e.start && ed.time <= e.end),
-  );
+  // A still shows every effect; a video shows the ones placed at this moment.
+  const showing = (e: EffectBlock) => ed.still || (ed.time >= e.start && ed.time <= e.end);
+  const blur = $derived(p.effects.filter((e) => e.kind === 'blur' && showing(e)));
+  const titles = $derived(p.effects.filter((e) => e.kind === 'text' && showing(e)));
+  const arrows = $derived(p.effects.filter((e) => e.kind === 'arrow' && showing(e)));
+
+  let box = $state<HTMLDivElement | null>(null);
+  type Part = 'move' | 'from' | 'to' | 'size';
+  /** An effect being dragged: which part moves, where the pointer started, and the effect as it was then. */
+  let drag: { id: string; part: Part; x: number; y: number; start: Required<EffectBlock> } | null = null;
+
+  /** A pointer position in capture points, through the zoom camera. */
+  function inCapture(ev: PointerEvent): { x: number; y: number } {
+    const r = box?.getBoundingClientRect();
+    if (!r) return { x: 0, y: 0 };
+    const s = cam.scale;
+    const fx = (ev.clientX - r.left - (frame.width / 2 - viewX * s)) / s;
+    const fy = (ev.clientY - r.top - (frame.height / 2 - viewY * s)) / s;
+    return { x: (fx - win.x) / k, y: (fy - win.y) / k };
+  }
+
+  /** A pointer position as a fraction of the frame: titles stay put while the camera zooms. */
+  function inFrame(ev: PointerEvent): { x: number; y: number } {
+    const r = box?.getBoundingClientRect();
+    if (!r) return { x: 0, y: 0 };
+    return { x: (ev.clientX - r.left) / frame.width, y: (ev.clientY - r.top) / frame.height };
+  }
+
+  function grab(ev: PointerEvent, effect: EffectBlock, part: Part) {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ed.selection = { kind: 'effect', id: effect.id };
+    (ev.currentTarget as Element).setPointerCapture(ev.pointerId);
+    const at = effect.kind === 'text' ? inFrame(ev) : inCapture(ev);
+    drag = {
+      id: effect.id,
+      part,
+      x: at.x,
+      y: at.y,
+      start: {
+        ...effect,
+        pos: effect.pos ?? { x: 0.05, y: 0.06 },
+        rect: effect.rect ?? spots.blur,
+        strength: effect.strength ?? 1,
+        from: effect.from ?? spots.from,
+        to: effect.to ?? spots.to,
+      },
+    };
+  }
+
+  function pull(ev: PointerEvent) {
+    const d = drag;
+    const effect = d && p.effects.find((e) => e.id === d.id);
+    if (!d || !effect) return;
+    const s = d.start;
+    const { width: cw, height: ch } = capture;
+    if (effect.kind === 'text') {
+      const at = inFrame(ev);
+      const pos = { x: clamp(s.pos.x + at.x - d.x, 0, 0.95), y: clamp(s.pos.y + at.y - d.y, 0, 0.95) };
+      ed.change('Move title', () => (effect.pos = pos));
+      return;
+    }
+    const at = inCapture(ev);
+    const [dx, dy] = [at.x - d.x, at.y - d.y];
+    const moved = (q: { x: number; y: number }) => ({ x: clamp(q.x + dx, 0, cw), y: clamp(q.y + dy, 0, ch) });
+    if (effect.kind === 'arrow') {
+      const from = d.part === 'to' ? s.from : moved(s.from);
+      const to = d.part === 'from' ? s.to : moved(s.to);
+      ed.change('Move arrow', () => {
+        effect.from = from;
+        effect.to = to;
+      });
+    } else {
+      const r = s.rect;
+      const rect =
+        d.part === 'size'
+          ? { ...r, width: clamp(r.width + dx, 8, cw - r.x), height: clamp(r.height + dy, 8, ch - r.y) }
+          : { ...r, x: clamp(r.x + dx, 0, cw - r.width), y: clamp(r.y + dy, 0, ch - r.height) };
+      ed.change(d.part === 'size' ? 'Resize blur' : 'Move blur', () => (effect.rect = rect));
+    }
+  }
+
+  function drop() {
+    drag = null;
+  }
+
+  /** Arrow keys move a focused effect: a point at a time, ten with Shift. */
+  function nudgeKey(ev: KeyboardEvent, effect: EffectBlock) {
+    const step = ev.shiftKey ? 10 : 1;
+    const moves: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    };
+    const move = moves[ev.key];
+    if (!move) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ed.selection = { kind: 'effect', id: effect.id };
+    ed.nudge(...move);
+  }
+
+  const select = (effect: EffectBlock) => (ed.selection = { kind: 'effect', id: effect.id });
+  $effect(() => {
+    const el = box;
+    if (!el) return;
+    const away = (ev: PointerEvent) => {
+      const mark = (ev.target as Element).closest('[role="button"], button');
+      if (!mark && ed.selection?.kind === 'effect') ed.selection = null;
+    };
+    el.addEventListener('pointerdown', away);
+    return () => el.removeEventListener('pointerdown', away);
+  });
+  const selected = (effect: EffectBlock) => ed.selection?.kind === 'effect' && ed.selection.id === effect.id;
 
   // The sample's captions; real projects get theirs from local transcription.
   const CAPTIONS = [
@@ -188,11 +303,14 @@
 >
   {#if frame.width > 0}
     <div
+      bind:this={box}
       class="relative overflow-hidden rounded-[4px] shadow-[var(--elev-3)]"
       style:width="{frame.width}px"
       style:height="{frame.height}px"
-      role="img"
-      aria-label="Preview of {p.title} at {ed.time.toFixed(1)} seconds"
+      role="group"
+      aria-label={ed.still
+        ? `Preview of ${p.title}`
+        : `Preview of ${p.title} at ${ed.time.toFixed(1)} seconds`}
     >
       <div
         class="absolute left-0 top-0 origin-top-left will-change-transform"
@@ -210,7 +328,9 @@
           style:border-radius="{radius}px"
           style:box-shadow={shadow}
         >
-          {#if ed.media}
+          {#if ed.media && ed.still}
+            <img src={ed.media} alt="" class="absolute inset-0 size-full object-cover" draggable="false" />
+          {:else if ed.media}
             <video
               bind:this={video}
               src={ed.media}
@@ -227,24 +347,52 @@
           {#each blur as b (b.id)}
             {@const r = b.rect ?? spots.blur}
             <div
-              class="absolute"
+              role="button"
+              tabindex="0"
+              aria-label="Blur. Drag it, or use the arrow keys, to move it."
+              class={[
+                'absolute cursor-move touch-none outline-none focus-visible:mark-selected',
+                selected(b) && 'mark-selected',
+              ]}
               style={privacyBlur(frame.height * 0.016 * (b.strength ?? 1))}
               style:left="{r.x * k}px"
               style:top="{r.y * k}px"
               style:width="{r.width * k}px"
               style:height="{r.height * k}px"
               style:border-radius="{frame.height * 0.012}px"
+              onpointerdown={(ev) => grab(ev, b, 'move')}
+              onpointermove={pull}
+              onpointerup={drop}
+              onpointercancel={drop}
+              onfocus={() => select(b)}
+              onkeydown={(ev) => nudgeKey(ev, b)}
             ></div>
+            {#if selected(b)}
+              <button
+                type="button"
+                tabindex="-1"
+                aria-label="Resize the blur"
+                class="absolute size-3 cursor-nwse-resize touch-none rounded-[3px] border-[1.5px] border-[var(--cursor-dark)] bg-[var(--cursor-light)]"
+                style:left="{(r.x + r.width) * k - 14}px"
+                style:top="{(r.y + r.height) * k - 14}px"
+                onpointerdown={(ev) => grab(ev, b, 'size')}
+                onpointermove={pull}
+                onpointerup={drop}
+                onpointercancel={drop}
+              ></button>
+            {/if}
           {/each}
           {#each arrows as a (a.id)}
+            {@const from = a.from ?? spots.from}
+            {@const to = a.to ?? spots.to}
             <svg
-              class="absolute inset-0 overflow-visible"
+              class="pointer-events-none absolute inset-0 overflow-visible"
               width={win.width}
               height={win.height}
               aria-hidden="true"
             >
               <path
-                d={arrowPath(a.from ?? spots.from, a.to ?? spots.to)}
+                d={arrowPath(from, to)}
                 stroke="var(--accent)"
                 stroke-width={Math.max(3, 7 * k)}
                 stroke-linecap="round"
@@ -252,10 +400,56 @@
                 fill="none"
               />
             </svg>
+            <!-- What you grab: the shaft, and its two ends once it's selected. -->
+            <svg
+              class="pointer-events-none absolute inset-0 overflow-visible"
+              width={win.width}
+              height={win.height}
+            >
+              <path
+                role="button"
+                tabindex="0"
+                aria-label="Arrow. Drag it, or use the arrow keys, to move it."
+                d="M{from.x * k} {from.y * k} L{to.x * k} {to.y * k}"
+                stroke="transparent"
+                stroke-width={Math.max(16, 22 * k)}
+                stroke-linecap="round"
+                fill="none"
+                pointer-events="stroke"
+                class="cursor-move touch-none outline-none"
+                onpointerdown={(ev) => grab(ev, a, 'move')}
+                onpointermove={pull}
+                onpointerup={drop}
+                onpointercancel={drop}
+                onfocus={() => select(a)}
+                onkeydown={(ev) => nudgeKey(ev, a)}
+              />
+              {#if selected(a)}
+                {#each [{ part: 'from', at: from, label: 'start' }, { part: 'to', at: to, label: 'tip' }] as end (end.part)}
+                  <circle
+                    role="button"
+                    tabindex="-1"
+                    aria-label="Move the arrow's {end.label}"
+                    cx={end.at.x * k}
+                    cy={end.at.y * k}
+                    r="7"
+                    fill="var(--cursor-light)"
+                    stroke="var(--cursor-dark)"
+                    stroke-width="2"
+                    pointer-events="all"
+                    class="cursor-grab touch-none"
+                    onpointerdown={(ev) => grab(ev, a, end.part as Part)}
+                    onpointermove={pull}
+                    onpointerup={drop}
+                    onpointercancel={drop}
+                  />
+                {/each}
+              {/if}
+            </svg>
           {/each}
         </div>
 
-        {#if !idle}
+        {#if !idle && !ed.still}
           <!-- The cursor rides inside the camera, so zooms make it bigger too. -->
           <div
             class="pointer-events-none absolute left-0 top-0"
@@ -307,10 +501,22 @@
 
       {#each titles as title (title.id)}
         <span
+          role="button"
+          tabindex="0"
+          aria-label="Title “{title.label}”. Drag it, or use the arrow keys, to move it."
           style:left="{(title.pos?.x ?? 0.05) * 100}%"
           style:top="{(title.pos?.y ?? 0.06) * 100}%"
-          class="absolute rounded-full bg-accent px-[1.4em] py-[0.5em] leading-[1.25] font-semibold whitespace-nowrap text-accent-fg shadow-[var(--stage-shadow)]"
-          style:font-size="{frame.height * 0.035}px">{title.label}</span
+          class={[
+            'absolute cursor-move touch-none select-none rounded-full bg-accent px-[1.4em] py-[0.5em] leading-[1.25] font-semibold whitespace-nowrap text-accent-fg shadow-[var(--stage-shadow)] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-fg',
+            selected(title) && 'ring-2 ring-inset ring-accent-fg/70',
+          ]}
+          style:font-size="{frame.height * 0.035}px"
+          onpointerdown={(ev) => grab(ev, title, 'move')}
+          onpointermove={pull}
+          onpointerup={drop}
+          onpointercancel={drop}
+          onfocus={() => select(title)}
+          onkeydown={(ev) => nudgeKey(ev, title)}>{title.label}</span
         >
       {/each}
 

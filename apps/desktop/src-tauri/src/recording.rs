@@ -150,7 +150,7 @@ pub fn tildify(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
-fn parse_source(id: &str) -> Result<Target, String> {
+pub(crate) fn parse_source(id: &str) -> Result<Target, String> {
     let number = |rest: &str| rest.parse::<u32>().map_err(|_| format!("“{id}” isn't a screen or a window."));
     if id == "display" {
         Ok(Target::Display(None))

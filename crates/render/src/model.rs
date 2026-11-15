@@ -9,7 +9,8 @@ use shotmaxxing_core::bundle::ProjectBundle;
 use shotmaxxing_core::cursor::{PathSettings, render_path};
 use shotmaxxing_core::geometry::{Point, Rect, Size};
 use shotmaxxing_core::project::{
-    Background, ClickEffect, Corner, CursorTheme, Project, TrackKind, ZoomMotion, ZoomRegion,
+    Background, ClickEffect, Corner, CursorTheme, Project, ProjectKind, TimeRange, TrackKind, ZoomMotion,
+    ZoomRegion,
 };
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent, decode_cursor, read_events};
 
@@ -110,6 +111,8 @@ pub struct Bubble {
 #[derive(Clone, Debug)]
 pub struct RenderProject {
     pub name: String,
+    /// A screenshot: one picture, nothing moving, and every title, arrow and blur showing.
+    pub still: bool,
     /// The capture's size in points.
     pub capture: Size,
     /// The screen recording.
@@ -211,6 +214,11 @@ impl RenderProject {
         events: &[InputEvent],
     ) -> Self {
         let duration = sec(project.duration_us());
+        let still = project.kind == ProjectKind::Screenshot;
+        // A screenshot's effects show the whole time: it's all one moment.
+        let range = |r: &TimeRange| {
+            if still { (f64::NEG_INFINITY, f64::INFINITY) } else { (sec(r.start_us), sec(r.end_us)) }
+        };
         let screen = project
             .tracks
             .iter()
@@ -314,8 +322,12 @@ impl RenderProject {
                 shrink: webcam.shrink_on_zoom,
             });
         let edits = &project.edits;
+        if still {
+            zooms.clear();
+        }
         Self {
             name: project.name.clone(),
+            still,
             capture: project.source.size,
             screen,
             duration,
@@ -328,7 +340,7 @@ impl RenderProject {
             radius: project.canvas.corner_radius,
             shadow: (project.canvas.shadow.opacity / 0.6).clamp(0.0, 1.0),
             aspect: project.canvas.aspect.ratio(),
-            cursor_visible: style.visible,
+            cursor_visible: style.visible && !still,
             cursor_look,
             cursor_size: style.size,
             click,
@@ -344,8 +356,8 @@ impl RenderProject {
                 .texts
                 .iter()
                 .map(|t| Title {
-                    start: sec(t.range.start_us),
-                    end: sec(t.range.end_us),
+                    start: range(&t.range).0,
+                    end: range(&t.range).1,
                     text: t.text.clone(),
                     at: t.position,
                 })
@@ -354,8 +366,8 @@ impl RenderProject {
                 .blurs
                 .iter()
                 .map(|b| Blur {
-                    start: sec(b.range.start_us),
-                    end: sec(b.range.end_us),
+                    start: range(&b.range).0,
+                    end: range(&b.range).1,
                     rect: b.rect,
                     strength: b.strength.clamp(0.2, 4.0),
                 })
@@ -363,12 +375,7 @@ impl RenderProject {
             arrows: edits
                 .arrows
                 .iter()
-                .map(|a| Arrow {
-                    start: sec(a.range.start_us),
-                    end: sec(a.range.end_us),
-                    from: a.from,
-                    to: a.to,
-                })
+                .map(|a| Arrow { start: range(&a.range).0, end: range(&a.range).1, from: a.from, to: a.to })
                 .collect(),
             sounds,
             bubble,

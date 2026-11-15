@@ -26,7 +26,9 @@ use shotmaxxing_core::project::{
     AspectRatio, Background, MediaTrack, Project, TimeRange, TrackKind, ZoomDepth,
 };
 use shotmaxxing_core::take::{OutputMode, TakeScript};
-use shotmaxxing_render::{ExportOptions, Format, RenderProject, default_bitrate, output_size, unique_path};
+use shotmaxxing_render::{
+    ExportOptions, Format, RenderProject, default_bitrate, output_size, png_size, unique_path,
+};
 
 /// Protocol versions this server speaks, newest first.
 const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -268,14 +270,14 @@ fn tools() -> Value {
         {
             "name": "export_project",
             "title": "Export a video",
-            "description": "Renders the project with every edit applied, on the GPU: MP4 (H.264) plays everywhere, HEVC is smaller, GIF loops in chats and docs, and PNG saves one frame (the moment given by at) styled like the video, for docs and posts. Reports progress and can be cancelled.",
+            "description": "Renders the project with every edit applied, on the GPU: MP4 (H.264) plays everywhere, HEVC is smaller, GIF loops in chats and docs, and PNG saves one frame (the moment given by at) styled like the video, for docs and posts. A screenshot project (kind screenshot) exports only as PNG, at its own pixels unless a size is given. Reports progress and can be cancelled.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project": project,
-                    "format": { "type": "string", "enum": ["mp4", "hevc", "gif", "png"], "default": "mp4" },
+                    "format": { "type": "string", "enum": ["mp4", "hevc", "gif", "png"], "description": "Defaults to mp4, or png for a screenshot." },
                     "at": { "type": "number", "minimum": 0, "description": "For png: the moment to show, in seconds into the recording, as zoom times are given. Defaults to the start." },
-                    "size": { "type": "integer", "minimum": 240, "maximum": 4320, "description": "The shorter side in pixels. Defaults to 1080, or 480 for a GIF." },
+                    "size": { "type": "integer", "minimum": 240, "maximum": 4320, "description": "The shorter side in pixels. Defaults to 1080, 480 for a GIF, or a screenshot's own pixels." },
                     "fps": { "type": "integer", "minimum": 1, "maximum": 120, "description": "Defaults to 60, or 15 for a GIF." },
                     "output": { "type": "string", "description": "The file to write. Defaults to a new file next to the project." },
                 },
@@ -443,6 +445,7 @@ pub fn summary(root: &Path, project: &Project) -> Value {
     json!({
         "project": root,
         "name": project.name,
+        "kind": project.kind,
         "recorded_seconds": sec(project.duration_us()),
         "seconds_after_cuts": sec(project.duration_us().saturating_sub(removed)),
         "size_points": { "width": project.source.size.width, "height": project.source.size.height },
@@ -569,7 +572,7 @@ fn stop_recording(state: &State, args: &Value, cancel: &AtomicBool) -> Reply {
 fn export(args: &Value, progress: &dyn Fn(f64, &str), cancel: &AtomicBool) -> Reply {
     let path = project_arg(args)?;
     let project = RenderProject::load(&path).map_err(|e| format!("couldn't open the project: {e}"))?;
-    let format = match text(args, "format").unwrap_or("mp4") {
+    let format = match text(args, "format").unwrap_or(if project.still { "png" } else { "mp4" }) {
         "mp4" | "h264" => Format::H264,
         "hevc" | "h265" => Format::Hevc,
         "gif" => Format::Gif,
@@ -579,7 +582,10 @@ fn export(args: &Value, progress: &dyn Fn(f64, &str), cancel: &AtomicBool) -> Re
     let gif = format == Format::Gif;
     let size = args.get("size").and_then(Value::as_u64).map_or(if gif { 480 } else { 1080 }, |s| s as u32);
     let fps = args.get("fps").and_then(Value::as_u64).map_or(if gif { 15 } else { 60 }, |f| f as u32);
-    let (width, height) = output_size(project.canvas_aspect(), size.clamp(240, 4320));
+    // A screenshot comes out pixel for pixel (0 × 0) unless a size is asked for.
+    let native = project.still && args.get("size").is_none();
+    let (width, height) =
+        if native { (0, 0) } else { output_size(project.canvas_aspect(), size.clamp(240, 4320)) };
     let fps = fps.clamp(1, 120);
     let output = match text(args, "output") {
         Some(out) => expand(out),
@@ -608,6 +614,7 @@ fn export(args: &Value, progress: &dyn Fn(f64, &str), cancel: &AtomicBool) -> Re
         !cancel.load(Ordering::SeqCst)
     })
     .map_err(|e| format!("the export didn't finish: {e}"))?;
+    let (width, height) = if native { png_size(&output).unwrap_or_default() } else { (width, height) };
     Ok(json!({
         "file": output,
         "width": width,

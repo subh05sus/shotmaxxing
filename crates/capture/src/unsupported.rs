@@ -1,6 +1,6 @@
 //! Platforms without a capture backend yet.
 
-use crate::{CaptureError, Device, RecordOptions, Recording, Sources, Target};
+use crate::{CaptureError, Device, RecordOptions, Recording, Screenshot, Sources, Target};
 
 pub fn sources() -> Result<Sources, CaptureError> {
     Ok(Sources::default())
@@ -14,6 +14,10 @@ pub fn prepare() {}
 
 pub fn thumbnails(targets: &[Target], _max_width: u32) -> Result<Vec<Option<Vec<u8>>>, CaptureError> {
     Ok(vec![None; targets.len()])
+}
+
+pub fn screenshot(_target: Target) -> Result<Screenshot, CaptureError> {
+    Err(CaptureError::Unsupported)
 }
 
 pub fn microphones() -> Vec<Device> {

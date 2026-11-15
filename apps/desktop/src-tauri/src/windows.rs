@@ -5,7 +5,7 @@ use std::path::Path;
 
 use tauri::webview::WebviewWindowBuilder;
 use tauri::window::{Effect, EffectState, EffectsBuilder};
-use tauri::{AppHandle, LogicalSize, Manager, Runtime, WebviewUrl, WebviewWindow};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, Runtime, WebviewUrl, WebviewWindow};
 
 #[cfg(target_os = "macos")]
 use tauri::{LogicalPosition, TitleBarStyle};
@@ -111,13 +111,18 @@ fn encode_component(text: &str) -> String {
     out
 }
 
-pub fn open_record<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+/// Opens the record dialog, ready for a recording or, when `mode` is `screenshot`, for a screenshot. An open dialog
+/// switches to that mode.
+pub fn open_record<R: Runtime>(app: &AppHandle<R>, mode: Option<&str>) -> tauri::Result<()> {
     set_dock_visible(app, true);
+    let mode = if mode == Some("screenshot") { "screenshot" } else { "video" };
     if let Some(window) = app.get_webview_window("record") {
+        let _ = app.emit_to("record", "record-mode", mode);
         return focus(&window, None);
     }
-    let builder = WebviewWindowBuilder::new(app, "record", WebviewUrl::App("index.html#/record".into()))
-        .title("New recording")
+    let url = format!("index.html#/record?mode={mode}");
+    let builder = WebviewWindowBuilder::new(app, "record", WebviewUrl::App(url.into()))
+        .title(if mode == "screenshot" { "New screenshot" } else { "New recording" })
         .inner_size(840.0, 600.0)
         .min_inner_size(640.0, 460.0)
         .center();

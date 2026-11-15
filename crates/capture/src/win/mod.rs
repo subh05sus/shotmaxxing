@@ -306,6 +306,10 @@ pub fn thumbnails(targets: &[Target], max_width: u32) -> Result<Vec<Option<Vec<u
     preview::thumbnails(targets, max_width)
 }
 
+pub fn screenshot(target: Target) -> Result<crate::Screenshot, CaptureError> {
+    preview::screenshot(target)
+}
+
 pub fn microphones() -> Vec<Device> {
     audio::microphones()
 }

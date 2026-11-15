@@ -49,7 +49,11 @@
     ai: { title: 'AI helpers', blurb: 'Captions, cleanup and cuts, made on this computer.' },
   };
 
-  const info = $derived(TITLES[ed.tool]);
+  const info = $derived(
+    ed.still && ed.tool === 'background'
+      ? { ...TITLES.background, blurb: 'What sits behind your screenshot.', guide: 'screenshot' }
+      : TITLES[ed.tool],
+  );
   const pct = (v: number) => `${Math.round(v * 100)}%`;
 
   let captionProgress = $state(0);
@@ -143,6 +147,7 @@
         value={p.canvas.aspect}
         onchange={(v) => ed.change('Aspect ratio', () => (p.canvas.aspect = v))}
         options={[
+          ...(ed.still ? [{ value: 'original' as const, label: 'Fit' }] : []),
           { value: '16:9', label: '16:9' },
           { value: '4:3', label: '4:3' },
           { value: '1:1', label: '1:1' },
@@ -388,7 +393,9 @@
       {/if}
     {:else if ed.tool === 'annotate'}
       <p class="text-footnote text-fg-muted">
-        Adds at the playhead. Drag the block on the timeline to change when it shows.
+        {ed.still
+          ? 'Pick one to add it, then drag it into place or nudge it with the arrow keys.'
+          : 'Adds at the playhead. Drag the block on the timeline to change when it shows.'}
       </p>
       <div class="mt-2 grid grid-cols-3 gap-2">
         {#each [{ kind: 'text', icon: Type, label: 'Title' }, { kind: 'arrow', icon: ArrowUpRight, label: 'Arrow' }, { kind: 'blur', icon: Blur, label: 'Blur' }] as tool (tool.kind)}
@@ -402,20 +409,22 @@
           </button>
         {/each}
       </div>
-      <label class="mt-3 flex h-9 items-center justify-between text-callout">
-        <span class="flex items-center gap-1"
-          >Show keystrokes <InfoTip
-            text="Shortcuts you press appear at the bottom. Typing in password fields never shows."
-          /></span
-        >
-        <Switch
-          checked={p.keystrokes}
-          label="Show keystrokes"
-          onchange={(v) => ed.change('Keystrokes', () => (p.keystrokes = v))}
-        />
-      </label>
+      {#if !ed.still}
+        <label class="mt-3 flex h-9 items-center justify-between text-callout">
+          <span class="flex items-center gap-1"
+            >Show keystrokes <InfoTip
+              text="Shortcuts you press appear at the bottom. Typing in password fields never shows."
+            /></span
+          >
+          <Switch
+            checked={p.keystrokes}
+            label="Show keystrokes"
+            onchange={(v) => ed.change('Keystrokes', () => (p.keystrokes = v))}
+          />
+        </label>
+      {/if}
       {#if p.effects.length}
-        <p class="eyebrow mt-3">In this video</p>
+        <p class="eyebrow mt-3">{ed.still ? 'On this screenshot' : 'In this video'}</p>
         <ul class="flex flex-col gap-1 py-1">
           {#each p.effects as e (e.id)}
             <li>
@@ -431,7 +440,9 @@
                 }}
               >
                 <span class="flex-1 truncate">{e.label}</span>
-                <span class="text-fg-subtle tabular">{e.start.toFixed(1)}–{e.end.toFixed(1)} s</span>
+                {#if !ed.still}
+                  <span class="text-fg-subtle tabular">{e.start.toFixed(1)}–{e.end.toFixed(1)} s</span>
+                {/if}
               </button>
             </li>
           {/each}

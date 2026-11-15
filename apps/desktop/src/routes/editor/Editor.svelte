@@ -4,8 +4,10 @@
     Ai,
     AudioLines,
     BookOpen,
+    Camera,
     ChevronLeft,
     CircleAlert,
+    Copy,
     Download,
     History,
     Image,
@@ -44,6 +46,7 @@
   import { settings } from '../../lib/settings.svelte';
   import {
     cancelExport,
+    copyScreenshot,
     exportProject,
     handOff,
     onExportProgress,
@@ -53,6 +56,7 @@
     takeRecordingNotices,
   } from '../../lib/native';
   import { relativeTime } from '../../lib/format';
+  import { shadowOpacity } from '../../lib/project';
   import { EditorState, type ToolId } from './store.svelte';
   import { ASPECTS, sizeForShort } from './camera';
   import Canvas from './Canvas.svelte';
@@ -65,9 +69,10 @@
   const ed = new EditorState();
   onDestroy(() => ed.destroy());
 
-  // `editor/sample` is the built-in sample; anything else is the path of a project on disk.
+  // `editor/sample` is the built-in sample (`sample-still` as a screenshot); anything else is a project on disk.
   const target = decodeURIComponent(route.path[1] ?? 'sample');
-  if (target !== 'sample') {
+  if (target === 'sample-still') ed.useStillSample();
+  else if (target !== 'sample') {
     void ed.load(target);
     // What the recording wanted to say (a microphone that wasn't allowed, dropped frames), shown once.
     void takeRecordingNotices(target).then((notes) => {
@@ -81,7 +86,8 @@
     });
   }
 
-  const TOOLS: { id: ToolId; label: string; icon: IconData; chord: string }[] = [
+  type Tool = { id: ToolId; label: string; icon: IconData; chord: string };
+  const TOOLS: Tool[] = [
     { id: 'background', label: 'Background', icon: Image, chord: '1' },
     { id: 'cursor', label: 'Cursor', icon: MousePointer2, chord: '2' },
     { id: 'zoom', label: 'Zoom', icon: ZoomIn, chord: '3' },
@@ -90,11 +96,20 @@
     { id: 'audio', label: 'Audio', icon: AudioLines, chord: '6' },
     { id: 'ai', label: 'AI', icon: Ai, chord: '7' },
   ];
+  // A screenshot has no pointer, motion, camera or sound: it's framed and marked up.
+  const STILL_TOOLS: Tool[] = [
+    { id: 'background', label: 'Background', icon: Image, chord: '1' },
+    { id: 'annotate', label: 'Annotate', icon: Pencil, chord: '2' },
+  ];
+  const tools = $derived(ed.still ? STILL_TOOLS : TOOLS);
 
   const requestedTool = route.query.get('tool') as ToolId | null;
   if (requestedTool && TOOLS.some((t) => t.id === requestedTool)) ed.tool = requestedTool;
+  $effect(() => {
+    if (!tools.some((t) => t.id === ed.tool)) ed.tool = 'background';
+  });
 
-  const toolIndex = $derived(TOOLS.findIndex((t) => t.id === ed.tool));
+  const toolIndex = $derived(tools.findIndex((t) => t.id === ed.tool));
   // The tool someone just switched to, by click or key, whose icon pops as the highlight lands. Not on first show.
   let poppedTool = $state<ToolId | null>(null);
   let shownTool: ToolId | null = null;
@@ -147,6 +162,25 @@
     },
   ];
 
+  const STILL_TOUR: CoachStep[] = [
+    {
+      target: '[data-tour="rail"]',
+      title: 'Frame it, then mark it up',
+      body: 'Background sets the wallpaper, padding, corners and shadow. Annotate adds titles, arrows and blurs.',
+    },
+    {
+      target: '[data-tour="canvas"]',
+      title: 'This is your screenshot',
+      body: 'What you see is what’s copied. Drag a title, an arrow or a blur into place, or nudge it with the arrow keys.',
+    },
+    {
+      target: '[data-tour="export"]',
+      title: 'Copy it when it looks right',
+      body: 'It’s copied at full resolution, ready to paste. Save image keeps a PNG.',
+      chord: 'mod+c',
+    },
+  ];
+
   const TOOL_HELP: Record<ToolId, string> = {
     background:
       'Pick a wallpaper, then set padding, corners and shadow. Aspect ratio changes the shape of the whole video.',
@@ -161,8 +195,19 @@
     ai: 'Captions, voice cleanup and silence cutting run locally with open models. Nothing leaves this computer.',
   };
 
+  const STILL_HELP: Partial<Record<ToolId, string>> = {
+    background:
+      'Pick a wallpaper, then set padding, corners and shadow. Aspect ratio changes the shape of the whole picture.',
+    annotate:
+      'Add a title, an arrow or a blur, then drag it into place. Blur hides emails, tokens and names before you share.',
+  };
+
+  /** Which whole tour is showing, so finishing it isn't offered again; one tool's help counts as neither. */
+  let tourFor: 'video' | 'still' | null = null;
+
   function startTour(from = 0) {
-    tourSteps = TOUR;
+    tourFor = ed.still ? 'still' : 'video';
+    tourSteps = ed.still ? STILL_TOUR : TOUR;
     queueMicrotask(() => {
       ui.tourStart = from;
       tourOpen = true;
@@ -170,12 +215,13 @@
   }
 
   function toolHelp(tool: ToolId) {
+    tourFor = null;
     ed.tool = tool;
     tourSteps = [
       {
         target: '[data-tour="panel"]',
         title: TOOLS.find((t) => t.id === tool)?.label ?? 'Tool',
-        body: TOOL_HELP[tool],
+        body: (ed.still && STILL_HELP[tool]) || TOOL_HELP[tool],
       },
     ];
     queueMicrotask(() => {
@@ -184,13 +230,17 @@
     });
   }
 
-  // First visit (or ?tour=1) starts the tour once the layout has settled; ?tour=<tool> explains one tool.
+  // First visit (or ?tour=1) starts the tour once the project is open and the layout has settled: a screenshot
+  // gets its own shorter one. ?tour=<tool> explains one tool.
   const tourParam = route.query.get('tour');
+  let toured = false;
   $effect(() => {
+    if (ed.status !== 'ready' || toured) return;
     const id = setTimeout(() => {
-      if (tourParam && tourParam !== '1' && TOOLS.some((t) => t.id === tourParam))
+      toured = true;
+      if (tourParam && tourParam !== '1' && tools.some((t) => t.id === tourParam))
         toolHelp(tourParam as ToolId);
-      else if (tourParam === '1' || !settings.tourDone) startTour();
+      else if (tourParam === '1' || !(ed.still ? settings.stillTourDone : settings.tourDone)) startTour();
     }, 450);
     return () => clearTimeout(id);
   });
@@ -229,7 +279,7 @@
       job.progress = 1;
       job.done = true;
       job.name = outcome.file;
-      toast(`Exported “${outcome.file}”`, {
+      toast(`${choice.format === 'png' ? 'Saved' : 'Exported'} “${outcome.file}”`, {
         tone: 'success',
         action: {
           label: env.os === 'mac' ? 'Show in Finder' : 'Show in folder',
@@ -256,6 +306,44 @@
     void runExport({ ...sizeForShort(aspect, 1440), fps: 1, format: 'png', bitrate: 0, at: ed.time });
   }
 
+  // Restyling a screenshot makes that look the next screenshot's starting point. Opening one changes nothing.
+  let shownLook = '';
+  $effect(() => {
+    if (!ed.still || ed.status !== 'ready') return;
+    const { wallpaper, padding, radius, shadow } = ed.project.canvas;
+    const look = {
+      wallpaper,
+      padding,
+      cornerRadius: radius,
+      shadowOpacity: shadowOpacity(shadow),
+    };
+    const key = JSON.stringify(look);
+    if (shownLook && key !== shownLook) settings.stillLook = look;
+    shownLook = key;
+  });
+
+  /** Saves a screenshot as a PNG, pixel for pixel, the way it's copied. */
+  function saveImage() {
+    void runExport({ width: 0, height: 0, fps: 1, format: 'png', bitrate: 0 });
+  }
+
+  let copying = $state(false);
+  /** Copies a screenshot to the clipboard, styled as it shows here, at full resolution. */
+  async function copy() {
+    if (copying) return;
+    copying = true;
+    try {
+      await ed.flush();
+      await copyScreenshot(ed.path ?? '');
+      toast('Copied. Paste it anywhere.', { tone: 'success' });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      toast(`Couldn’t copy it: ${reason}`, { tone: 'danger', timeout: 10000 });
+    } finally {
+      copying = false;
+    }
+  }
+
   /** Seconds left, once there's enough progress to tell. */
   function timeLeft(startedAt: number, progress: number): string {
     if (progress < 0.04) return '';
@@ -263,88 +351,133 @@
     return left < 60 ? ` · ${Math.max(1, Math.round(left))} s left` : ` · ${Math.round(left / 60)} min left`;
   }
 
+  const toolCommands = $derived(
+    tools.map((t) => ({
+      id: `tool-${t.id}`,
+      title: `${t.label} tool`,
+      group: 'Tools',
+      icon: t.icon,
+      chord: t.chord,
+      run: () => (ed.tool = t.id),
+    })),
+  );
+  const projectCommands = [
+    {
+      id: 'ed-history',
+      title: 'Version history',
+      group: 'Project',
+      icon: History,
+      chord: 'mod+alt+h',
+      run: () => (historyOpen = true),
+    },
+    {
+      id: 'ed-tour',
+      title: 'Start the editor tour',
+      group: 'Help',
+      icon: BookOpen,
+      chord: 'mod+shift+t',
+      run: () => startTour(),
+    },
+  ];
+  const newCommands = [
+    {
+      id: 'ed-new-still',
+      title: 'New screenshot',
+      group: 'Record',
+      icon: Camera,
+      chord: 'alt+shift+4',
+      run: () => openWindow('record', 'screenshot'),
+    },
+    {
+      id: 'ed-new',
+      title: 'New recording',
+      group: 'Record',
+      icon: RecordDot,
+      run: () => openWindow('record'),
+    },
+  ];
+
   $effect(() =>
-    registerCommands('editor', [
-      {
-        id: 'ed-export',
-        title: 'Export…',
-        group: 'Project',
-        icon: Download,
-        chord: 'mod+e',
-        run: () => (exportOpen = true),
-      },
-      {
-        id: 'ed-still',
-        title: 'Save this frame as an image',
-        group: 'Project',
-        icon: Image,
-        keywords: 'screenshot png still picture frame poster',
-        run: () => saveFrame(),
-      },
-      {
-        id: 'ed-history',
-        title: 'Version history',
-        group: 'Project',
-        icon: History,
-        chord: 'mod+alt+h',
-        run: () => (historyOpen = true),
-      },
-      {
-        id: 'ed-tour',
-        title: 'Start the editor tour',
-        group: 'Help',
-        icon: BookOpen,
-        chord: 'mod+shift+t',
-        run: () => startTour(),
-      },
-      {
-        id: 'ed-split',
-        title: 'Split at playhead',
-        group: 'Edit',
-        icon: Scissors,
-        chord: 's',
-        run: () => ed.split(),
-      },
-      {
-        id: 'ed-zoom',
-        title: 'Add zoom at playhead',
-        group: 'Edit',
-        icon: ZoomIn,
-        chord: 'z',
-        run: () => ed.addZoom(),
-      },
-      {
-        id: 'ed-redo-zoom',
-        title: 'Redo auto zoom',
-        group: 'Edit',
-        icon: ZoomIn,
-        keywords: 'auto zoom again replan',
-        run: () => void (ed.project.zoom.auto ? ed.redoAutoZoom() : ed.setAutoZoom(true)),
-      },
-      {
-        id: 'ed-captions',
-        title: 'Generate captions',
-        group: 'AI',
-        icon: Ai,
-        keywords: 'subtitles whisper transcribe',
-        run: () => (ed.tool = 'ai'),
-      },
-      ...TOOLS.map((t) => ({
-        id: `tool-${t.id}`,
-        title: `${t.label} tool`,
-        group: 'Tools',
-        icon: t.icon,
-        chord: t.chord,
-        run: () => (ed.tool = t.id),
-      })),
-      {
-        id: 'ed-new',
-        title: 'New recording',
-        group: 'Record',
-        icon: RecordDot,
-        run: () => openWindow('record'),
-      },
-    ]),
+    registerCommands(
+      'editor',
+      ed.still
+        ? [
+            {
+              id: 'ed-copy',
+              title: 'Copy the screenshot',
+              group: 'Project',
+              icon: Copy,
+              chord: 'mod+c',
+              keywords: 'clipboard paste image',
+              run: () => void copy(),
+            },
+            {
+              id: 'ed-save-image',
+              title: 'Save as an image',
+              group: 'Project',
+              icon: Download,
+              chord: 'mod+e',
+              keywords: 'png export file',
+              run: () => saveImage(),
+            },
+            ...projectCommands,
+            ...toolCommands,
+            ...newCommands,
+          ]
+        : [
+            {
+              id: 'ed-export',
+              title: 'Export…',
+              group: 'Project',
+              icon: Download,
+              chord: 'mod+e',
+              run: () => (exportOpen = true),
+            },
+            {
+              id: 'ed-still',
+              title: 'Save this frame as an image',
+              group: 'Project',
+              icon: Image,
+              keywords: 'screenshot png still picture frame poster',
+              run: () => saveFrame(),
+            },
+            ...projectCommands,
+            {
+              id: 'ed-split',
+              title: 'Split at playhead',
+              group: 'Edit',
+              icon: Scissors,
+              chord: 's',
+              run: () => ed.split(),
+            },
+            {
+              id: 'ed-zoom',
+              title: 'Add zoom at playhead',
+              group: 'Edit',
+              icon: ZoomIn,
+              chord: 'z',
+              run: () => ed.addZoom(),
+            },
+            {
+              id: 'ed-redo-zoom',
+              title: 'Redo auto zoom',
+              group: 'Edit',
+              icon: ZoomIn,
+              keywords: 'auto zoom again replan',
+              run: () => void (ed.project.zoom.auto ? ed.redoAutoZoom() : ed.setAutoZoom(true)),
+            },
+            {
+              id: 'ed-captions',
+              title: 'Generate captions',
+              group: 'AI',
+              icon: Ai,
+              keywords: 'subtitles whisper transcribe',
+              run: () => (ed.tool = 'ai'),
+            },
+            ...toolCommands,
+            ...newCommands,
+          ],
+    ),
   );
 
   function onkeydown(e: KeyboardEvent) {
@@ -357,6 +490,7 @@
       return;
     if (tourOpen || exportOpen || historyOpen || ui.palette || ui.shortcuts) return;
     const os = env.os;
+    if (ed.still) return stillKey(e);
     if (matchesChord(e, 'mod+z', os)) (e.preventDefault(), ed.undo());
     else if (matchesChord(e, 'mod+shift+z', os) || (os === 'windows' && matchesChord(e, 'ctrl+y', os)))
       (e.preventDefault(), ed.redo());
@@ -383,6 +517,34 @@
     else if (/^[1-7]$/.test(e.key)) ed.tool = TOOLS[Number(e.key) - 1].id;
   }
 
+  /** A screenshot's keys: nothing plays, so the arrows move the selected title, arrow or blur. */
+  function stillKey(e: KeyboardEvent) {
+    const os = env.os;
+    const step = e.shiftKey ? 10 : 1;
+    const moves: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    };
+    if (matchesChord(e, 'mod+z', os)) (e.preventDefault(), ed.undo());
+    else if (matchesChord(e, 'mod+shift+z', os) || (os === 'windows' && matchesChord(e, 'ctrl+y', os)))
+      (e.preventDefault(), ed.redo());
+    else if (matchesChord(e, 'mod+c', os) && !window.getSelection()?.toString())
+      (e.preventDefault(), void copy());
+    else if (matchesChord(e, 'mod+e', os)) (e.preventDefault(), saveImage());
+    else if (matchesChord(e, 'mod+alt+h', os)) (e.preventDefault(), (historyOpen = true));
+    else if (matchesChord(e, 'mod+shift+t', os)) (e.preventDefault(), startTour());
+    else if (e.metaKey || e.ctrlKey || e.altKey) return;
+    else if (moves[e.key]) {
+      if (ed.nudge(...moves[e.key])) e.preventDefault();
+    } else if (e.key === 'Backspace' || e.key === 'Delete') {
+      const label = ed.deleteSelection();
+      if (label) toast(label, { action: { label: 'Undo', run: () => ed.undo() } });
+    } else if (e.key === 'Escape') ed.selection = null;
+    else if (/^[1-9]$/.test(e.key) && tools[Number(e.key) - 1]) ed.tool = tools[Number(e.key) - 1].id;
+  }
+
   // The export rendering now (or the one that just finished), and how many wait behind it.
   const activeExport = $derived(
     ed.exports.find((x) => !x.done && !x.waiting) ?? ed.exports.find((x) => !x.done) ?? ed.exports[0],
@@ -402,7 +564,7 @@
       {#if ed.status === 'loading'}
         <div class="flex flex-col items-center gap-3 text-fg-muted" role="status">
           <Spinner />
-          <span class="text-callout">Opening your recording…</span>
+          <span class="text-callout">Opening…</span>
         </div>
       {:else}
         <EmptyState icon={CircleAlert} title="This project couldn’t be opened" body={ed.error}>
@@ -506,14 +668,17 @@
           aria-live="polite"
         >
           {#if activeExport.done}
-            <CheckDraw size={13} class="text-success" /> Exported
+            <CheckDraw size={13} class="text-success" /> {ed.still ? 'Saved' : 'Exported'}
           {:else}
             {#if activeExport.waiting}
               <Spinner size={13} label="Waiting" /> Waiting for another export
             {:else}
-              <ProgressRing value={activeExport.progress} size={14} label="Export progress" /> Exporting {Math.round(
-                activeExport.progress * 100,
-              )}%{timeLeft(activeExport.startedAt, activeExport.progress)}
+              <ProgressRing value={activeExport.progress} size={14} label="Export progress" />
+              {ed.still ? 'Saving' : 'Exporting'}
+              {Math.round(activeExport.progress * 100)}%{timeLeft(
+                activeExport.startedAt,
+                activeExport.progress,
+              )}
             {/if}
             {#if waitingExports > 0}<span class="text-fg-muted">· {waitingExports} more waiting</span>{/if}
             <Tooltip label="Stop export">
@@ -529,11 +694,22 @@
           {/if}
         </span>
       {/if}
-      <span class="ml-1" data-tour="export">
-        <Tooltip label="Export" chord="mod+e">
-          <Button variant="primary" icon={Download} onclick={() => (exportOpen = true)}>Export</Button>
+      {#if ed.still}
+        <Tooltip label="Save as a PNG" chord="mod+e">
+          <Button icon={Download} onclick={saveImage}>Save image</Button>
         </Tooltip>
-      </span>
+        <span class="ml-1" data-tour="export">
+          <Tooltip label="Copy at full resolution" chord="mod+c">
+            <Button variant="primary" icon={Copy} disabled={copying} onclick={() => void copy()}>Copy</Button>
+          </Tooltip>
+        </span>
+      {:else}
+        <span class="ml-1" data-tour="export">
+          <Tooltip label="Export" chord="mod+e">
+            <Button variant="primary" icon={Download} onclick={() => (exportOpen = true)}>Export</Button>
+          </Tooltip>
+        </span>
+      {/if}
     </div>
   </header>
 
@@ -552,7 +728,7 @@
         ]}
         style:translate="0 {Math.max(0, toolIndex) * 58}px"
       ></span>
-      {#each TOOLS as tool (tool.id)}
+      {#each tools as tool (tool.id)}
         <Tooltip label={tool.label} chord={tool.chord} side="right">
           <button
             type="button"
@@ -590,20 +766,21 @@
 
     <div class="flex min-w-0 flex-1 flex-col">
       <Canvas {ed} />
-      <Transport {ed} />
+      {#if !ed.still}<Transport {ed} />{/if}
     </div>
   </div>
 
-  <Timeline {ed} />
+  {#if !ed.still}<Timeline {ed} />{/if}
 </div>
 
-<ExportSheet bind:open={exportOpen} {ed} onexport={runExport} />
+{#if !ed.still}<ExportSheet bind:open={exportOpen} {ed} onexport={runExport} />{/if}
 <HistorySheet bind:open={historyOpen} {ed} />
 <CoachMarks
   steps={tourSteps}
   bind:open={tourOpen}
   start={ui.tourStart}
   onfinish={() => {
-    if (tourSteps.length > 1) settings.tourDone = true;
+    if (tourFor === 'still') settings.stillTourDone = true;
+    else if (tourFor === 'video') settings.tourDone = true;
   }}
 />

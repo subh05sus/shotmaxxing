@@ -11,6 +11,7 @@ mod sound;
 
 pub use sound::audio_seconds;
 mod text;
+pub(crate) use text::draw as draw_text;
 mod video;
 pub mod voice;
 

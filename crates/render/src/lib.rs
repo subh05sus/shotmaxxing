@@ -23,13 +23,19 @@ pub mod scene;
 mod soft;
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod sprites;
+#[cfg(any(target_os = "macos", windows))]
+mod still;
 pub mod voice;
 pub mod wallpaper;
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+use macos::draw_text;
 #[cfg(windows)]
 mod win;
+#[cfg(windows)]
+use win::draw_text;
 
 pub use model::RenderProject;
 
@@ -130,6 +136,36 @@ pub struct ExportOptions {
     pub at: Option<f64>,
 }
 
+impl ExportOptions {
+    /// A screenshot drawn at 0 × 0 comes out pixel for pixel, the way it's copied.
+    fn native(&self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+}
+
+/// A screenshot project drawn and ready to save or copy.
+pub struct Still {
+    pub width: u32,
+    pub height: u32,
+    /// Straight (not premultiplied) RGBA, top row first.
+    pub rgba: Vec<u8>,
+    pub png: Vec<u8>,
+}
+
+/// Draws the screenshot project at `root` (an `.smx` folder) styled like the editor shows it: at `size`, or pixel for
+/// pixel at its own size when `size` is `None`.
+pub fn draw_screenshot(root: &Path, size: Option<(u32, u32)>) -> Result<Still, RenderError> {
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        still::draw_at(root, size)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = (root, size);
+        Err(RenderError::Unsupported)
+    }
+}
+
 /// The size of a video whose shorter side is `short_side` pixels, in the canvas's shape (width ÷ height). Both
 /// sides are even, as video encoders need.
 pub fn output_size(aspect: f64, short_side: u32) -> (u32, u32) {
@@ -140,6 +176,19 @@ pub fn output_size(aspect: f64, short_side: u32) -> (u32, u32) {
 }
 
 /// A bitrate that keeps text crisp at this size and frame rate, in bits per second.
+/// The pixel size of the PNG at `path`, read from its header; `None` when it isn't a PNG.
+pub fn png_size(path: &Path) -> Option<(u32, u32)> {
+    use std::io::Read;
+    let mut head = [0u8; 24];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    if head[..8] != *b"\x89PNG\r\n\x1a\n" || head[12..16] != *b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes(head[16..20].try_into().ok()?);
+    let height = u32::from_be_bytes(head[20..24].try_into().ok()?);
+    (width > 0 && height > 0).then_some((width, height))
+}
+
 pub fn default_bitrate(width: u32, height: u32, fps: u32, format: Format) -> f64 {
     let bits_per_pixel = if format == Format::Hevc { 0.065 } else { 0.1 };
     (f64::from(width) * f64::from(height) * f64::from(fps) * bits_per_pixel).clamp(2e6, 120e6)
@@ -215,6 +264,22 @@ pub fn export(
     options: &ExportOptions,
     progress: &mut dyn FnMut(f64) -> bool,
 ) -> Result<(), RenderError> {
+    let project = RenderProject::load(root)?;
+    if project.still {
+        if options.format != Format::Png {
+            return Err(RenderError::Project("a screenshot exports as an image, so choose PNG".into()));
+        }
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            still::export(&project, options)?;
+            progress(1.0);
+            return Ok(());
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            return Err(RenderError::Unsupported);
+        }
+    }
     if options.width < 16 || options.height < 16 || options.width > 7680 || options.height > 7680 {
         return Err(RenderError::Project(format!(
             "{} × {} isn't a size that can be exported",
@@ -227,7 +292,6 @@ pub fn export(
         options.width &= !1;
         options.height &= !1;
     }
-    let project = RenderProject::load(root)?;
     if project.screen.is_none() {
         return Err(RenderError::Project("this project has no recording to export".into()));
     }

@@ -3,6 +3,7 @@
   import {
     BookOpen,
     Bot,
+    Camera,
     House,
     Keyboard,
     Monitor,
@@ -103,6 +104,15 @@
         icon: RecordDot,
         chord: 'alt+shift+5',
         run: () => openWindow('record'),
+      },
+      {
+        id: 'screenshot',
+        title: 'New screenshot',
+        group: 'Record',
+        icon: Camera,
+        chord: 'alt+shift+4',
+        keywords: 'capture picture image still',
+        run: () => openWindow('record', 'screenshot'),
       },
       { id: 'home', title: 'Open Library', group: 'Go to', icon: House, run: () => openWindow('home') },
       { id: 'learn', title: 'Open guides', group: 'Go to', icon: BookOpen, run: () => go('home/learn') },

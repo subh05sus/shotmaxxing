@@ -138,6 +138,14 @@
             go(`editor/sample?tool=${guide.tool}&tour=${guide.tool}`);
           }}>Show me in the editor</Button
         >
+      {:else if guide.id === 'screenshot'}
+        <Button
+          variant="primary"
+          onclick={() => {
+            sheetOpen = false;
+            void openWindow('record', 'screenshot');
+          }}>Take a screenshot</Button
+        >
       {:else}
         <Button variant="primary" onclick={() => (sheetOpen = false)}>Got it</Button>
       {/if}

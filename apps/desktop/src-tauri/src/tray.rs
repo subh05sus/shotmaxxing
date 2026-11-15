@@ -20,6 +20,9 @@ fn menu<R: Runtime>(app: &AppHandle<R>, recording: bool) -> tauri::Result<tauri:
             MenuItemBuilder::with_id("record", "New Recording…").accelerator("Alt+Shift+5").build(app)?;
         builder = builder.item(&record);
     }
+    let screenshot =
+        MenuItemBuilder::with_id("screenshot", "New Screenshot…").accelerator("Alt+Shift+4").build(app)?;
+    builder = builder.item(&screenshot);
     let library = MenuItemBuilder::with_id("library", "Open Library").build(app)?;
     let agents = MenuItemBuilder::with_id("agents", "Agents…").build(app)?;
     let status = MenuItemBuilder::with_id("status", "No agent take running").enabled(false).build(app)?;
@@ -60,7 +63,8 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
             let result = match event.id().as_ref() {
-                "record" => windows::open_record(app),
+                "record" => windows::open_record(app, None),
+                "screenshot" => windows::open_record(app, Some("screenshot")),
                 "stop" => {
                     recording::stop_and_edit(app);
                     Ok(())

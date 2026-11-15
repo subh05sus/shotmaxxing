@@ -15,6 +15,8 @@ pub struct Project {
     pub schema_version: u32,
     pub id: String,
     pub name: String,
+    /// A recording, or a screenshot framed the same way.
+    pub kind: ProjectKind,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
     pub source: SourceInfo,
@@ -39,6 +41,7 @@ impl Default for Project {
             schema_version: PROJECT_SCHEMA_VERSION,
             id: String::new(),
             name: "Untitled recording".into(),
+            kind: ProjectKind::Video,
             created_at_ms: 0,
             updated_at_ms: 0,
             source: SourceInfo::default(),
@@ -80,6 +83,17 @@ pub struct SourceInfo {
     /// Pixels per point of the captured display (2.0 on Retina).
     pub scale: f64,
     pub platform: Option<crate::keys::Platform>,
+}
+
+/// What a project holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectKind {
+    /// A screen recording.
+    #[default]
+    Video,
+    /// One picture: the screen track is a PNG, nothing plays, and every title, arrow and blur shows.
+    Screenshot,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

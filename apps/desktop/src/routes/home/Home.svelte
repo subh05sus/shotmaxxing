@@ -1,7 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { BookOpen, Bot, Film, RecordDot, Search, Settings as SettingsIcon } from '@shotmaxxing/ui/icons';
-  import { Button, Icon, Keycap, StatusDot, Tooltip, env, fade } from '@shotmaxxing/ui';
+  import {
+    BookOpen,
+    Bot,
+    Camera,
+    Film,
+    RecordDot,
+    Search,
+    Settings as SettingsIcon,
+  } from '@shotmaxxing/ui/icons';
+  import { Button, Icon, IconButton, Keycap, StatusDot, Tooltip, env, fade } from '@shotmaxxing/ui';
   import { go, route } from '../../lib/router.svelte';
   import { openWindow } from '../../lib/native';
   import { ui } from '../../lib/commands.svelte';
@@ -94,7 +102,13 @@
           <Keycap chord="mod+k" />
         </button>
       </Tooltip>
-      <span class="no-drag">
+      <span class="no-drag flex items-center gap-1.5">
+        <IconButton
+          icon={Camera}
+          label="New screenshot"
+          chord="alt+shift+4"
+          onclick={() => openWindow('record', 'screenshot')}
+        />
         <Tooltip label="New recording" chord="alt+shift+5">
           <Button variant="primary" icon={RecordDot} onclick={() => openWindow('record')}>Record</Button>
         </Tooltip>

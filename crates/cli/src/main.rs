@@ -15,7 +15,9 @@ use shotmaxxing_core::take::{OutputMode, TakeScript};
 use shotmaxxing_core::telemetry::{decode_cursor, read_events};
 use shotmaxxing_core::timeparse::{format_timecode, parse_duration_us};
 use shotmaxxing_core::zoom::{ZoomInput, plan_zooms};
-use shotmaxxing_render::{ExportOptions, Format, RenderProject, default_bitrate, output_size, unique_path};
+use shotmaxxing_render::{
+    ExportOptions, Format, RenderProject, default_bitrate, output_size, png_size, unique_path,
+};
 
 mod mcp;
 
@@ -120,15 +122,17 @@ struct ExportArgs {
     /// The file to write. Without it, the video goes next to the project, named after it.
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
-    /// MP4 plays everywhere; HEVC is smaller; GIF loops in chats and docs; PNG is one styled frame.
-    #[arg(long, value_enum, default_value_t = OutFormat::Mp4)]
-    format: OutFormat,
+    /// MP4 plays everywhere; HEVC is smaller; GIF loops in chats and docs; PNG is one styled frame. Defaults to MP4,
+    /// or PNG for a screenshot.
+    #[arg(long, value_enum)]
+    format: Option<OutFormat>,
     /// For a PNG: the moment to show, in seconds into the recording (like the editor's playhead).
     #[arg(long, default_value_t = 0.0)]
     at: f64,
-    /// The shorter side in pixels, e.g. 720, 1080, 1440 or 2160. The other side follows the canvas shape.
-    #[arg(long, default_value_t = 1080)]
-    size: u32,
+    /// The shorter side in pixels, e.g. 720, 1080, 1440 or 2160. The other side follows the canvas shape. Defaults to
+    /// 1080, or for a screenshot its own pixels, one for one.
+    #[arg(long)]
+    size: Option<u32>,
     /// Frames per second.
     #[arg(long, default_value_t = 60)]
     fps: u32,
@@ -236,13 +240,17 @@ fn run(cli: Cli) -> Result<()> {
 
 fn export(args: ExportArgs, json: bool) -> Result<()> {
     let project = RenderProject::load(&args.project).context("couldn't open the project")?;
-    let format = match args.format {
+    let format = match args.format.unwrap_or(if project.still { OutFormat::Png } else { OutFormat::Mp4 }) {
         OutFormat::Mp4 => Format::H264,
         OutFormat::Hevc => Format::Hevc,
         OutFormat::Gif => Format::Gif,
         OutFormat::Png => Format::Png,
     };
-    let (width, height) = output_size(project.canvas_aspect(), args.size.clamp(240, 4320));
+    // A screenshot comes out pixel for pixel (0 × 0) unless a size is asked for.
+    let (width, height) = match args.size {
+        None if project.still => (0, 0),
+        size => output_size(project.canvas_aspect(), size.unwrap_or(1080).clamp(240, 4320)),
+    };
     let fps = args.fps.clamp(1, 120);
     let output = match args.out {
         Some(out) => out,
@@ -273,12 +281,15 @@ fn export(args: ExportArgs, json: bool) -> Result<()> {
     }
     result.context("the export didn't finish")?;
     let seconds = started.elapsed().as_secs_f64();
+    let (width, height) = if width == 0 { png_size(&output).unwrap_or_default() } else { (width, height) };
     if json {
         let report = serde_json::json!({
             "output": output, "width": width, "height": height, "fps": fps,
             "duration_s": project.output_duration(), "took_s": seconds,
         });
         println!("{report}");
+    } else if project.still {
+        println!("Saved {} ({width} × {height})", output.display());
     } else {
         println!(
             "Saved {} ({:.1} s of video in {seconds:.1} s)",
@@ -617,8 +628,8 @@ fn run_take(
         let args = ExportArgs {
             project: root,
             out: None,
-            format: if gif { OutFormat::Gif } else { OutFormat::Mp4 },
-            size: if gif { 480 } else { 1080 },
+            format: Some(if gif { OutFormat::Gif } else { OutFormat::Mp4 }),
+            size: Some(if gif { 480 } else { 1080 }),
             fps: if gif { 15 } else { 60 },
             mbps: None,
             at: 0.0,

@@ -226,6 +226,7 @@
           size="sm"
           onclick={() => {
             settings.tourDone = false;
+            settings.stillTourDone = false;
             go('editor/sample?tour=1');
           }}>Replay tour</Button
         >

@@ -24,7 +24,7 @@ import {
   saveProject,
 } from '../../lib/native';
 import { dropRanges, keepRanges } from './clips';
-import { fromCore, toCore, zoomFromCore, type CoreProject } from '../../lib/project';
+import { effectDefaults, fromCore, toCore, zoomFromCore, type CoreProject } from '../../lib/project';
 import { clickSamples } from './click';
 
 export interface TimedPoint {
@@ -46,6 +46,8 @@ export interface Clip {
 export interface Project {
   id: string;
   title: string;
+  /** A recording, or a screenshot: one picture, where nothing plays and every effect shows. */
+  kind: 'video' | 'screenshot';
   duration: number;
   capture: { width: number; height: number };
   canvas: { wallpaper: string; padding: number; radius: number; shadow: number; aspect: Aspect };
@@ -129,6 +131,7 @@ function sampleProject(): Project {
   return {
     id: SAMPLE_PROJECT.id,
     title: SAMPLE_PROJECT.title,
+    kind: 'video',
     duration: SAMPLE_PROJECT.duration,
     capture: { ...SAMPLE_PROJECT.capture },
     canvas: { wallpaper: 'aurora-lime', padding: 0.08, radius: 14, shadow: 0.6, aspect: '16:9' },
@@ -232,6 +235,67 @@ export class EditorState {
       { id: 'v-import', label: 'Recorded by Claude Code', at: now - 2 * 3600_000, json },
       { id: 'v-auto', label: 'Auto zoom added 3 zooms', at: now - 2 * 3600_000 + 4000, json },
     ];
+  }
+
+  /** A screenshot: nothing plays, there's no timeline, and every title, arrow and blur shows. */
+  get still(): boolean {
+    return this.project.kind === 'screenshot';
+  }
+
+  /** The built-in sample as a screenshot, to try the still editor in a browser. */
+  useStillSample(): void {
+    const sample = sampleProject();
+    this.project = {
+      ...sample,
+      kind: 'screenshot',
+      title: 'Screenshot',
+      duration: 0,
+      canvas: { ...sample.canvas, aspect: 'original' },
+      clips: [],
+      zooms: [],
+      effects: sample.effects.map((e) => ({ ...e, start: 0, end: 1 })),
+      has: { mic: false, system: false, camera: false },
+    };
+    this.cursorPath = [];
+    this.clicks = [];
+    this.keys = [];
+    this.time = 0;
+    this.versions = [{ id: 'v-open', label: 'Taken', at: Date.now(), json: JSON.stringify(this.project) }];
+  }
+
+  /** The whole frame's size in capture points, as the preview lays it out: how far a title moves per point. */
+  framePoints = { width: 0, height: 0 };
+
+  /** Moves the selected title, arrow or blur by `dx`, `dy` capture points. It stays inside the frame. */
+  nudge(dx: number, dy: number): boolean {
+    const sel = this.selection;
+    const effect = sel?.kind === 'effect' ? this.project.effects.find((e) => e.id === sel.id) : undefined;
+    if (!effect) return false;
+    const { width, height } = this.project.capture;
+    const spots = effectDefaults(this.project.capture);
+    const within = (v: number, max: number) => Math.min(max, Math.max(0, v));
+    this.change(`Move ${effect.label}`, () => {
+      if (effect.kind === 'text') {
+        // Titles sit on the frame, in fractions of it.
+        const pos = effect.pos ?? { x: 0.05, y: 0.06 };
+        const fw = this.framePoints.width || width;
+        const fh = this.framePoints.height || height;
+        effect.pos = { x: within(pos.x + dx / fw, 0.95), y: within(pos.y + dy / fh, 0.95) };
+      } else if (effect.kind === 'arrow') {
+        const from = effect.from ?? spots.from;
+        const to = effect.to ?? spots.to;
+        effect.from = { x: within(from.x + dx, width), y: within(from.y + dy, height) };
+        effect.to = { x: within(to.x + dx, width), y: within(to.y + dy, height) };
+      } else {
+        const rect = effect.rect ?? spots.blur;
+        effect.rect = {
+          ...rect,
+          x: within(rect.x + dx, width - rect.width),
+          y: within(rect.y + dy, height - rect.height),
+        };
+      }
+    });
+    return true;
   }
 
   /** Opens a project from disk. The sample stays in place until it loads, so a failure can say what went wrong. */
@@ -618,7 +682,7 @@ export class EditorState {
 
   // Playback runs a frame loop only while playing. Low power caps it at 30 fps.
   play(): void {
-    if (this.playing) return;
+    if (this.playing || this.still) return;
     if (this.time >= this.project.duration - 0.05) this.time = 0;
     this.playing = true;
     // A suspended audio context mutes the sounds routed through it.
@@ -687,6 +751,7 @@ export class EditorState {
   }
 
   seek(t: number): void {
+    if (this.still) return;
     this.time = Math.min(this.project.duration, Math.max(0, t));
     const video = this.#video;
     if (video && Math.abs(video.currentTime - this.time) > 0.02) video.currentTime = this.time;
@@ -825,8 +890,9 @@ export class EditorState {
       const e: EffectBlock = {
         id: `e${Date.now()}`,
         kind,
-        start: t,
-        end: Math.min(this.project.duration, t + 3),
+        start: this.still ? 0 : t,
+        // A still shows every effect; its range only keeps the project's shape.
+        end: this.still ? 1 : Math.min(this.project.duration, t + 3),
         label: labels[kind],
       };
       this.project.effects.push(e);
