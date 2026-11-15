@@ -11,10 +11,17 @@
       "svelte": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./icons": {
+      "types": "./src/lib/icons.ts",
+      "default": "./src/lib/icons.ts"
+    },
     "./styles.css": "./src/styles/index.css"
   },
   "peerDependencies": {
-    "@lucide/svelte": "^1.73.0",
     "svelte": "^5.57.0"
+  },
+  "dependencies": {
+    "@hugeicons/core-free-icons": "4.4.0",
+    "@pikaicons/core-free": "0.1.0"
   }
 }

@@ -4,9 +4,9 @@
     ArrowDownRight,
     ArrowUpLeft,
     ArrowUpRight,
+    Blur,
     BookOpen,
     Captions,
-    Droplets,
     Lock,
     Music,
     RefreshCw,
@@ -14,11 +14,12 @@
     Type,
     WandSparkles,
     X,
-  } from '@lucide/svelte';
+  } from '@shotmaxxing/ui/icons';
   import {
     Advanced,
     Button,
     CheckDraw,
+    Icon,
     IconButton,
     InfoTip,
     Keycap,
@@ -84,7 +85,7 @@
       title="Show me how this works"
       onclick={() => onhelp(ed.tool)}
     >
-      <BookOpen size={15} aria-hidden="true" />
+      <Icon icon={BookOpen} size={15} aria-hidden="true" />
     </button>
   </header>
 
@@ -390,14 +391,13 @@
         Adds at the playhead. Drag the block on the timeline to change when it shows.
       </p>
       <div class="mt-2 grid grid-cols-3 gap-2">
-        {#each [{ kind: 'text', icon: Type, label: 'Title' }, { kind: 'arrow', icon: ArrowUpRight, label: 'Arrow' }, { kind: 'blur', icon: Droplets, label: 'Blur' }] as tool (tool.kind)}
-          {@const Icon = tool.icon}
+        {#each [{ kind: 'text', icon: Type, label: 'Title' }, { kind: 'arrow', icon: ArrowUpRight, label: 'Arrow' }, { kind: 'blur', icon: Blur, label: 'Blur' }] as tool (tool.kind)}
           <button
             type="button"
             class="press-card flex flex-col items-center gap-1.5 rounded-[10px] border border-border bg-fill py-3 text-footnote font-medium hover:bg-fill-hover"
             onclick={() => ed.addEffect(tool.kind as 'text' | 'arrow' | 'blur')}
           >
-            <Icon size={18} aria-hidden="true" />
+            <Icon icon={tool.icon} size={18} aria-hidden="true" />
             {tool.label}
           </button>
         {/each}
@@ -565,7 +565,7 @@
           {@const runsOver = music.start + music.seconds > ed.outputDuration + 0.001}
           <div class="flex items-center gap-2.5">
             <span class="grid size-8 shrink-0 place-items-center rounded-[8px] bg-fill text-fg-muted">
-              <Music size={15} aria-hidden="true" />
+              <Icon icon={Music} size={15} aria-hidden="true" />
             </span>
             <span class="min-w-0 flex-1">
               <span class="block truncate text-callout font-semibold" title={music.name}>{music.name}</span>
@@ -590,7 +590,7 @@
           >
         {:else}
           <h3 class="flex items-center gap-2 text-callout font-semibold">
-            <Music size={15} aria-hidden="true" /> Music
+            <Icon icon={Music} size={15} aria-hidden="true" /> Music
           </h3>
           <p class="mt-1 text-footnote text-fg-muted">
             Plays under the whole video, straight through cuts, and fades out at the end.
@@ -600,7 +600,7 @@
       </section>
     {:else if !p.has.mic}
       <p class="flex items-center gap-1.5 rounded-[8px] bg-fill px-2.5 py-2 text-footnote text-fg-muted">
-        <Lock size={13} aria-hidden="true" /> Everything here runs on this computer. Nothing is uploaded.
+        <Icon icon={Lock} size={13} aria-hidden="true" /> Everything here runs on this computer. Nothing is uploaded.
       </p>
       <p class="mt-3 text-footnote text-fg-muted">
         Captions, voice cleanup and cutting silences work on your voice. This take was recorded without a
@@ -608,11 +608,11 @@
       </p>
     {:else}
       <p class="flex items-center gap-1.5 rounded-[8px] bg-fill px-2.5 py-2 text-footnote text-fg-muted">
-        <Lock size={13} aria-hidden="true" /> Everything here runs on this computer. Nothing is uploaded.
+        <Icon icon={Lock} size={13} aria-hidden="true" /> Everything here runs on this computer. Nothing is uploaded.
       </p>
       <section class="mt-3 rounded-[10px] border border-border p-3">
         <h3 class="flex items-center gap-2 text-callout font-semibold">
-          <Captions size={15} aria-hidden="true" /> Captions
+          <Icon icon={Captions} size={15} aria-hidden="true" /> Captions
         </h3>
         {#if ed.path}
           <p class="mt-1 text-footnote text-fg-muted">
@@ -663,7 +663,7 @@
       </section>
       <section class="mt-2 rounded-[10px] border border-border p-3">
         <h3 class="flex items-center gap-2 text-callout font-semibold">
-          <WandSparkles size={15} aria-hidden="true" /> Voice cleanup
+          <Icon icon={WandSparkles} size={15} aria-hidden="true" /> Voice cleanup
         </h3>
         <p class="mt-1 text-footnote text-fg-muted">
           Turns down hum, fan noise and hiss, and evens out your level.
@@ -680,7 +680,7 @@
       </section>
       <section class="mt-2 rounded-[10px] border border-border p-3">
         <h3 class="flex items-center gap-2 text-callout font-semibold">
-          <Sparkles size={15} aria-hidden="true" /> Cut silences
+          <Icon icon={Sparkles} size={15} aria-hidden="true" /> Cut silences
         </h3>
         <p class="mt-1 text-footnote text-fg-muted">
           {#if p.audio.silence}

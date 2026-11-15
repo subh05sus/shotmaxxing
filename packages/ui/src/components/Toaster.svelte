@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { CircleCheck, CircleAlert, X } from '@lucide/svelte';
+  import { CircleAlert, CircleCheck, X } from '../lib/icons';
+  import Icon from './Icon.svelte';
   import { flip } from 'svelte/animate';
   import { dismiss, holdToasts, toasts } from '../lib/toasts.svelte';
   import { rise, sink, spring } from '../lib/motion';
@@ -21,9 +22,9 @@
       animate:flip={{ duration: 220, easing: spring }}
     >
       {#if t.tone === 'success'}
-        <CircleCheck size={16} class="shrink-0 text-success" aria-hidden="true" />
+        <Icon icon={CircleCheck} size={16} class="shrink-0 text-success" aria-hidden="true" />
       {:else if t.tone === 'danger'}
-        <CircleAlert size={16} class="shrink-0 text-danger" aria-hidden="true" />
+        <Icon icon={CircleAlert} size={16} class="shrink-0 text-danger" aria-hidden="true" />
       {/if}
       <span class="min-w-0 flex-1">{t.message}</span>
       {#if t.action}
@@ -43,7 +44,7 @@
         class="press-icon inline-flex size-7 items-center justify-center rounded-[6px] text-fg-subtle hover:bg-fill hover:text-fg"
         onclick={() => dismiss(t.id)}
       >
-        <X size={14} aria-hidden="true" />
+        <Icon icon={X} size={14} aria-hidden="true" />
       </button>
     </div>
   {/each}

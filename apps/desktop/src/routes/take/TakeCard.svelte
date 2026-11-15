@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { Bot, Check, Hand, Pause, Play, RotateCcw, Square, X } from '@lucide/svelte';
+  import { Bot, Check, Hand, Pause, Play, RotateCcw, Stop, X } from '@shotmaxxing/ui/icons';
   import {
     Button,
     CheckDraw,
+    Icon,
     IconButton,
     Keycap,
     Spinner,
@@ -194,7 +195,7 @@
   >
     <header class="flex items-center gap-3 px-4 pb-3 pt-3.5">
       <span class="grid size-9 shrink-0 place-items-center rounded-[10px] bg-accent text-accent-fg"
-        ><Bot size={18} aria-hidden="true" /></span
+        ><Icon icon={Bot} size={18} aria-hidden="true" /></span
       >
       <div class="min-w-0 flex-1">
         <p class="text-callout font-semibold" aria-live="polite">{title}</p>
@@ -223,7 +224,7 @@
     {:else if phase === 'handoff'}
       <div class="px-4 py-4" in:fade>
         <p class="flex items-center gap-2 text-callout font-semibold">
-          <Hand size={16} class="shrink-0 text-accent-text" aria-hidden="true" />
+          <Icon icon={Hand} size={16} class="shrink-0 text-accent-text" aria-hidden="true" />
           <span class="min-w-0">{live ? card?.waiting || 'Over to you' : 'Enter the password yourself'}</span>
         </p>
         <p class="mt-1 text-footnote leading-[1.45] text-fg-muted">
@@ -248,11 +249,11 @@
         >
           <span class="grid size-4 shrink-0 place-items-center">
             {#if phase !== 'asking' && (i < current || phase === 'done' || phase === 'saving')}
-              <Check size={13} strokeWidth={3} class="text-success" aria-label="Done" />
+              <Icon icon={Check} size={13} class="text-success" aria-label="Done" />
             {:else if active && phase === 'running'}
               <Spinner size={13} label="In progress" />
             {:else if active && phase === 'handoff'}
-              <Hand size={13} class="text-accent-text" aria-label="Waiting for you" />
+              <Icon icon={Hand} size={13} class="text-accent-text" aria-label="Waiting for you" />
             {:else}
               <span class="size-1.5 rounded-full bg-fg-subtle" aria-hidden="true"></span>
             {/if}
@@ -355,7 +356,7 @@
         <Button
           size="sm"
           variant="ghost"
-          icon={Square}
+          icon={Stop}
           loading={pending}
           onclick={() => {
             if (live && card) act(() => stopTake(card!.id));

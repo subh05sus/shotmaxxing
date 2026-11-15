@@ -12,7 +12,6 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@lucide/svelte": "^1.73.0",
     "@shotmaxxing/ui": "workspace:*",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-os": "^2.4.0"

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { ChevronDown, Pause, Play, StepBack, StepForward } from '@lucide/svelte';
-  import { IconButton, Menu, type MenuItem } from '@shotmaxxing/ui';
+  import { ChevronDown, Pause, Play, StepBack, StepForward } from '@shotmaxxing/ui/icons';
+  import { Icon, IconButton, Menu, type MenuItem } from '@shotmaxxing/ui';
   import { timecode } from '../../lib/format';
   import type { Aspect, EditorState } from './store.svelte';
 
@@ -30,7 +30,7 @@
           {...props}
         >
           {ed.project.canvas.aspect === 'original' ? 'Original' : ed.project.canvas.aspect}
-          <ChevronDown size={12} aria-hidden="true" />
+          <Icon icon={ChevronDown} size={12} aria-hidden="true" />
         </button>
       {/snippet}
     </Menu>
@@ -51,7 +51,8 @@
     class="press-icon mx-1 grid size-9 place-items-center rounded-full bg-on-stage-fill text-fg-on-stage hover:bg-on-stage-hover"
     onclick={() => ed.toggle()}
   >
-    {#if ed.playing}<Pause size={18} fill="currentColor" aria-hidden="true" />{:else}<Play
+    {#if ed.playing}<Icon icon={Pause} size={18} fill="currentColor" aria-hidden="true" />{:else}<Icon
+        icon={Play}
         size={18}
         fill="currentColor"
         class="translate-x-px"

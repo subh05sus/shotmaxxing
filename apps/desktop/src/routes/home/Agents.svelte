@@ -1,6 +1,27 @@
 <script lang="ts">
-  import { Bot, Clapperboard, Copy, Hand, Lock, Play, ShieldCheck, Sparkles, Wand } from '@lucide/svelte';
-  import { Button, CheckDraw, Group, Row, Segmented, StatusDot, Switch, env, toast } from '@shotmaxxing/ui';
+  import {
+    Bot,
+    Clapperboard,
+    Copy,
+    Hand,
+    Lock,
+    Play,
+    ShieldCheck,
+    Sparkles,
+    Wand,
+  } from '@shotmaxxing/ui/icons';
+  import {
+    Button,
+    CheckDraw,
+    Group,
+    Icon,
+    Row,
+    Segmented,
+    StatusDot,
+    Switch,
+    env,
+    toast,
+  } from '@shotmaxxing/ui';
   import { onMount } from 'svelte';
   import { STARTER_PROMPTS, type Agent } from '../../lib/sample';
   import { connectAgent, disconnectAgent, mcpCommand, openWindow } from '../../lib/native';
@@ -71,7 +92,7 @@
         {#each agents as agent (agent.id)}
           <div class="flex min-h-14 items-center gap-3 py-2">
             <span class="grid size-8 shrink-0 place-items-center rounded-[9px] bg-fill text-fg-muted"
-              ><Bot size={16} aria-hidden="true" /></span
+              ><Icon icon={Bot} size={16} aria-hidden="true" /></span
             >
             <div class="min-w-0 flex-1">
               <p class="text-callout font-semibold">{agent.name}</p>
@@ -120,7 +141,7 @@
           description="Agents hand those steps to you. This can’t be turned off."
         >
           <span class="flex items-center gap-1.5 text-footnote text-fg-muted"
-            ><Lock size={13} aria-hidden="true" /> Always on</span
+            ><Icon icon={Lock} size={13} aria-hidden="true" /> Always on</span
           >
         </Row>
         <Row
@@ -149,7 +170,7 @@
     <aside class="flex flex-col gap-6 lg:pt-[calc(var(--text-caption--line-height)+6px)]">
       <section class="rounded-card border border-border bg-surface p-4 shadow-[var(--elev-1)]">
         <h3 class="flex items-center gap-2 text-callout font-semibold">
-          <Sparkles size={15} class="text-accent-text" aria-hidden="true" /> Try asking
+          <Icon icon={Sparkles} size={15} class="text-accent-text" aria-hidden="true" /> Try asking
         </h3>
         <ul class="mt-3 flex flex-col gap-2">
           {#each STARTER_PROMPTS as prompt (prompt)}
@@ -160,7 +181,8 @@
                 onclick={() => copy(prompt, 'Prompt copied. Paste it into your agent.')}
               >
                 <span class="flex-1">“{prompt}”</span>
-                <Copy
+                <Icon
+                  icon={Copy}
                   size={13}
                   class="mt-0.5 shrink-0 text-fg-subtle group-hover:text-fg-muted"
                   aria-hidden="true"
@@ -175,11 +197,10 @@
         <h3 class="text-callout font-semibold">How a take works</h3>
         <ol class="mt-3 flex flex-col gap-3">
           {#each [{ icon: Wand, title: 'Prepare', body: 'The agent opens the app, finds each button and plans every step before filming.' }, { icon: Clapperboard, title: 'Perform', body: 'One smooth take with a natural cursor. Watch it live, pause it or take over.' }, { icon: Hand, title: 'Hand off', body: 'Sign-ins and passwords come to you. The agent waits until you hand back.' }, { icon: ShieldCheck, title: 'Polish', body: 'The take opens in the editor with zooms already added, ready to export.' }] as stepItem, i (stepItem.title)}
-            {@const Icon = stepItem.icon}
             <li class="flex gap-3">
               <span
                 class="grid size-7 shrink-0 place-items-center rounded-full bg-accent-tint text-accent-text"
-                ><Icon size={14} aria-hidden="true" /></span
+                ><Icon icon={stepItem.icon} size={14} aria-hidden="true" /></span
               >
               <span>
                 <span class="block text-footnote font-semibold"

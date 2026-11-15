@@ -1,9 +1,9 @@
 <script lang="ts" module>
-  import type { Component } from 'svelte';
+  import type { IconData } from '../lib/icons';
 
   export interface MenuItem {
     label: string;
-    icon?: Component<any>;
+    icon?: IconData;
     chord?: string;
     danger?: boolean;
     disabled?: boolean;
@@ -14,6 +14,7 @@
 </script>
 
 <script lang="ts">
+  import Icon from './Icon.svelte';
   import type { Snippet } from 'svelte';
   import type { Align, Side } from '../lib/position';
   import Popover from './Popover.svelte';
@@ -84,7 +85,6 @@
     }}
   >
     {#each items as item, i (item.label)}
-      {@const Icon = item.icon}
       {#if item.separated}<div class="mx-2 my-1 h-px bg-border" role="separator"></div>{/if}
       <button
         type="button"
@@ -104,7 +104,7 @@
               : 'text-fg',
         ]}
       >
-        {#if Icon}<Icon size={15} strokeWidth={2} aria-hidden="true" />{/if}
+        {#if item.icon}<Icon icon={item.icon} size={15} aria-hidden="true" />{/if}
         <span class="flex-1 truncate">{item.label}</span>
         {#if item.chord}<Keycap chord={item.chord} tone={i === active ? 'on-accent' : 'default'} />{/if}
       </button>

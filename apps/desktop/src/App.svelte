@@ -1,17 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import {
-    House,
-    Keyboard,
-    Moon,
-    Sun,
-    Circle,
-    Monitor,
     BookOpen,
     Bot,
-    Settings as SettingsIcon,
+    House,
+    Keyboard,
+    Monitor,
+    Moon,
+    RecordDot,
     Route,
-  } from '@lucide/svelte';
+    Settings as SettingsIcon,
+    Sun,
+  } from '@shotmaxxing/ui/icons';
   import {
     CommandPalette,
     ShortcutSheet,
@@ -100,7 +100,7 @@
         id: 'record',
         title: 'New recording',
         group: 'Record',
-        icon: Circle,
+        icon: RecordDot,
         chord: 'alt+shift+5',
         run: () => openWindow('record'),
       },

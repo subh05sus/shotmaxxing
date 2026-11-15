@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { UserRound } from '@lucide/svelte';
+  import { UserRound } from '@shotmaxxing/ui/icons';
+  import { Icon } from '@shotmaxxing/ui';
   import Scene from '../../components/Scene.svelte';
   import { effectDefaults } from '../../lib/project';
   import { wallpaper } from '../../lib/wallpapers';
@@ -358,7 +359,7 @@
               disablepictureinpicture
             ></video>
           {:else}
-            <UserRound size={bubble * 0.5} strokeWidth={1.5} aria-hidden="true" />
+            <Icon icon={UserRound} size={bubble * 0.5} aria-hidden="true" />
           {/if}
         </span>
       {/if}

@@ -93,40 +93,26 @@
 
 /* ---------------------------------------------------------------- Icons act out what they do, once per hover */
 
+/* `Icon` marks these with data-act (lib/icons.ts says which icon does what). */
 @media (hover: hover) {
-  :is(button, [role='button'], [role='menuitem'], a):not(:disabled):hover
-    svg:is(
-      .lucide-refresh-cw,
-      .lucide-rotate-cw,
-      .lucide-trash,
-      .lucide-plus,
-      .lucide-copy,
-      .lucide-download,
-      .lucide-search,
-      .lucide-sparkles,
-      .lucide-share
-    ) {
+  :is(button, [role='button'], [role='menuitem'], a):not(:disabled):hover svg[data-act] {
     animation: var(--icon-act);
   }
 }
 
-svg.lucide-refresh-cw,
-svg.lucide-rotate-cw {
+svg[data-act='spin'] {
   --icon-act: icon-spin 520ms var(--ease-out);
 }
-svg.lucide-trash {
+svg[data-act='tilt'] {
   --icon-act: icon-tilt 300ms var(--ease-out);
 }
-svg.lucide-plus {
-  --icon-act: icon-turn 260ms var(--ease-out);
-}
-svg:is(.lucide-copy, .lucide-download, .lucide-share) {
+svg[data-act='pop'] {
   --icon-act: icon-pop 260ms var(--ease-out);
 }
-svg.lucide-search {
+svg[data-act='search'] {
   --icon-act: icon-search 300ms var(--ease-out);
 }
-svg.lucide-sparkles {
+svg[data-act='spark'] {
   --icon-act: icon-pop 280ms var(--ease-spring);
 }
 
@@ -141,11 +127,6 @@ svg.lucide-sparkles {
   }
   70% {
     rotate: 6deg;
-  }
-}
-@keyframes icon-turn {
-  to {
-    rotate: 90deg;
   }
 }
 @keyframes icon-pop {

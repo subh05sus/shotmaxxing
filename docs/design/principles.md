@@ -75,8 +75,13 @@ apply to every screen, component and animation. A change that breaks one needs a
 **Icons**
 - **One set, one weight.** Icons come from the free [Pikaicons](https://pikaicons.com/free-icons) in their Stroke
   style. Where Pika has no icon for an idea, the free [Hugeicons](https://hugeicons.com) stroke-rounded set fills in.
-  Both are MIT licensed, drawn on a 24 px grid and coloured with `currentColor`, and both are drawn at a stroke of
-  1.75 so they read as one set.
+  Both are MIT licensed, drawn on a 24 px grid and coloured with `currentColor`, and `Icon` draws both at a stroke of
+  1.75 so they read as one set. Below 16 px it thickens the stroke just enough to stay 1.15 px on screen, so small
+  icons don't turn faint at 100% scaling on Windows.
+- **One map.** Screens import icons from `@shotmaxxing/ui/icons` by what they mean (`Mic`, `Stop`, `Blur`), never
+  from the icon packages, so changing a drawing is one line in `packages/ui/src/lib/icons.ts`.
+- **Solid marks.** Record is a solid dot (`RecordDot`). Stop, Play and Pause are filled (`fill="currentColor"`) when
+  they're a transport or the main action.
 
 **Colour**
 - **OKLCH.** All colour tokens are defined in OKLCH, so hover, pressed and disabled steps change lightness evenly in

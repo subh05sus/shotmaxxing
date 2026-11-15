@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { X } from '@lucide/svelte';
+  import { X } from '../lib/icons';
   import { fade, pop, unpop } from '../lib/motion';
   import { portal } from '../lib/portal';
   import IconButton from './IconButton.svelte';

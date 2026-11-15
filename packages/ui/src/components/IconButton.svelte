@@ -1,11 +1,12 @@
 <script lang="ts">
-  import type { Component } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
+  import type { IconData } from '../lib/icons';
   import type { Side } from '../lib/position';
+  import Icon from './Icon.svelte';
   import Tooltip from './Tooltip.svelte';
 
   interface Props extends HTMLButtonAttributes {
-    icon: Component<any>;
+    icon: IconData;
     /** Required: the accessible name and the tooltip. */
     label: string;
     chord?: string;
@@ -16,7 +17,7 @@
   }
 
   let {
-    icon: Icon,
+    icon,
     label,
     chord,
     side = 'bottom',
@@ -49,6 +50,6 @@
     ]}
     {...rest}
   >
-    <Icon size={glyph[size]} strokeWidth={1.9} aria-hidden="true" />
+    <Icon {icon} size={glyph[size]} aria-hidden="true" />
   </button>
 </Tooltip>

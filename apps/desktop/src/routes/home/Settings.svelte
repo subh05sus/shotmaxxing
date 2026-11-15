@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ExternalLink, FolderOpen, Monitor, Moon, Sun } from '@lucide/svelte';
+  import { ExternalLink, FolderOpen, Monitor, Moon, Sun } from '@shotmaxxing/ui/icons';
   import {
     Button,
     Group,

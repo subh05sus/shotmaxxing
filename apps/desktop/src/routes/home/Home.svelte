@@ -1,13 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { BookOpen, Bot, Film, Search, Settings as SettingsIcon } from '@lucide/svelte';
-  import { Button, Keycap, StatusDot, Tooltip, env, fade } from '@shotmaxxing/ui';
+  import { BookOpen, Bot, Film, RecordDot, Search, Settings as SettingsIcon } from '@shotmaxxing/ui/icons';
+  import { Button, Icon, Keycap, StatusDot, Tooltip, env, fade } from '@shotmaxxing/ui';
   import { go, route } from '../../lib/router.svelte';
   import { openWindow } from '../../lib/native';
   import { ui } from '../../lib/commands.svelte';
   import { settings } from '../../lib/settings.svelte';
   import { counts } from '../../lib/counts.svelte';
-  import RecordDot from '../../components/RecordDot.svelte';
   import Library from './Library.svelte';
   import Learn from './Learn.svelte';
   import Agents from './Agents.svelte';
@@ -39,7 +38,6 @@
     <div data-tauri-drag-region class="drag-region h-[var(--titlebar-height)] shrink-0"></div>
     <nav class="flex flex-col gap-0.5 px-2.5" aria-label="Sections">
       {#each NAV as item (item.id)}
-        {@const Icon = item.icon}
         <button
           type="button"
           aria-current={page === item.id ? 'page' : undefined}
@@ -52,8 +50,8 @@
           ]}
         >
           <Icon
+            icon={item.icon}
             size={16}
-            strokeWidth={2}
             class={page === item.id ? 'text-accent-text' : ''}
             aria-hidden="true"
           />
@@ -91,7 +89,7 @@
           onclick={() => (ui.palette = true)}
           data-tour="palette"
         >
-          <Search size={14} aria-hidden="true" />
+          <Icon icon={Search} size={14} aria-hidden="true" />
           <span class="flex-1 text-left">Search</span>
           <Keycap chord="mod+k" />
         </button>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { Ellipsis, RotateCcw, Square, Trash } from '@lucide/svelte';
-  import { Menu, Spinner, Tooltip, toast, type MenuItem } from '@shotmaxxing/ui';
+  import { Ellipsis, RotateCcw, Stop, Trash } from '@shotmaxxing/ui/icons';
+  import { Icon, Menu, Spinner, Tooltip, toast, type MenuItem } from '@shotmaxxing/ui';
   import {
     discardRecording,
     editorTarget,
@@ -113,7 +113,7 @@
             <Spinner size={12} />
             {busy === 'saving' ? 'Saving' : busy === 'restarting' ? 'Restarting' : 'Discarding'}
           {:else}
-            <Square size={11} fill="currentColor" aria-hidden="true" /> Stop
+            <Icon icon={Stop} size={11} fill="currentColor" aria-hidden="true" /> Stop
           {/if}
         </span>
       </button>
@@ -126,7 +126,7 @@
           class="press-icon grid size-8 place-items-center rounded-full text-fg-muted hover:bg-fill hover:text-fg"
           {...props}
         >
-          <Ellipsis size={16} aria-hidden="true" />
+          <Icon icon={Ellipsis} size={16} aria-hidden="true" />
         </button>
       {/snippet}
     </Menu>

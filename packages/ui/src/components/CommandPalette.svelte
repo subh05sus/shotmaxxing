@@ -1,11 +1,11 @@
 <script lang="ts" module>
-  import type { Component } from 'svelte';
+  import type { IconData } from '../lib/icons';
 
   export interface Command {
     id: string;
     title: string;
     group: string;
-    icon?: Component<any>;
+    icon?: IconData;
     chord?: string;
     keywords?: string;
     run: () => void;
@@ -13,8 +13,9 @@
 </script>
 
 <script lang="ts">
-  import { Search } from '@lucide/svelte';
   import { fuzzyScore } from '../lib/fuzzy';
+  import { Search } from '../lib/icons';
+  import Icon from './Icon.svelte';
   import { fade, pop, unpop } from '../lib/motion';
   import { portal } from '../lib/portal';
   import Keycap from './Keycap.svelte';
@@ -89,7 +90,7 @@
       out:unpop={{ origin: 'top center' }}
     >
       <label class="flex items-center gap-2.5 border-b border-border px-4">
-        <Search size={17} class="shrink-0 text-fg-subtle" aria-hidden="true" />
+        <Icon icon={Search} size={17} class="shrink-0 text-fg-subtle" aria-hidden="true" />
         <!-- svelte-ignore a11y_autofocus -->
         <input
           bind:value={query}
@@ -108,7 +109,6 @@
           <p class="eyebrow px-2.5 pb-1 pt-2.5">{group}</p>
           {#each items as command (command.id)}
             {@const index = flat.indexOf(command)}
-            {@const Icon = command.icon}
             <button
               type="button"
               id="cmd-{command.id}"
@@ -123,9 +123,9 @@
                 index === active ? 'bg-accent text-accent-fg' : 'text-fg',
               ]}
             >
-              {#if Icon}<Icon
+              {#if command.icon}<Icon
+                  icon={command.icon}
                   size={16}
-                  strokeWidth={1.9}
                   class="shrink-0 opacity-80"
                   aria-hidden="true"
                 />{/if}

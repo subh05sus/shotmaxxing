@@ -3,13 +3,13 @@
   import {
     AudioLines,
     ChevronLeft,
-    Circle,
     CircleAlert,
     Download,
     History,
     Image,
     MousePointer2,
     Pencil,
+    RecordDot,
     Redo2,
     Scissors,
     Search,
@@ -18,12 +18,13 @@
     Video,
     X,
     ZoomIn,
-  } from '@lucide/svelte';
+  } from '@shotmaxxing/ui/icons';
   import {
     Button,
     CheckDraw,
     CoachMarks,
     EmptyState,
+    Icon,
     IconButton,
     Keycap,
     ProgressRing,
@@ -35,6 +36,7 @@
     matchesChord,
     toast,
     type CoachStep,
+    type IconData,
   } from '@shotmaxxing/ui';
   import { go, route } from '../../lib/router.svelte';
   import { registerCommands, ui } from '../../lib/commands.svelte';
@@ -78,7 +80,7 @@
     });
   }
 
-  const TOOLS: { id: ToolId; label: string; icon: typeof Image; chord: string }[] = [
+  const TOOLS: { id: ToolId; label: string; icon: IconData; chord: string }[] = [
     { id: 'background', label: 'Background', icon: Image, chord: '1' },
     { id: 'cursor', label: 'Cursor', icon: MousePointer2, chord: '2' },
     { id: 'zoom', label: 'Zoom', icon: ZoomIn, chord: '3' },
@@ -338,7 +340,7 @@
         id: 'ed-new',
         title: 'New recording',
         group: 'Record',
-        icon: Circle,
+        icon: RecordDot,
         run: () => openWindow('record'),
       },
     ]),
@@ -450,7 +452,7 @@
         <span in:fade={{ duration: 100 }}>Saving…</span>
       {:else if ed.saveError}
         <span class="flex items-center gap-1 text-danger" in:fade={{ duration: 100 }} title={ed.saveError}>
-          <CircleAlert size={12} aria-hidden="true" /> Not saved
+          <Icon icon={CircleAlert} size={12} aria-hidden="true" /> Not saved
         </span>
       {:else}
         <span
@@ -520,7 +522,7 @@
                 aria-label="Stop export"
                 onclick={() => void cancelExport(activeExport.id)}
               >
-                <X size={12} aria-hidden="true" />
+                <Icon icon={X} size={12} aria-hidden="true" />
               </button>
             </Tooltip>
           {/if}
@@ -550,7 +552,6 @@
         style:translate="0 {Math.max(0, toolIndex) * 58}px"
       ></span>
       {#each TOOLS as tool (tool.id)}
-        {@const Icon = tool.icon}
         <Tooltip label={tool.label} chord={tool.chord} side="right">
           <button
             type="button"
@@ -562,8 +563,8 @@
             onclick={() => (ed.tool = tool.id)}
           >
             <Icon
+              icon={tool.icon}
               size={19}
-              strokeWidth={1.9}
               class={[ed.tool === tool.id && 'text-accent-text', poppedTool === tool.id && 'tab-pop']}
               aria-hidden="true"
             />

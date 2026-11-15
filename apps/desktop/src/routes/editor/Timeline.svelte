@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Captions, Film, Layers, ZoomIn } from '@lucide/svelte';
-  import { Tooltip } from '@shotmaxxing/ui';
+  import { Captions, Film, Layers, ZoomIn } from '@shotmaxxing/ui/icons';
+  import { Icon, Tooltip } from '@shotmaxxing/ui';
   import { timecode } from '../../lib/format';
   import type { EditorState } from './store.svelte';
 
@@ -118,7 +118,7 @@
     <!-- Clip lane -->
     <div class="flex h-12 items-center">
       <span class="flex w-24 shrink-0 items-center gap-1.5 pl-3 text-footnote text-fg-muted"
-        ><Film size={13} aria-hidden="true" /> Clip</span
+        ><Icon icon={Film} size={13} aria-hidden="true" /> Clip</span
       >
       <div class="relative h-10 flex-1">
         {#each p.clips as clip (clip.id)}
@@ -147,7 +147,7 @@
     <!-- Zoom lane -->
     <div class="flex h-9 items-center" data-tour="zoom-lane">
       <span class="flex w-24 shrink-0 items-center gap-1.5 pl-3 text-footnote text-fg-muted"
-        ><ZoomIn size={13} aria-hidden="true" /> Zoom</span
+        ><Icon icon={ZoomIn} size={13} aria-hidden="true" /> Zoom</span
       >
       <div class="relative h-7 flex-1">
         {#each p.zooms as zoom (zoom.id)}
@@ -194,7 +194,7 @@
     {#if p.effects.length}
       <div class="flex h-9 items-center">
         <span class="flex w-24 shrink-0 items-center gap-1.5 pl-3 text-footnote text-fg-muted"
-          ><Layers size={13} aria-hidden="true" /> Effects</span
+          ><Icon icon={Layers} size={13} aria-hidden="true" /> Effects</span
         >
         <div class="relative h-7 flex-1">
           {#each p.effects as effect (effect.id)}
@@ -232,7 +232,7 @@
     {#if p.captions.state === 'ready'}
       <div class="flex h-8 items-center">
         <span class="flex w-24 shrink-0 items-center gap-1.5 pl-3 text-footnote text-fg-muted"
-          ><Captions size={13} aria-hidden="true" /> Captions</span
+          ><Icon icon={Captions} size={13} aria-hidden="true" /> Captions</span
         >
         <div class="relative h-6 flex-1">
           {#each CAPTION_BLOCKS as [s, e] (s)}

@@ -8,9 +8,10 @@
     Film,
     FolderOpen,
     Pencil,
+    RecordDot,
     SearchX,
     Trash,
-  } from '@lucide/svelte';
+  } from '@shotmaxxing/ui/icons';
   import { flip } from 'svelte/animate';
   import {
     Button,
@@ -25,7 +26,6 @@
     type MenuItem,
   } from '@shotmaxxing/ui';
   import LibraryCard from './LibraryCard.svelte';
-  import RecordDot from '../../components/RecordDot.svelte';
   import { counts } from '../../lib/counts.svelte';
   import { LIBRARY, type LibraryItem } from '../../lib/sample';
   import { onMount } from 'svelte';

@@ -1,6 +1,8 @@
 <script lang="ts">
-  import type { Component, Snippet } from 'svelte';
+  import type { Snippet } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
+  import type { IconData } from '../lib/icons';
+  import Icon from './Icon.svelte';
   import Spinner from './Spinner.svelte';
 
   type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -9,8 +11,8 @@
   interface Props extends HTMLButtonAttributes {
     variant?: Variant;
     size?: Size;
-    icon?: Component<any>;
-    iconEnd?: Component<any>;
+    icon?: IconData;
+    iconEnd?: IconData;
     loading?: boolean;
     /** Fill the width of the container. */
     block?: boolean;
@@ -20,8 +22,8 @@
   let {
     variant = 'secondary',
     size = 'md',
-    icon: Icon,
-    iconEnd: IconEnd,
+    icon,
+    iconEnd,
     loading = false,
     block = false,
     disabled,
@@ -61,11 +63,11 @@
 >
   {#if loading}
     <Spinner size={iconSize} />
-  {:else if Icon}
-    <Icon size={iconSize} strokeWidth={2} aria-hidden="true" />
+  {:else if icon}
+    <Icon {icon} size={iconSize} aria-hidden="true" />
   {/if}
   {@render children?.()}
-  {#if IconEnd}
-    <IconEnd size={iconSize} strokeWidth={2} aria-hidden="true" />
+  {#if iconEnd}
+    <Icon icon={iconEnd} size={iconSize} aria-hidden="true" />
   {/if}
 </button>

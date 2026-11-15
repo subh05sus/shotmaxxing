@@ -1,8 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { AppWindow, Bot, ChevronDown, Circle, Crop, Mic, Monitor, Video, Volume2 } from '@lucide/svelte';
+  import {
+    AppWindow,
+    Bot,
+    ChevronDown,
+    Crop,
+    Mic,
+    Monitor,
+    RecordDot,
+    Video,
+    Volume2,
+  } from '@shotmaxxing/ui/icons';
   import {
     Button,
+    Icon,
     Keycap,
     Menu,
     Segmented,
@@ -14,7 +25,6 @@
     type MenuItem,
   } from '@shotmaxxing/ui';
   import Scene from '../../components/Scene.svelte';
-  import RecordDot from '../../components/RecordDot.svelte';
   import {
     closeThisWindow,
     handOff,
@@ -225,8 +235,8 @@
               </span>
             {:else if isTauri}
               <span class="absolute inset-0 grid place-items-center text-fg-subtle">
-                {#if source.kind === 'display'}<Monitor size={28} strokeWidth={1.5} aria-hidden="true" />
-                {:else}<AppWindow size={28} strokeWidth={1.5} aria-hidden="true" />{/if}
+                {#if source.kind === 'display'}<Icon icon={Monitor} size={28} aria-hidden="true" />
+                {:else}<Icon icon={AppWindow} size={28} aria-hidden="true" />{/if}
               </span>
             {:else if tileWidth}
               {#if source.kind === 'display'}
@@ -253,7 +263,7 @@
 
   <div class="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-t border-border px-5 py-3">
     <span class="flex items-center gap-2">
-      <Mic size={15} class="text-fg-muted" aria-hidden="true" />
+      <Icon icon={Mic} size={15} class="text-fg-muted" aria-hidden="true" />
       <Switch
         checked={micOn}
         onchange={(on: boolean) => (settings.microphone = on)}
@@ -269,7 +279,7 @@
               class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
               {...props}
             >
-              {micName}<ChevronDown size={12} aria-hidden="true" />
+              {micName}<Icon icon={ChevronDown} size={12} aria-hidden="true" />
             </button>
           {/snippet}
         </Menu>
@@ -278,7 +288,7 @@
       {/if}
     </span>
     <span class="flex items-center gap-2">
-      <Video size={15} class="text-fg-muted" aria-hidden="true" />
+      <Icon icon={Video} size={15} class="text-fg-muted" aria-hidden="true" />
       <Switch
         checked={cameraOn}
         onchange={(on: boolean) => (settings.camera = on)}
@@ -294,7 +304,7 @@
               class="press flex items-center gap-1 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill disabled:opacity-40"
               {...props}
             >
-              {cameraName}<ChevronDown size={12} aria-hidden="true" />
+              {cameraName}<Icon icon={ChevronDown} size={12} aria-hidden="true" />
             </button>
           {/snippet}
         </Menu>
@@ -305,7 +315,7 @@
       {/if}
     </span>
     <span class="flex items-center gap-2">
-      <Volume2 size={15} class="text-fg-muted" aria-hidden="true" />
+      <Icon icon={Volume2} size={15} class="text-fg-muted" aria-hidden="true" />
       <Switch bind:checked={settings.systemAudio} label="System audio" hideLabel={false} />
     </span>
   </div>
@@ -316,7 +326,7 @@
       class="press flex items-center gap-1.5 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:bg-fill hover:text-fg"
       onclick={() => handOff('home', 'home/agents')}
     >
-      <Bot size={14} aria-hidden="true" /> Let an agent film it instead
+      <Icon icon={Bot} size={14} aria-hidden="true" /> Let an agent film it instead
     </button>
     <span class="flex-1"></span>
     <span class="text-footnote text-fg-subtle"

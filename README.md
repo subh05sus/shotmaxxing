@@ -61,3 +61,6 @@ See [Agents](docs/agents.md) and the [agent skill](skills/shotmaxxing/SKILL.md).
 ## License
 
 Shotmaxxing is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+Icons are from [Pikaicons](https://pikaicons.com/free-icons) and [Hugeicons](https://hugeicons.com), both under the
+MIT license.

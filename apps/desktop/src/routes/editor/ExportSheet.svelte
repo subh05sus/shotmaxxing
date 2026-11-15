@@ -14,8 +14,8 @@
 </script>
 
 <script lang="ts">
-  import { FolderOpen, Info } from '@lucide/svelte';
-  import { Advanced, Button, Keycap, Segmented, Sheet } from '@shotmaxxing/ui';
+  import { FolderOpen, Info } from '@shotmaxxing/ui/icons';
+  import { Advanced, Button, Icon, Keycap, Segmented, Sheet } from '@shotmaxxing/ui';
   import { fileSize, timecode } from '../../lib/format';
   import { chooseExportFolder, isTauri } from '../../lib/native';
   import { settings } from '../../lib/settings.svelte';
@@ -183,7 +183,7 @@
     <div
       class="mt-2 flex items-center gap-2.5 rounded-[10px] bg-fill px-3 py-2.5 text-footnote text-fg-muted"
     >
-      <Info size={15} class="shrink-0 text-fg-subtle" aria-hidden="true" />
+      <Icon icon={Info} size={15} class="shrink-0 text-fg-subtle" aria-hidden="true" />
       <span class="min-w-0 flex-1"
         >{SHAPES[mismatch]} works best for {chosen.name}. This canvas is {p.canvas.aspect === 'original'
           ? 'the recording’s shape'

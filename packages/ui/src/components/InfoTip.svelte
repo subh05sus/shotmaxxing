@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Info } from '@lucide/svelte';
+  import { Info } from '../lib/icons';
+  import Icon from './Icon.svelte';
   import Popover from './Popover.svelte';
 
   /** A small ⓘ that explains a setting in a sentence or two. */
@@ -17,7 +18,7 @@
   onclick={() => (open = !open)}
   class="press-icon -m-1.5 inline-flex size-6 items-center justify-center rounded-full text-fg-subtle hover:text-fg-muted"
 >
-  <Info size={13} strokeWidth={2} aria-hidden="true" />
+  <Icon icon={Info} size={13} aria-hidden="true" />
 </button>
 
 <Popover bind:open anchor={button} side="top" label={title ?? 'More info'} class="w-64 p-3">

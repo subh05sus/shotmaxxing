@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { ChevronRight } from '@lucide/svelte';
+  import { ChevronRight } from '../lib/icons';
+  import Icon from './Icon.svelte';
   import { rise } from '../lib/motion';
 
   /**
@@ -37,9 +38,9 @@
     onclick={toggle}
     class="press flex h-8 w-full items-center gap-1.5 rounded-[6px] px-1 text-callout font-medium text-fg-muted hover:text-fg"
   >
-    <ChevronRight
+    <Icon
+      icon={ChevronRight}
       size={14}
-      strokeWidth={2.2}
       aria-hidden="true"
       class={['transition-[rotate] duration-[var(--dur-fast)] ease-[var(--ease-out)]', open && 'rotate-90']}
     />

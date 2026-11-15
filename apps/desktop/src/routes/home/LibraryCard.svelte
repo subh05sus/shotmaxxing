@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Bot, Camera, Ellipsis } from '@lucide/svelte';
-  import { Menu, type MenuItem } from '@shotmaxxing/ui';
+  import { Bot, Camera, Ellipsis } from '@shotmaxxing/ui/icons';
+  import { Icon, Menu, type MenuItem } from '@shotmaxxing/ui';
   import Scene from '../../components/Scene.svelte';
   import { wallpaper } from '../../lib/wallpapers';
   import { relativeTime, timecode } from '../../lib/format';
@@ -97,7 +97,7 @@
         <span
           class="absolute bottom-2 right-2 flex items-center gap-1 rounded-[5px] bg-scrim px-1.5 py-0.5 text-caption font-semibold text-fg-on-stage"
         >
-          <Camera size={11} aria-hidden="true" /> Screenshot
+          <Icon icon={Camera} size={11} aria-hidden="true" /> Screenshot
         </span>
       {:else}
         <span
@@ -110,7 +110,7 @@
         <span
           class="absolute left-2 top-2 flex items-center gap-1 rounded-[5px] bg-scrim px-1.5 py-0.5 text-caption font-semibold text-fg-on-stage"
         >
-          <Bot size={11} aria-hidden="true" />
+          <Icon icon={Bot} size={11} aria-hidden="true" />
           {item.agent}
         </span>
       {/if}
@@ -135,7 +135,7 @@
           class="press-icon grid size-7 place-items-center rounded-[7px] bg-scrim text-fg-on-stage"
           {...props}
         >
-          <Ellipsis size={15} aria-hidden="true" />
+          <Icon icon={Ellipsis} size={15} aria-hidden="true" />
         </button>
       {/snippet}
     </Menu>

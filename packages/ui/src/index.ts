@@ -5,6 +5,8 @@ export { default as CoachMarks, type CoachStep } from './components/CoachMarks.s
 export { default as CommandPalette, type Command } from './components/CommandPalette.svelte';
 export { default as EmptyState } from './components/EmptyState.svelte';
 export { default as Group } from './components/Group.svelte';
+export { default as Icon } from './components/Icon.svelte';
+export type { IconData } from './lib/icons';
 export { default as IconButton } from './components/IconButton.svelte';
 export { default as InfoTip } from './components/InfoTip.svelte';
 export { default as Keycap } from './components/Keycap.svelte';

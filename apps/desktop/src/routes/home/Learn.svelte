@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Bot, Check, Download, MonitorDot, Play, Scissors } from '@lucide/svelte';
-  import { Button, CheckDraw, Sheet } from '@shotmaxxing/ui';
+  import { Bot, Check, Download, MonitorDot, Play, Scissors } from '@shotmaxxing/ui/icons';
+  import { Button, CheckDraw, Icon, Sheet, type IconData } from '@shotmaxxing/ui';
   import Scene from '../../components/Scene.svelte';
   import { GUIDES, type Guide } from '../../lib/sample';
   import { settings } from '../../lib/settings.svelte';
@@ -8,7 +8,7 @@
   import { go } from '../../lib/router.svelte';
   import { wallpaper } from '../../lib/wallpapers';
 
-  const GROUPS: { id: Guide['group']; icon: typeof MonitorDot; blurb: string }[] = [
+  const GROUPS: { id: Guide['group']; icon: IconData; blurb: string }[] = [
     { id: 'Record', icon: MonitorDot, blurb: 'Film a window, a screen or yourself.' },
     { id: 'Edit', icon: Scissors, blurb: 'Zooms, cursor, trims and privacy.' },
     { id: 'Export', icon: Download, blurb: 'The right file for where it’s going.' },
@@ -78,10 +78,9 @@
   </div>
 
   {#each GROUPS as group, g (group.id)}
-    {@const Icon = group.icon}
     <section class="mt-5">
       <h3 class="flex items-center gap-2 text-callout font-semibold">
-        <Icon size={15} class="text-fg-muted" aria-hidden="true" />
+        <Icon icon={group.icon} size={15} class="text-fg-muted" aria-hidden="true" />
         {group.id}
         <span class="font-normal text-fg-muted">· {group.blurb}</span>
       </h3>
@@ -99,7 +98,7 @@
               {#if isDone}
                 <span
                   class="grid size-5 place-items-center rounded-full bg-accent text-accent-fg"
-                  aria-label="Done"><Check size={12} strokeWidth={3} /></span
+                  aria-label="Done"><Icon icon={Check} size={12} /></span
                 >
               {/if}
             </span>

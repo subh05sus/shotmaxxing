@@ -8,14 +8,15 @@
     Mic,
     Monitor,
     MousePointer2,
+    RecordDot,
+    Stop,
     Video,
     ZoomIn,
-    Circle,
-    Square,
-  } from '@lucide/svelte';
+  } from '@shotmaxxing/ui/icons';
   import {
     Button,
     CheckDraw,
+    Icon,
     Keycap,
     Logo,
     ProgressRing,
@@ -26,6 +27,7 @@
     pop,
     slide,
     toast,
+    type IconData,
   } from '@shotmaxxing/ui';
   import { recordingOptions, settings } from '../../lib/settings.svelte';
   import { go } from '../../lib/router.svelte';
@@ -73,7 +75,7 @@
   // Permissions, checked live while the step is open (one cheap call a second, stopped when it isn't needed).
   const PERMISSIONS: {
     kind: PermissionKind;
-    icon: typeof Monitor;
+    icon: IconData;
     name: string;
     why: string;
     required?: boolean;
@@ -253,12 +255,11 @@
               </p>
               <ul class="mt-7 flex w-full flex-col gap-3.5">
                 {#each [{ icon: ZoomIn, title: 'Auto zoom that explains itself', body: 'Every zoom says why it is there, and you can change any of them.' }, { icon: MousePointer2, title: 'A cursor people can follow', body: 'Bigger, smoother, and landing exactly on every click.' }, { icon: Bot, title: 'Agents can film for you', body: 'Claude, Codex and others record a whole demo from one sentence.' }, { icon: Gauge, title: 'Light on your battery', body: 'Hardware encoding and a native renderer. No fans spinning up.' }] as item, i (item.title)}
-                  {@const Icon = item.icon}
                   <li class="rise-in flex items-start gap-3.5" style="--i: {i + 1}">
                     <span
                       class="grid size-9 shrink-0 place-items-center rounded-[10px] bg-accent-tint text-accent-text"
                     >
-                      <Icon size={18} strokeWidth={2} aria-hidden="true" />
+                      <Icon icon={item.icon} size={18} aria-hidden="true" />
                     </span>
                     <span>
                       <span class="block text-callout font-semibold">{item.title}</span>
@@ -281,11 +282,10 @@
               class="mt-6 divide-y divide-border rounded-card border border-border bg-surface px-4 shadow-[var(--elev-1)]"
             >
               {#each shownPermissions as p (p.kind)}
-                {@const Icon = p.icon}
                 {@const state = states[p.kind]}
                 <li class="flex items-center gap-3.5 py-3.5">
                   <span class="grid size-9 shrink-0 place-items-center rounded-[10px] bg-fill text-fg-muted">
-                    <Icon size={18} strokeWidth={1.9} aria-hidden="true" />
+                    <Icon icon={p.icon} size={18} aria-hidden="true" />
                   </span>
                   <div class="min-w-0 flex-1">
                     <p class="flex items-center gap-2 text-callout font-semibold">
@@ -340,7 +340,7 @@
                   style="--i: {i}"
                 >
                   <span class="grid size-8 shrink-0 place-items-center rounded-[9px] bg-fill text-fg-muted">
-                    <Bot size={16} aria-hidden="true" />
+                    <Icon icon={Bot} size={16} aria-hidden="true" />
                   </span>
                   <span class="min-w-0 flex-1">
                     <span class="block truncate text-callout font-semibold">{agent.name}</span>
@@ -390,7 +390,7 @@
                     <span
                       class="grid size-20 place-items-center rounded-full bg-accent text-accent-fg shadow-[var(--elev-3)]"
                     >
-                      <Circle size={30} fill="currentColor" aria-hidden="true" />
+                      <Icon icon={RecordDot} size={44} aria-hidden="true" />
                     </span>
                     <span class="rounded-full bg-scrim px-3 py-1 text-callout font-semibold"
                       >Record practice take</span
@@ -424,7 +424,7 @@
                       onclick={stopPractice}
                     >
                       <ProgressRing value={elapsed / 10} size={16} label="Practice take progress" />
-                      <Square size={12} fill="currentColor" aria-hidden="true" /> Stop
+                      <Icon icon={Stop} size={12} fill="currentColor" aria-hidden="true" /> Stop
                     </button>
                   </div>
                 {:else}
@@ -457,11 +457,12 @@
               <h1 class="mt-5 text-title-1">You're all set</h1>
               <ul class="mt-4 flex flex-col gap-2 text-callout">
                 <li class="flex items-center gap-2">
-                  <Check size={16} class="text-success" aria-hidden="true" />
+                  <Icon icon={Check} size={16} class="text-success" aria-hidden="true" />
                   {env.os === 'windows' ? 'Ready to record your screen' : 'Screen Recording allowed'}
                 </li>
                 <li class="flex items-center gap-2">
-                  <Check
+                  <Icon
+                    icon={Check}
                     size={16}
                     class={connectedCount ? 'text-success' : 'text-fg-subtle'}
                     aria-hidden="true"
@@ -471,7 +472,8 @@
                     : 'No agents yet. Connect one any time from Agents.'}
                 </li>
                 <li class="flex items-center gap-2">
-                  <Check
+                  <Icon
+                    icon={Check}
                     size={16}
                     class={practice === 'done' ? 'text-success' : 'text-fg-subtle'}
                     aria-hidden="true"

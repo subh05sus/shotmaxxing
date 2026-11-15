@@ -1,10 +1,11 @@
 <script lang="ts" generics="T extends string | number">
-  import type { Component } from 'svelte';
+  import type { IconData } from '../lib/icons';
+  import Icon from './Icon.svelte';
 
   interface Option {
     value: T;
     label: string;
-    icon?: Component<any>;
+    icon?: IconData;
   }
 
   interface Props {
@@ -70,7 +71,6 @@
     style:translate="{index * 100}% 0"
   ></span>
   {#each options as option (option.value)}
-    {@const Icon = option.icon}
     <button
       type="button"
       role="radio"
@@ -91,7 +91,7 @@
           option.value === picked && 'tab-pop',
         ]}
       >
-        {#if Icon}<Icon size={15} strokeWidth={2} aria-hidden="true" />{/if}
+        {#if option.icon}<Icon icon={option.icon} size={15} aria-hidden="true" />{/if}
         {#if !iconsOnly}<span class="truncate">{option.label}</span>{/if}
       </span>
     </button>
