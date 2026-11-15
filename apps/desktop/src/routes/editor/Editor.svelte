@@ -183,9 +183,13 @@
 
   // Progress for this window's exports arrives as events; each job picks out its own.
   let stopListening: (() => void) | undefined;
-  void onExportProgress((id, progress) => {
+  void onExportProgress((id, progress, waiting) => {
     const job = ed.exports.find((x) => x.id === id);
-    if (job && !job.done) job.progress = Math.max(job.progress, progress);
+    if (!job || job.done) return;
+    // Time left counts from when rendering starts, not from when the export joined the line.
+    if (job.waiting && !waiting) job.startedAt = Date.now();
+    job.waiting = waiting;
+    if (!waiting) job.progress = Math.max(job.progress, progress);
   }).then((stop) => (stopListening = stop));
   onDestroy(() => stopListening?.());
 
@@ -350,7 +354,11 @@
     else if (/^[1-7]$/.test(e.key)) ed.tool = TOOLS[Number(e.key) - 1].id;
   }
 
-  const activeExport = $derived(ed.exports.find((x) => !x.done) ?? ed.exports[0]);
+  // The export rendering now (or the one that just finished), and how many wait behind it.
+  const activeExport = $derived(
+    ed.exports.find((x) => !x.done && !x.waiting) ?? ed.exports.find((x) => !x.done) ?? ed.exports[0],
+  );
+  const waitingExports = $derived(ed.exports.filter((x) => !x.done && x !== activeExport).length);
 </script>
 
 <svelte:window {onkeydown} />
@@ -471,9 +479,14 @@
           {#if activeExport.done}
             <CheckDraw size={13} class="text-success" /> Exported
           {:else}
-            <ProgressRing value={activeExport.progress} size={14} label="Export progress" /> Exporting {Math.round(
-              activeExport.progress * 100,
-            )}%{timeLeft(activeExport.startedAt, activeExport.progress)}
+            {#if activeExport.waiting}
+              <Spinner size={13} label="Waiting" /> Waiting for another export
+            {:else}
+              <ProgressRing value={activeExport.progress} size={14} label="Export progress" /> Exporting {Math.round(
+                activeExport.progress * 100,
+              )}%{timeLeft(activeExport.startedAt, activeExport.progress)}
+            {/if}
+            {#if waitingExports > 0}<span class="text-fg-muted">· {waitingExports} more waiting</span>{/if}
             <Tooltip label="Stop export">
               <button
                 type="button"

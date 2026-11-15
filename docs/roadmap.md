@@ -29,7 +29,7 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [ ] Extra audio tracks (music, voice-over)
 - [x] Webcam bubble
 - [x] Export: MP4 (H.264, HEVC) and GIF, with the sound mixed
-- [ ] Background export queue
+- [x] Background export queue (exports wait in line and render one at a time)
 - [x] Autosave and version history
 - [ ] Styled screenshots
 

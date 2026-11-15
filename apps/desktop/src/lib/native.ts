@@ -308,7 +308,7 @@ export type ExportOutcome = { status: 'done'; path: string; file: string } | { s
 
 // Browser preview: exports run on a timer so the flow can be tried without the app.
 const previewExports = new Map<string, { cancelled: boolean; listeners: Set<(p: number) => void> }>();
-const progressListeners = new Set<(id: string, progress: number) => void>();
+const progressListeners = new Set<(id: string, progress: number, waiting: boolean) => void>();
 
 /** Exports a project with every edit applied. Resolves when the file is written or the export is cancelled. */
 export function exportProject(request: ExportRequest): Promise<ExportOutcome> {
@@ -318,7 +318,7 @@ export function exportProject(request: ExportRequest): Promise<ExportOutcome> {
     const started = performance.now();
     while (!job.cancelled) {
       const progress = Math.min(1, (performance.now() - started) / 3200);
-      for (const listener of progressListeners) listener(request.id, progress);
+      for (const listener of progressListeners) listener(request.id, progress, false);
       if (progress >= 1) break;
       await new Promise((r) => setTimeout(r, 120));
     }
@@ -343,15 +343,16 @@ export function cancelExport(id: string): Promise<void> {
 
 /** Calls `listener` as exports from this window make progress. Returns a function that stops listening. */
 export async function onExportProgress(
-  listener: (id: string, progress: number) => void,
+  listener: (id: string, progress: number, waiting: boolean) => void,
 ): Promise<() => void> {
   if (!isTauri) {
     progressListeners.add(listener);
     return () => progressListeners.delete(listener);
   }
   const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-  return getCurrentWebviewWindow().listen<{ id: string; progress: number }>('export-progress', (event) =>
-    listener(event.payload.id, event.payload.progress),
+  return getCurrentWebviewWindow().listen<{ id: string; progress: number; waiting?: boolean }>(
+    'export-progress',
+    (event) => listener(event.payload.id, event.payload.progress, event.payload.waiting ?? false),
   );
 }
 

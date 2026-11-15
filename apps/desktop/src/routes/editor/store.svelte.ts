@@ -112,8 +112,10 @@ export interface ExportJob {
   name: string;
   progress: number;
   done: boolean;
-  /** When it started, to tell how long is left. */
+  /** When it started rendering, to tell how long is left. */
   startedAt: number;
+  /** Waiting for an earlier export to finish: one renders at a time. */
+  waiting?: boolean;
 }
 
 function sampleProject(): Project {
