@@ -1,29 +1,46 @@
 name: Release
 
-# Pushing a tag such as v0.1.0 builds the app and drafts a GitHub release with it. Windows joins once its capture
-# and export land.
+# Pushing a tag such as v0.1.0 builds the app for macOS (Apple silicon and Intel) and Windows, and drafts one GitHub
+# release with all three. Starting the workflow by hand (Actions → Release → Run workflow) builds the same without a
+# release, to check the release builds before tagging: the installers are kept on that run's page.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  # Only a tag makes a release.
+  TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+  RELEASE_BODY: |
+    A preview build.
+
+    - **macOS 14 or later.** It isn't notarized yet, so macOS blocks it the first time: open System Settings →
+      Privacy & Security and choose Open Anyway.
+    - **Windows 10 (version 2004) or later, 64-bit.** It isn't signed yet, so SmartScreen may warn about it: choose
+      More info → Run anyway.
 
 jobs:
-  macos:
-    name: macOS on ${{ matrix.name }}
+  build:
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Apple silicon
+          - name: macOS on Apple silicon
+            os: macos-latest
             target: aarch64-apple-darwin
-          - name: Intel
+          # Cross-built on Apple silicon; .cargo/config.toml keeps the Intel instruction sets on.
+          - name: macOS on Intel
+            os: macos-latest
             target: x86_64-apple-darwin
-    runs-on: macos-latest
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -40,16 +57,16 @@ jobs:
           key: ${{ matrix.target }}
       # Agents start the shotmaxxing command, which ships inside the app next to the app's own binary.
       - run: node scripts/build-cli-sidecar.mjs --target ${{ matrix.target }}
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: apps/desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: Shotmaxxing ${{ github.ref_name }}
-          releaseBody: |
-            A preview build for macOS 14 and later. It isn't notarized yet, so macOS blocks it the first time:
-            open System Settings → Privacy & Security and choose Open Anyway.
+          tagName: ${{ env.TAG }}
+          releaseName: ${{ env.TAG && format('Shotmaxxing {0}', env.TAG) || '' }}
+          releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           prerelease: true
+          uploadUpdaterJson: false
+          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
           args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
