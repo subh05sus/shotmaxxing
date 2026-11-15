@@ -201,6 +201,7 @@ export const GUIDES: Guide[] = [
     summary: 'Where the camera pushes in, why, and how to tune it.',
     steps: [
       'Auto zoom reads your clicks, typing, the control you used and what changed on screen.',
+      'Only what you record counts: a click somewhere else, or the one that stops the recording, makes no zoom.',
       'Each zoom on the timeline says why it exists. Hover a block to read it.',
       'Choose Subtle, Standard or Bold for how far it pushes in.',
       'Open Advanced to change how long zooms last and when nearby moments merge.',

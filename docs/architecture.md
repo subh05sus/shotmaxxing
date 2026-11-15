@@ -206,7 +206,10 @@ out afterwards) and **computer-use mode** (record an agent's own computer-use ac
 
 - **Auto zoom** combines clicks, typing, accessibility focus (the bounds of the control in use), screen-change
   regions and cursor dwell. It frames the whole control or changed region, not just the pointer, merges nearby
-  activity and records a reason for every zoom ("Typing in Search · 2.1x · 1.8 s").
+  activity and records a reason for every zoom ("Typing in Search · 2.1x · 1.8 s"). Only what happens on the
+  recorded area counts: a click beside a recorded window, typing into another app, or a moment too near the end to
+  zoom into (the click that stops the take) makes no zoom, and clicks on Shotmaxxing's own windows, which are never
+  in the video, aren't recorded at all.
 - **Cursor** is redrawn from telemetry: size, smoothing, native styles, snap-to-click, click effects, motion blur,
   arcs, loop and spotlight.
 - **Local AI helpers** (captions with Whisper, voice cleanup, silence cutting) run on device, only when asked, and

@@ -31,6 +31,7 @@ use objc2_core_graphics::{
     CGWindowListCopyWindowInfo, CGWindowListOption, kCGWindowBounds, kCGWindowIsOnscreen, kCGWindowLayer,
     kCGWindowNumber, kCGWindowOwnerPID,
 };
+use objc2_foundation::NSString;
 
 use super::ax;
 
@@ -102,6 +103,35 @@ fn showing() -> Vec<(u32, i64, Placed)> {
             (list.value_at_index(index) as *const CFDictionary).as_ref().and_then(|i| read(i))
         })
         .collect()
+}
+
+/// The process whose window is in front at `point`, on the desktop in points, when one shows there.
+pub fn owner_at(point: CGPoint) -> Option<i32> {
+    showing()
+        .into_iter()
+        .find(|(_, _, w)| {
+            let b = w.bounds;
+            point.x >= b.origin.x
+                && point.x < b.origin.x + b.size.width
+                && point.y >= b.origin.y
+                && point.y < b.origin.y + b.size.height
+        })
+        .map(|(_, _, w)| w.pid)
+}
+
+/// The processes whose windows are left out of every take: this one, and the Shotmaxxing app when another process
+/// (the command) records.
+pub fn left_out_processes() -> Vec<i32> {
+    let mut pids = vec![std::process::id() as i32];
+    let app = NSString::from_str(shotmaxxing_core::APP_ID);
+    pids.extend(
+        NSRunningApplication::runningApplicationsWithBundleIdentifier(&app)
+            .iter()
+            .map(|a| a.processIdentifier()),
+    );
+    pids.sort_unstable();
+    pids.dedup();
+    pids
 }
 
 /// The displays' frames on the desktop, in points from the top left of the main display.

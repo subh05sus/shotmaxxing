@@ -24,6 +24,10 @@ const RESULT_WINDOW_US: u64 = 1_500_000;
 /// Area framed around a bare click when no control bounds are known, in points.
 const CLICK_BOX: Size = Size::new(280.0, 180.0);
 const DWELL_RADIUS: f64 = 14.0;
+/// How long a zoom holds, fully in, before the video ends, at the least. A moment later than that can't be framed
+/// in time (the zoom would still be pushing in when the video stops), and it's usually the click that stopped the
+/// take.
+const END_HOLD_US: u64 = 500_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Moment {
@@ -42,9 +46,13 @@ pub struct ZoomInput<'a> {
     pub cursor: &'a [CursorSample],
 }
 
-/// Finds the moments worth zooming on.
+/// Finds the moments worth zooming on: only those on the recorded area. A click on another window or display (the
+/// one on the recording pill, say), typing into another app, or the pointer resting off the take has nothing to
+/// frame; a zoom on it would only push into the take's edge.
 pub fn find_moments(input: &ZoomInput<'_>, tuning: &ZoomTuning) -> Vec<Moment> {
     let mut moments = Vec::new();
+    // To a point either way, for rounding.
+    let area = input.capture.bounds().inflate(1.0, 1.0);
     let focuses: Vec<(u64, Rect, Option<String>, String)> = input
         .events
         .iter()
@@ -69,6 +77,9 @@ pub fn find_moments(input: &ZoomInput<'_>, tuning: &ZoomTuning) -> Vec<Moment> {
     for event in input.events {
         if let InputEvent::MouseDown { t_us, x, y, .. } = event {
             let p = Point::new(*x, *y);
+            if !area.contains(p) {
+                continue;
+            }
             let (rect, reason) = match focus_near(*t_us, p) {
                 Some((_, bounds, label, role)) if bounds.area() > 16.0 => {
                     (*bounds, format!("Click on {}", describe(label.as_deref(), role)))
@@ -120,6 +131,9 @@ pub fn find_moments(input: &ZoomInput<'_>, tuning: &ZoomTuning) -> Vec<Moment> {
                 (Rect::from_center(p, CLICK_BOX), "Typing".to_string())
             }
         };
+        if !area.contains(rect.center()) {
+            continue;
+        }
         let weight = if count >= 3 { 0.9 } else { 0.5 };
         moments.push(Moment { start_us: start, end_us: end, rect, reason, weight });
     }
@@ -135,7 +149,7 @@ pub fn find_moments(input: &ZoomInput<'_>, tuning: &ZoomTuning) -> Vec<Moment> {
             .collect();
         for (start, end, p) in dwells(input.cursor, min_dwell) {
             let clicked = clicks.iter().any(|t| *t + 300_000 >= start && *t <= end + 300_000);
-            if !clicked {
+            if !clicked && area.contains(p) {
                 moments.push(Moment {
                     start_us: start,
                     end_us: end,
@@ -176,7 +190,11 @@ pub fn plan_zooms(
         weight: f64,
     }
     let mut groups: Vec<Group> = Vec::new();
-    for m in moments {
+    // The last moment that can still be zoomed into: eased in, and held a moment before the video ends.
+    let in_time = |m: &Moment| {
+        m.start_us.saturating_sub(lead) + u64::from(transition_ms) * 1_000 + END_HOLD_US <= input.duration_us
+    };
+    for m in moments.into_iter().filter(in_time) {
         let start = m.start_us.saturating_sub(lead);
         let end = (m.end_us + hold).min(input.duration_us.max(m.end_us));
         if let Some(last) = groups.last_mut() {
@@ -406,6 +424,59 @@ mod tests {
         ];
         let zooms = plan(&events);
         assert_eq!(zooms[0].reason.as_deref(), Some("Click on Convert, then the result"));
+    }
+
+    #[test]
+    fn only_what_happens_on_the_take_is_zoomed() {
+        // The click on the recording pill, beside the recorded window, and one on another display.
+        assert!(plan(&[click(5_000, -768.0, -1.0), click(9_000, 1700.0, 300.0)]).is_empty());
+        assert_eq!(plan(&[click(5_000, -768.0, -1.0), click(9_000, 700.0, 300.0)]).len(), 1);
+        // Typing into another app's field, off the take.
+        let mut events = vec![InputEvent::Focus {
+            t_us: 4_900_000,
+            bounds: Rect::new(1600.0, 400.0, 360.0, 32.0),
+            role: "text_field".into(),
+            label: Some("Search".into()),
+        }];
+        events.extend((0..12).map(|i| key(5_000 + i * 120)));
+        assert!(plan(&events).is_empty());
+        // Typing with no field known and the pointer off the take.
+        let cursor =
+            [CursorSample { t_us: 0, x: -200.0, y: 450.0, shape: crate::telemetry::CursorShape::Arrow }];
+        let keys: Vec<InputEvent> = (0..12).map(|i| key(5_000 + i * 120)).collect();
+        let input = ZoomInput { duration_us: 60_000_000, capture: CAPTURE, events: &keys, cursor: &cursor };
+        let tuning = ZoomTuning { dwell: false, ..Default::default() };
+        assert!(plan_zooms(&input, &tuning, ZoomDepth::Standard, 700).is_empty());
+        // The pointer resting off the take.
+        let resting = [
+            CursorSample {
+                t_us: 1_000_000,
+                x: 1600.0,
+                y: 450.0,
+                shape: crate::telemetry::CursorShape::Arrow,
+            },
+            CursorSample {
+                t_us: 6_000_000,
+                x: 1601.0,
+                y: 450.0,
+                shape: crate::telemetry::CursorShape::Arrow,
+            },
+        ];
+        let input = ZoomInput { duration_us: 60_000_000, capture: CAPTURE, events: &[], cursor: &resting };
+        let typing_and_dwell = ZoomTuning { dwell: true, dwell_ms: 1_000, ..Default::default() };
+        assert!(find_moments(&input, &typing_and_dwell).is_empty());
+    }
+
+    #[test]
+    fn a_click_just_before_the_end_isnt_zoomed() {
+        let plan_in = |events: &[InputEvent]| {
+            let input = ZoomInput { duration_us: 36_655_896, capture: CAPTURE, events, cursor: &[] };
+            plan_zooms(&input, &ZoomTuning { dwell: false, ..Default::default() }, ZoomDepth::Standard, 700)
+        };
+        // The owner's take: the click that stopped it came 0.12 s before the end.
+        assert!(plan_in(&[click(36_540, 700.0, 300.0)]).is_empty());
+        // One that leaves time to push in and hold is.
+        assert_eq!(plan_in(&[click(35_000, 700.0, 300.0)]).len(), 1);
     }
 
     #[test]

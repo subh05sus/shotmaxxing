@@ -47,6 +47,10 @@ enum Raw {
 struct TapState {
     events: Mutex<Vec<Raw>>,
     clicks: Mutex<Sender<(f64, f64, f64)>>,
+    /// Processes whose windows are never in a take (Shotmaxxing's own).
+    left_out: Vec<i32>,
+    /// Whether the left and the right button's last press was on one of those windows, so its release is left out too.
+    dropped: [AtomicBool; 2],
 }
 
 /// Where the captured picture's top-left corner is on the desktop.
@@ -136,7 +140,12 @@ impl Telemetry {
             .ok();
 
         let (click_tx, click_rx) = channel::<(f64, f64, f64)>();
-        let state = Arc::new(TapState { events: Mutex::new(Vec::new()), clicks: Mutex::new(click_tx) });
+        let state = Arc::new(TapState {
+            events: Mutex::new(Vec::new()),
+            clicks: Mutex::new(click_tx),
+            left_out: window::left_out_processes(),
+            dropped: [AtomicBool::new(false), AtomicBool::new(false)],
+        });
 
         let focus_thread =
             std::thread::Builder::new().name("smx-focus".into()).spawn(move || resolve_focus(click_rx)).ok();
@@ -321,19 +330,31 @@ unsafe extern "C-unwind" fn tap_callback(
         };
     let raw = match kind {
         CGEventType::LeftMouseDown | CGEventType::RightMouseDown => {
-            let clicks = CGEvent::integer_value_field(Some(event), CGEventField::MouseEventClickState)
-                .clamp(1, 3) as u8;
-            let button =
-                if kind == CGEventType::LeftMouseDown { MouseButton::Left } else { MouseButton::Right };
-            if let Ok(sender) = state.clicks.lock() {
-                let _ = sender.send((at, p.x, p.y));
+            let right = kind == CGEventType::RightMouseDown;
+            // Shotmaxxing's own windows (the recording pill, its menu-bar icon's menu) are never in a take, so a
+            // click on them isn't either: it would ripple on, and be zoomed into, nothing.
+            let ours = window::owner_at(p).is_some_and(|pid| state.left_out.contains(&pid));
+            state.dropped[usize::from(right)].store(ours, Ordering::Relaxed);
+            if ours {
+                None
+            } else {
+                let clicks = CGEvent::integer_value_field(Some(event), CGEventField::MouseEventClickState)
+                    .clamp(1, 3) as u8;
+                let button = if right { MouseButton::Right } else { MouseButton::Left };
+                if let Ok(sender) = state.clicks.lock() {
+                    let _ = sender.send((at, p.x, p.y));
+                }
+                Some(Raw::Down { at, x: p.x, y: p.y, button, clicks, source })
             }
-            Some(Raw::Down { at, x: p.x, y: p.y, button, clicks, source })
         }
         CGEventType::LeftMouseUp | CGEventType::RightMouseUp => {
-            let button =
-                if kind == CGEventType::LeftMouseUp { MouseButton::Left } else { MouseButton::Right };
-            Some(Raw::Up { at, x: p.x, y: p.y, button, source })
+            let right = kind == CGEventType::RightMouseUp;
+            if state.dropped[usize::from(right)].swap(false, Ordering::Relaxed) {
+                None
+            } else {
+                let button = if right { MouseButton::Right } else { MouseButton::Left };
+                Some(Raw::Up { at, x: p.x, y: p.y, button, source })
+            }
         }
         CGEventType::ScrollWheel => {
             let dy = CGEvent::integer_value_field(Some(event), CGEventField::ScrollWheelEventPointDeltaAxis1)
