@@ -108,9 +108,29 @@ fn oklch(inner: &str) -> Result<Lab, String> {
     Ok(Lab { l, a: c * hue.cos(), b: c * hue.sin(), alpha: alpha.clamp(0.0, 1.0) })
 }
 
+/// `#rrggbb` in Oklab. Only the app's own solid colours and gradients use it: [`check`] keeps it out of packs.
+fn hex(token: &str) -> Option<Lab> {
+    let digits = token.strip_prefix('#').filter(|d| d.len() == 6)?;
+    let channel = |i: usize| u8::from_str_radix(&digits[i..i + 2], 16).ok().map(|v| f64::from(v) / 255.0);
+    let [r, g, b] = [channel(0)?, channel(2)?, channel(4)?]
+        .map(|v| if v <= 0.040_45 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) });
+    let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
+    let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
+    let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
+    Some(Lab {
+        l: 0.210_454_255_3 * l + 0.793_617_785 * m - 0.004_072_046_8 * s,
+        a: 1.977_998_495_1 * l - 2.428_592_205 * m + 0.450_593_709_9 * s,
+        b: 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766 * s,
+        alpha: 1.0,
+    })
+}
+
 fn color(token: &str) -> Result<Lab, String> {
     if token == "transparent" {
         return Ok(TRANSPARENT);
+    }
+    if token.starts_with('#') {
+        return hex(token).ok_or_else(|| format!("unsupported colour “{token}”"));
     }
     token
         .strip_prefix("oklch(")

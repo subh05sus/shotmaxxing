@@ -196,69 +196,204 @@ pub fn background(layout: &Layout, wallpaper: Vec<u8>, palette: &Palette) -> Opt
     Some(pixmap)
 }
 
-/// The cursor, drawn `res` times larger than its frame size so it stays sharp when the camera zooms in.
-pub fn cursor(look: CursorLook, cursor_px: f64, res: f64, palette: &Palette) -> Option<Sprite> {
-    let size = cursor_px * res;
-    let ring = (cursor_px / 11.0 * res) as f32;
+/// One part of a cursor's drawing, in the units of its 20-wide box (`assets/cursors.json`, which the editor draws too).
+#[derive(Clone, Debug, serde::Deserialize)]
+struct CursorLayer {
+    /// An SVG path of absolute `M`, `L`, `C`, `Q` and `Z` commands.
+    #[serde(default)]
+    d: Option<String>,
+    /// A circle: centre x, centre y, radius.
+    #[serde(default)]
+    circle: Option<[f32; 3]>,
+    /// `light` or `dark`, the cursor tokens; none leaves it unfilled.
+    #[serde(default)]
+    fill: Option<String>,
+    #[serde(default)]
+    stroke: Option<String>,
+    #[serde(default)]
+    width: f32,
+    #[serde(default = "one")]
+    opacity: f32,
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct CursorShape {
+    id: String,
+    hotspot: [f32; 2],
+    layers: Vec<CursorLayer>,
+}
+
+const CURSORS: &str = include_str!("../assets/cursors.json");
+
+fn shapes() -> Vec<CursorShape> {
+    serde_json::from_str(CURSORS).unwrap_or_default()
+}
+
+/// The id of `look` in `assets/cursors.json`.
+fn shape_id(look: CursorLook) -> &'static str {
     match look {
-        CursorLook::Dot => {
-            let d = (size * 0.7) as f32;
-            let pad = 2.0;
-            let side = (d + pad * 2.0).ceil() as u32;
-            let mut pixmap = Pixmap::new(side, side)?;
-            let c = side as f32 / 2.0;
-            let outer = PathBuilder::from_circle(c, c, d / 2.0)?;
-            pixmap.fill_path(
-                &outer,
-                &paint(palette.cursor_light),
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-            let inner = PathBuilder::from_circle(c, c, (d / 2.0 - ring).max(0.5))?;
-            pixmap.fill_path(
-                &inner,
-                &paint(palette.cursor_dark),
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-            Some(Sprite { pixmap, x: -f64::from(c) / res, y: -f64::from(c) / res, scale: res })
+        CursorLook::Mac => "mac",
+        CursorLook::MacWhite => "mac-white",
+        CursorLook::Windows => "windows",
+        CursorLook::Outline => "outline",
+        CursorLook::Dot => "dot",
+        CursorLook::Ring => "ring",
+        CursorLook::Bold => "bold",
+        CursorLook::Hand => "hand",
+    }
+}
+
+/// Reads an SVG path's absolute `M`, `L`, `C`, `Q` and `Z` commands, with its points and the path.
+fn svg_path(d: &str) -> Option<(Vec<(f32, f32)>, Path)> {
+    let mut tokens = Vec::new();
+    let mut number = String::new();
+    let flush = |number: &mut String, tokens: &mut Vec<String>| {
+        if !number.is_empty() {
+            tokens.push(std::mem::take(number));
         }
-        CursorLook::Mac | CursorLook::Windows => {
-            // The editor's arrow, in a 20 × 28 box with its tip at (2, 1.5).
-            let u = (size / 20.0) as f32;
-            let pad = 2.0 * u;
-            let (wpx, hpx) = ((20.0 * u + pad * 2.0).ceil() as u32, (28.0 * u + pad * 2.0).ceil() as u32);
-            let mut pixmap = Pixmap::new(wpx, hpx)?;
-            let mut pb = PathBuilder::new();
-            let pts = [
-                (2.0, 1.5),
-                (2.0, 22.0),
-                (7.2, 17.4),
-                (10.6, 25.6),
-                (14.0, 24.2),
-                (10.7, 16.2),
-                (17.6, 16.2),
-            ];
-            for (i, (x, y)) in pts.iter().enumerate() {
-                let (px, py) = (pad + x * u, pad + y * u);
-                if i == 0 { pb.move_to(px, py) } else { pb.line_to(px, py) }
-            }
-            pb.close();
-            let path = pb.finish()?;
-            let (fill, edge) = if look == CursorLook::Mac {
-                (palette.cursor_dark, palette.cursor_light)
-            } else {
-                (palette.cursor_light, palette.cursor_dark)
-            };
-            pixmap.fill_path(&path, &paint(fill), FillRule::Winding, Transform::identity(), None);
-            let stroke = Stroke { width: 1.6 * u, line_join: LineJoin::Round, ..Stroke::default() };
-            pixmap.stroke_path(&path, &paint(edge), &stroke, Transform::identity(), None);
-            let (tip_x, tip_y) = (f64::from(pad + 2.0 * u), f64::from(pad + 1.5 * u));
-            Some(Sprite { pixmap, x: -tip_x / res, y: -tip_y / res, scale: res })
+    };
+    for c in d.chars() {
+        if c.is_ascii_alphabetic() {
+            flush(&mut number, &mut tokens);
+            tokens.push(c.to_string());
+        } else if c == ',' || c.is_whitespace() {
+            flush(&mut number, &mut tokens);
+        } else if c == '-' && !number.is_empty() && !number.ends_with('e') {
+            flush(&mut number, &mut tokens);
+            number.push(c);
+        } else {
+            number.push(c);
         }
     }
+    flush(&mut number, &mut tokens);
+    let mut pb = PathBuilder::new();
+    let mut points = Vec::new();
+    let mut i = 0;
+    let mut command = ' ';
+    let take = |i: &mut usize, n: usize| -> Option<Vec<f32>> {
+        let values: Option<Vec<f32>> = tokens.get(*i..*i + n)?.iter().map(|t| t.parse().ok()).collect();
+        *i += n;
+        values
+    };
+    while i < tokens.len() {
+        if let Some(c) = tokens[i].chars().next().filter(char::is_ascii_alphabetic) {
+            command = c;
+            i += 1;
+            if command == 'Z' || command == 'z' {
+                pb.close();
+                continue;
+            }
+        }
+        match command {
+            'M' => {
+                let v = take(&mut i, 2)?;
+                pb.move_to(v[0], v[1]);
+                points.push((v[0], v[1]));
+                command = 'L';
+            }
+            'L' => {
+                let v = take(&mut i, 2)?;
+                pb.line_to(v[0], v[1]);
+                points.push((v[0], v[1]));
+            }
+            'Q' => {
+                let v = take(&mut i, 4)?;
+                pb.quad_to(v[0], v[1], v[2], v[3]);
+                points.extend([(v[0], v[1]), (v[2], v[3])]);
+            }
+            'C' => {
+                let v = take(&mut i, 6)?;
+                pb.cubic_to(v[0], v[1], v[2], v[3], v[4], v[5]);
+                points.extend([(v[0], v[1]), (v[2], v[3]), (v[4], v[5])]);
+            }
+            _ => return None,
+        }
+    }
+    Some((points, pb.finish()?))
+}
+
+/// The most the arrow leans into its movement, in degrees, and the steps it's drawn at.
+pub const SWAY_MAX_DEG: f64 = 25.0;
+pub const SWAY_STEP_DEG: f64 = 2.5;
+
+/// Which of the tilted cursors [`cursors`] drew is the one for `angle` degrees.
+pub fn sway_index(angle: f64, count: usize) -> usize {
+    if count <= 1 {
+        return 0;
+    }
+    let half = (count - 1) / 2;
+    let steps = (angle / SWAY_STEP_DEG).round().clamp(-(half as f64), half as f64) as i64;
+    (half as i64 + steps) as usize
+}
+
+/// The cursor tilted from `-SWAY_MAX_DEG` to `SWAY_MAX_DEG` degrees in `SWAY_STEP_DEG` steps when it sways, or
+/// upright only. Pick one with [`sway_index`].
+pub fn cursors(look: CursorLook, cursor_px: f64, res: f64, sway: bool, palette: &Palette) -> Vec<Sprite> {
+    if !sway {
+        return cursor(look, cursor_px, res, 0.0, palette).into_iter().collect();
+    }
+    let half = (SWAY_MAX_DEG / SWAY_STEP_DEG).round() as i32;
+    (-half..=half)
+        .filter_map(|i| cursor(look, cursor_px, res, f64::from(i) * SWAY_STEP_DEG, palette))
+        .collect()
+}
+
+/// The cursor, drawn `res` times larger than its frame size so it stays sharp when the camera zooms in, turned
+/// `angle` degrees clockwise about its hotspot. The sprite is square and centred on the hotspot, so turning it never
+/// moves the tip.
+pub fn cursor(look: CursorLook, cursor_px: f64, res: f64, angle: f64, palette: &Palette) -> Option<Sprite> {
+    let shape = shapes().into_iter().find(|s| s.id == shape_id(look))?;
+    let u = (cursor_px * res / 20.0) as f32;
+    let [hx, hy] = shape.hotspot;
+    let mut parts = Vec::new();
+    let mut reach = 0f32;
+    for layer in &shape.layers {
+        let (points, path) = match (&layer.d, layer.circle) {
+            (Some(d), _) => svg_path(d)?,
+            (None, Some([cx, cy, r])) => {
+                let reach = vec![(cx - r, cy - r), (cx + r, cy + r), (cx - r, cy + r), (cx + r, cy - r)];
+                (reach, PathBuilder::from_circle(cx, cy, r)?)
+            }
+            _ => continue,
+        };
+        for (x, y) in points {
+            reach = reach.max(((x - hx).powi(2) + (y - hy).powi(2)).sqrt() + layer.width / 2.0);
+        }
+        parts.push((layer, path));
+    }
+    // A unit of room around the furthest point, so antialiased edges aren't cut.
+    let side = (((reach + 1.0) * 2.0 * u).ceil() as u32).max(2);
+    let mut pixmap = Pixmap::new(side, side)?;
+    let c = side as f32 / 2.0;
+    let transform =
+        Transform::from_translate(c, c).pre_rotate(angle as f32).pre_scale(u, u).pre_translate(-hx, -hy);
+    let token = |name: &Option<String>, opacity: f32| {
+        let color = match name.as_deref()? {
+            "light" => palette.cursor_light,
+            "dark" => palette.cursor_dark,
+            _ => return None,
+        };
+        let mut color = color;
+        color.apply_opacity(opacity);
+        Some(color)
+    };
+    for (layer, path) in &parts {
+        if let Some(fill) = token(&layer.fill, layer.opacity) {
+            pixmap.fill_path(path, &paint(fill), FillRule::Winding, transform, None);
+        }
+        if let Some(edge) = token(&layer.stroke, layer.opacity)
+            && layer.width > 0.0
+        {
+            let stroke = Stroke { width: layer.width, line_join: LineJoin::Round, ..Stroke::default() };
+            pixmap.stroke_path(path, &paint(edge), &stroke, transform, None);
+        }
+    }
+    let at = -f64::from(c) / res;
+    Some(Sprite { pixmap, x: at, y: at, scale: res })
 }
 
 /// The ring a click leaves: `2 × cursor_px` across at full size, centred on the hotspot, with a soft dark edge
@@ -648,10 +783,49 @@ mod tests {
 
     #[test]
     fn cursor_tip_is_the_anchor() {
-        let s = cursor(CursorLook::Mac, 30.0, 2.0, &Palette::get()).unwrap();
-        // The tip sits two units of padding plus (2, 1.5) units into the sprite, which is drawn twice as large.
-        let u = 60.0 / 20.0;
-        assert!((-s.x * 2.0 - (2.0 * u + 2.0 * u)).abs() < 1e-6);
-        assert!((-s.y * 2.0 - (2.0 * u + 1.5 * u)).abs() < 1e-6);
+        let palette = Palette::get();
+        for look in [
+            CursorLook::Mac,
+            CursorLook::MacWhite,
+            CursorLook::Windows,
+            CursorLook::Outline,
+            CursorLook::Dot,
+            CursorLook::Ring,
+            CursorLook::Bold,
+            CursorLook::Hand,
+        ] {
+            let s = cursor(look, 30.0, 2.0, 0.0, &palette).unwrap_or_else(|| panic!("{look:?} doesn't draw"));
+            // The hotspot is the sprite's centre, which is drawn twice as large.
+            let side = f64::from(s.pixmap.width());
+            assert_eq!(s.pixmap.width(), s.pixmap.height());
+            assert!((-s.x * 2.0 - side / 2.0).abs() < 1e-6 && (-s.y * 2.0 - side / 2.0).abs() < 1e-6);
+            // Something is drawn, and it stays inside the sprite.
+            let alpha = |x: u32, y: u32| s.pixmap.pixel(x, y).map_or(0, |p| p.alpha());
+            let n = s.pixmap.width();
+            assert!((0..n).any(|i| alpha(i, n / 2 + 2) > 0 || alpha(n / 2 + 2, i) > 0), "{look:?} is empty");
+            assert!((0..n).all(|i| alpha(i, 0) == 0 && alpha(0, i) == 0), "{look:?} is clipped");
+            if let Ok(keep) = std::env::var("SHOTMAXXING_KEEP_EXPORT") {
+                let big = cursor(look, 60.0, 2.0, 0.0, &palette).unwrap();
+                big.pixmap
+                    .save_png(std::path::Path::new(&keep).join(format!("cursor-{look:?}.png")))
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn a_swaying_cursor_is_drawn_at_each_tilt() {
+        let tilted = cursors(CursorLook::Mac, 30.0, 1.0, true, &Palette::get());
+        assert_eq!(tilted.len(), 21);
+        assert_eq!(sway_index(0.0, 21), 10);
+        assert_eq!((sway_index(-99.0, 21), sway_index(99.0, 21), sway_index(3.0, 21)), (0, 20, 11));
+        assert_eq!(cursors(CursorLook::Mac, 30.0, 1.0, false, &Palette::get()).len(), 1);
+    }
+
+    #[test]
+    fn svg_paths_read_lines_and_curves() {
+        let (points, _) = svg_path("M2 1.5 L2 22 C3 4 5 6 7 8 Q1,2 3,4 Z").unwrap();
+        assert_eq!(points.len(), 7);
+        assert!(svg_path("M2 1.5 A1 1 0 0 1 3 3").is_none());
     }
 }

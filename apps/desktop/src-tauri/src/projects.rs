@@ -293,6 +293,36 @@ pub async fn choose_music<R: Runtime>(
         .map_err(text)
 }
 
+/// Asks for a picture and copies it into `project`'s media folder for its background. `None` when the person
+/// cancels; otherwise the copy's path relative to the project.
+#[tauri::command]
+pub async fn choose_background<R: Runtime>(
+    app: AppHandle<R>,
+    window: tauri::WebviewWindow<R>,
+    project: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose a background picture")
+        .set_parent(&window)
+        .add_filter("Pictures", &shotmaxxing_render::PICTURE_TYPES)
+        .pick_file(move |picked| {
+            let _ = tx.send(picked);
+        });
+    let picked =
+        tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten()).await.map_err(text)?;
+    let Some(file) = picked.and_then(|p| p.into_path().ok()) else { return Ok(None) };
+    tauri::async_runtime::spawn_blocking(move || {
+        shotmaxxing_render::import_picture(Path::new(&project), &file)
+    })
+    .await
+    .map_err(text)?
+    .map(Some)
+    .map_err(text)
+}
+
 fn scan(folder: &Path) -> Vec<ProjectSummary> {
     let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
     let mut out: Vec<ProjectSummary> = entries

@@ -12,7 +12,8 @@
     options: Option[];
     value: T;
     label: string;
-    size?: 'sm' | 'md';
+    /** `lg` is a tall bar for a panel's main choice, such as the kind of background. */
+    size?: 'sm' | 'md' | 'lg';
     /** Show icons only; labels become tooltips and accessible names. */
     iconsOnly?: boolean;
     onchange?: (value: T) => void;
@@ -59,15 +60,19 @@
   tabindex="-1"
   {onkeydown}
   class={[
-    'relative grid rounded-full bg-fill p-[2px]',
-    size === 'sm' ? 'h-7' : 'h-[var(--os-control-height)] min-h-7',
+    'relative grid bg-fill',
+    size === 'lg' ? 'h-10 rounded-[12px] p-[3px]' : 'rounded-full p-[2px]',
+    size === 'sm' ? 'h-7' : size === 'md' ? 'h-[var(--os-control-height)] min-h-7' : '',
   ]}
   style:grid-template-columns="repeat({options.length}, minmax(0, 1fr))"
 >
   <span
     aria-hidden="true"
-    class="tab-thumb absolute inset-y-[2px] left-[2px] rounded-full bg-segment-thumb shadow-[var(--elev-1)]"
-    style:width="calc((100% - 4px) / {options.length})"
+    class={[
+      'tab-thumb absolute bg-segment-thumb shadow-[var(--elev-1)]',
+      size === 'lg' ? 'inset-y-[3px] left-[3px] rounded-[9px]' : 'inset-y-[2px] left-[2px] rounded-full',
+    ]}
+    style:width="calc((100% - {size === 'lg' ? 6 : 4}px) / {options.length})"
     style:translate="{index * 100}% 0"
   ></span>
   {#each options as option (option.value)}
@@ -80,7 +85,8 @@
       tabindex={option.value === value ? 0 : -1}
       onclick={() => select(option.value)}
       class={[
-        'press-tab relative z-10 inline-flex min-w-0 items-center justify-center rounded-full px-2.5 font-medium',
+        'press-tab relative z-10 inline-flex min-w-0 items-center justify-center px-2.5 font-medium',
+        size === 'lg' ? 'rounded-[9px]' : 'rounded-full',
         size === 'sm' ? 'text-footnote' : 'text-callout',
         option.value === value ? 'text-fg' : 'text-fg-muted hover:text-fg',
       ]}

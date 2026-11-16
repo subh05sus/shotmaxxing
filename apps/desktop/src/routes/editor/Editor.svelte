@@ -56,9 +56,10 @@
     openWindow,
     revealInFolder,
     takeRecordingNotices,
+    type StillLook,
   } from '../../lib/native';
   import { relativeTime, timecode } from '../../lib/format';
-  import { shadowOpacity } from '../../lib/project';
+  import { backgroundOf, shadowOpacity } from '../../lib/project';
   import { EditorState, type ToolId } from './store.svelte';
   import { ASPECTS, sizeForShort } from './camera';
   import Canvas from './Canvas.svelte';
@@ -333,10 +334,14 @@
   let shownLook = '';
   $effect(() => {
     if (!ed.still || ed.status !== 'ready') return;
-    const { wallpaper, wallpaperCss, padding, radius, shadow } = ed.project.canvas;
-    const look = {
+    const { wallpaper, wallpaperCss, backdrop, blur, padding, radius, shadow } = ed.project.canvas;
+    // A picture someone chose belongs to this project, so the next screenshot starts from the wallpaper instead.
+    const carried = backdrop && backdrop.kind !== 'image' ? backgroundOf(ed.project.canvas) : null;
+    const look: StillLook = {
       wallpaper,
       ...(wallpaperCss ? { wallpaperCss } : {}),
+      ...(carried ? { backdrop: carried as StillLook['backdrop'] } : {}),
+      ...(blur > 0 ? { blur } : {}),
       padding,
       cornerRadius: radius,
       shadowOpacity: shadowOpacity(shadow),

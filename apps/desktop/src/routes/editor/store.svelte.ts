@@ -40,6 +40,7 @@ import {
 } from '../../lib/native';
 import { captionAt, rowUnits, shownCaptions as captionsShown, type CaptionStyle } from '../../lib/captions';
 import { settings } from '../../lib/settings.svelte';
+import type { Backdrop, CursorStyle } from '../../lib/backdrops';
 import { dropRanges, keepRanges } from './clips';
 import {
   effectDefaults,
@@ -104,19 +105,32 @@ export interface Project {
     wallpaper: string;
     /** A content pack's wallpaper, kept with the project so it looks the same without the pack. */
     wallpaperCss?: string;
+    /** A photo, picture, colour or gradient in place of the wallpaper. Without one, the wallpaper shows. */
+    backdrop?: Backdrop;
+    /** The background's blur, in pixels at 1080p (0 to `MOST_BLUR`). */
+    blur: number;
     padding: number;
     radius: number;
     shadow: number;
     aspect: Aspect;
   };
   cursor: {
+    /** Whether the cursor is drawn at all. */
+    visible: boolean;
     size: number;
     smoothing: number;
-    style: 'mac' | 'windows' | 'dot';
+    style: CursorStyle;
     click: 'ripple' | 'press' | 'none';
+    /** How deep a press squashes the cursor, 0 to 1. */
+    bounce: number;
+    /** How long a press takes to spring back, in seconds. */
+    bounceTime: number;
+    /** How far the arrow leans into its movement, 0 to 1. */
+    sway: number;
     snap: boolean;
     sounds: boolean;
-    motionBlur: boolean;
+    /** 0 (off) to 1. */
+    motionBlur: number;
     hideIdle: boolean;
     loop: boolean;
     spotlight: boolean;
@@ -205,15 +219,19 @@ function sampleProject(): Project {
     kind: 'video',
     duration: SAMPLE_PROJECT.duration,
     capture: { ...SAMPLE_PROJECT.capture },
-    canvas: { wallpaper: 'aurora-lime', padding: 0.08, radius: 14, shadow: 0.6, aspect: '16:9' },
+    canvas: { wallpaper: 'aurora-lime', blur: 0, padding: 0.08, radius: 14, shadow: 0.6, aspect: '16:9' },
     cursor: {
+      visible: true,
       size: 1.6,
       smoothing: 0.6,
       style: env.os === 'windows' ? 'windows' : 'mac',
       click: 'ripple',
+      bounce: 0.375,
+      bounceTime: 0.3,
+      sway: 0,
       snap: true,
       sounds: false,
-      motionBlur: true,
+      motionBlur: 0.3,
       hideIdle: true,
       loop: false,
       spotlight: false,

@@ -6,6 +6,7 @@
 
 use shotmaxxing_core::cursor::position_at;
 use shotmaxxing_core::geometry::{Point, Rect, Size};
+use shotmaxxing_core::telemetry::CursorSample;
 
 use crate::model::{Click, RenderProject, Zoom};
 
@@ -192,8 +193,10 @@ pub struct View {
 pub struct CursorDraw {
     /// The hotspot, in the camera layer.
     pub at: Point,
-    /// 0.85 while a press squashes the cursor, else 1.
+    /// The cursor's size while a press squashes it, 1 otherwise ([`press_at`]).
     pub press: f64,
+    /// How far the cursor leans into its movement, in degrees clockwise ([`sway_at`]).
+    pub angle: f64,
     /// How far a click ring has grown, 0 to 1.
     pub ripple: Option<f64>,
     /// Where the hotspot was when the motion-blur shutter opened, when the cursor moved since.
@@ -211,6 +214,40 @@ pub struct Frame {
     pub key: Option<usize>,
     /// The caption showing, and how far through its time it is, from 0 to 1 (a long one shows in pages).
     pub caption: Option<(usize, f64)>,
+}
+
+/// The cursor's size `age` seconds after a press: down to `scale` in the first fifth of `seconds`, then easing back
+/// to 1. The editor's preview uses the same curve (Canvas.svelte, `pressAt`).
+pub fn press_at(age: f64, scale: f64, seconds: f64) -> f64 {
+    if !(0.0..seconds).contains(&age) || seconds <= 0.0 {
+        return 1.0;
+    }
+    let u = age / seconds;
+    let depth = if u < 0.2 {
+        (u / 0.2 * std::f64::consts::FRAC_PI_2).sin()
+    } else {
+        0.5 + 0.5 * ((u - 0.2) / 0.8 * std::f64::consts::PI).cos()
+    };
+    1.0 - (1.0 - scale) * depth
+}
+
+/// How far the movement over this long sets the lean.
+pub const SWAY_WINDOW_S: f64 = 0.06;
+/// The sideways speed, in capture points a second, at which the lean is about three quarters of the way there.
+pub const SWAY_SPEED: f64 = 1200.0;
+
+/// The cursor's lean at `t`, in degrees clockwise: it tips toward where it's heading sideways, more the faster it
+/// goes, up to `sway` × [`crate::sprites::SWAY_MAX_DEG`]. The editor's preview uses the same (Canvas.svelte).
+pub fn sway_at(path: &[CursorSample], t: f64, sway: f64) -> f64 {
+    let now = position_at(path, t * 1_000_000.0);
+    let before = position_at(path, (t - SWAY_WINDOW_S).max(0.0) * 1_000_000.0);
+    match (now, before) {
+        (Some(now), Some(before)) => {
+            let vx = (now.x - before.x) / SWAY_WINDOW_S;
+            sway.clamp(0.0, 1.0) * crate::sprites::SWAY_MAX_DEG * (vx / SWAY_SPEED).tanh()
+        }
+        _ => 0.0,
+    }
 }
 
 /// The frame showing the recording at `t` seconds.
@@ -251,7 +288,17 @@ pub fn frame_at(project: &RenderProject, layout: &Layout, t: f64) -> Frame {
             .map(|q| layout.point_to_frame(q));
         Some(CursorDraw {
             at: layout.point_to_frame(p),
-            press: if project.click == Click::Press && age.is_some_and(|a| a < 0.3) { 0.85 } else { 1.0 },
+            press: if project.click == Click::Press {
+                project
+                    .clicks
+                    .iter()
+                    .rev()
+                    .find(|(ct, _)| *ct <= t)
+                    .map_or(1.0, |(ct, _)| press_at(t - ct, project.press_scale, project.press_s))
+            } else {
+                1.0
+            },
+            angle: if project.sway > 0.0 { sway_at(&project.path, t, project.sway) } else { 0.0 },
             ripple: if project.click == Click::Ripple { age } else { None },
             from,
         })

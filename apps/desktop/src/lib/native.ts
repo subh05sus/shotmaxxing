@@ -406,6 +406,13 @@ export interface StillLook {
   wallpaper: string;
   /** The wallpaper itself, when it comes from a content pack. */
   wallpaperCss?: string;
+  /** A built-in photo, a solid colour or a gradient in place of the wallpaper, as the project file has it. */
+  backdrop?:
+    | { kind: 'photo'; id: string }
+    | { kind: 'solid'; color: string }
+    | { kind: 'gradient'; from: string; to: string; angle_deg: number };
+  /** The background's blur, in pixels at 1080p. */
+  blur?: number;
   padding: number;
   cornerRadius: number;
   shadowOpacity: number;
@@ -704,6 +711,17 @@ export function planAutoZooms(path: string, depth: string): Promise<CoreZoom[]> 
 /** A URL the web view can stream a local file from. */
 export async function mediaUrl(path: string): Promise<string> {
   return convertFileSrc(path);
+}
+
+/** The same, right away: for pictures shown in the preview. Empty in the browser preview, which has no files. */
+export function fileUrl(path: string): string {
+  return isTauri ? convertFileSrc(path) : '';
+}
+
+/** Asks for a picture and copies it into the project's media folder for its background: its path in the project,
+ * or `null` when the person cancels. */
+export function chooseBackground(project: string): Promise<string | null> {
+  return call('choose_background', { project }, () => null);
 }
 
 // Voice-overs ----------------------------------------------------------------------------------------------------

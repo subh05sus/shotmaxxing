@@ -6,6 +6,8 @@
   import { effectDefaults } from '../../lib/project';
   import type { EffectBlock } from '../../lib/sample';
   import { wallpaper } from '../../lib/wallpapers';
+  import { backdropCss, cursorShape, pressAt, swayAngle, SWAY_WINDOW_S } from '../../lib/backdrops';
+  import { fileUrl } from '../../lib/native';
   import { ASPECTS, cameraAt, clamp, cursorAt, placeWindow } from './camera';
   import type { EditorState } from './store.svelte';
 
@@ -65,10 +67,9 @@
 
   // Motion blur, as the export draws it: copies from where the cursor was 15 ms ago to where it is, added together
   // (plus-lighter is the browser's version of the export's additive blend) with more weight at the front.
-  const SMEAR_S = 0.3 * 0.05;
   const smear = $derived.by(() => {
-    if (!p.cursor.motionBlur) return null;
-    const back = cursorAt(Math.max(0, ed.time - SMEAR_S), ed.cursorPath);
+    if (p.cursor.motionBlur <= 0) return null;
+    const back = cursorAt(Math.max(0, ed.time - p.cursor.motionBlur * 0.05), ed.cursorPath);
     const dx = (back.x - cursor.x) * k;
     const dy = (back.y - cursor.y) * k;
     const distance = Math.hypot(dx, dy);
@@ -106,7 +107,27 @@
   // Clicks: a ring that grows and fades, computed from time so scrubbing shows it too.
   const click = $derived(ed.clicks.find((c) => ed.time >= c.t && ed.time < c.t + 0.5));
   const clickAge = $derived(click ? (ed.time - click.t) / 0.5 : 0);
-  const pressed = $derived(p.cursor.click === 'press' && !!click && clickAge < 0.3);
+  // A press squashes the cursor and springs back, as the export draws it (`press_at`).
+  const lastClick = $derived(ed.clicks.findLast((c) => c.t <= ed.time));
+  const press = $derived(
+    p.cursor.click === 'press' && lastClick
+      ? pressAt(ed.time - lastClick.t, 1 - 0.4 * p.cursor.bounce, p.cursor.bounceTime)
+      : 1,
+  );
+  // The arrow leans into sideways movement, as the export does (`sway_at`).
+  const lean = $derived.by(() => {
+    if (p.cursor.sway <= 0) return 0;
+    const before = cursorAt(Math.max(0, ed.time - SWAY_WINDOW_S), ed.cursorPath);
+    return swayAngle((cursor.x - before.x) / SWAY_WINDOW_S, p.cursor.sway);
+  });
+  const shape = $derived(cursorShape(p.cursor.style));
+  const TOKEN = { light: 'var(--cursor-light)', dark: 'var(--cursor-dark)' } as const;
+  // The background: the wallpaper, or a photo, picture, colour or gradient, blurred as the export blurs it.
+  const wallpaperCss = $derived(p.canvas.wallpaperCss ?? wallpaper(p.canvas.wallpaper).css);
+  const background = $derived(
+    backdropCss(p.canvas.backdrop, wallpaperCss, (path) => (ed.path ? fileUrl(`${ed.path}/${path}`) : '')),
+  );
+  const backgroundBlur = $derived((p.canvas.blur * frame.height) / 1080);
 
   // The cursor fades out after it has rested for a while, and comes back on the next move or click.
   const lastActive = $derived.by(() => {
@@ -323,10 +344,15 @@
         style:height="{frame.height}px"
         style:transform
       >
-        <div
-          class="absolute inset-0"
-          style:background={p.canvas.wallpaperCss ?? wallpaper(p.canvas.wallpaper).css}
-        ></div>
+        <div class="absolute inset-0 overflow-hidden">
+          <!-- A blurred layer is drawn larger than the frame, so its edges stay solid as the export's do. -->
+          <div
+            class="absolute"
+            style:inset="{-Math.ceil(backgroundBlur * 3)}px"
+            style:background
+            style:filter={backgroundBlur > 0.3 ? `blur(${backgroundBlur}px)` : undefined}
+          ></div>
+        </div>
         <div
           class="absolute overflow-hidden"
           style:left="{win.x}px"
@@ -457,13 +483,11 @@
           {/each}
         </div>
 
-        {#if !idle && !ed.still}
+        {#if !idle && !ed.still && p.cursor.visible}
           <!-- The cursor rides inside the camera, so zooms make it bigger too. -->
           <div
             class="pointer-events-none absolute left-0 top-0"
-            style:transform="translate({win.x + cursor.x * k}px, {win.y + cursor.y * k}px) scale({pressed
-              ? 0.85
-              : 1})"
+            style:transform="translate({win.x + cursor.x * k}px, {win.y + cursor.y * k}px) scale({press})"
           >
             {#if click && p.cursor.click === 'ripple'}
               <span
@@ -585,33 +609,39 @@
 </div>
 
 {#snippet pointer()}
-  {#if p.cursor.style === 'dot'}
-    <span
-      class="absolute rounded-full border-solid border-[var(--cursor-light)] bg-[var(--cursor-dark)]"
-      style:left="{-cursorPx * 0.35}px"
-      style:top="{-cursorPx * 0.35}px"
-      style:width="{cursorPx * 0.7}px"
-      style:height="{cursorPx * 0.7}px"
-      style:border-width="{ringPx}px"
-    ></span>
-  {:else}
-    <!-- The arrow's tip sits at (2, 1.5) in its box, so the box is moved back by that much. -->
-    <svg
-      width={cursorPx}
-      height={cursorPx * 1.4}
-      viewBox="0 0 20 28"
-      class="absolute overflow-visible"
-      style:left="{-2 * unit}px"
-      style:top="{-1.5 * unit}px"
-      aria-hidden="true"
-    >
-      <path
-        d="M2 1.5 L2 22 L7.2 17.4 L10.6 25.6 L14 24.2 L10.7 16.2 L17.6 16.2 Z"
-        fill={p.cursor.style === 'mac' ? 'var(--cursor-dark)' : 'var(--cursor-light)'}
-        stroke={p.cursor.style === 'mac' ? 'var(--cursor-light)' : 'var(--cursor-dark)'}
-        stroke-width="1.6"
-        stroke-linejoin="round"
-      />
-    </svg>
-  {/if}
+  <!-- The shape's hotspot sits at the cursor's point; it leans about that point. -->
+  <svg
+    width={20 * unit}
+    height={28 * unit}
+    viewBox="0 0 20 28"
+    class="absolute overflow-visible"
+    style:left="{-shape.hotspot[0] * unit}px"
+    style:top="{-shape.hotspot[1] * unit}px"
+    style:transform-origin="{shape.hotspot[0] * unit}px {shape.hotspot[1] * unit}px"
+    style:transform={lean ? `rotate(${lean}deg)` : undefined}
+    aria-hidden="true"
+  >
+    {#each shape.layers as layer, i (i)}
+      {#if layer.circle}
+        <circle
+          cx={layer.circle[0]}
+          cy={layer.circle[1]}
+          r={layer.circle[2]}
+          fill={layer.fill ? TOKEN[layer.fill] : 'none'}
+          stroke={layer.stroke ? TOKEN[layer.stroke] : 'none'}
+          stroke-width={layer.width ?? 0}
+          opacity={layer.opacity ?? 1}
+        />
+      {:else}
+        <path
+          d={layer.d}
+          fill={layer.fill ? TOKEN[layer.fill] : 'none'}
+          stroke={layer.stroke ? TOKEN[layer.stroke] : 'none'}
+          stroke-width={layer.width ?? 0}
+          stroke-linejoin="round"
+          opacity={layer.opacity ?? 1}
+        />
+      {/if}
+    {/each}
+  </svg>
 {/snippet}

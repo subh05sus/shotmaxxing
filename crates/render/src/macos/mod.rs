@@ -39,7 +39,7 @@ use self::video::VideoWriter;
 use crate::model::{Bubble, RenderProject};
 use crate::scene::{Frame, Layout, frame_at};
 use crate::sprites::{self, CaptionShown, LINE_HEIGHT, Label, Palette, Sprite, Weight};
-use crate::{ExportOptions, Format, RenderError, animated, soft, wallpaper};
+use crate::{ExportOptions, Format, RenderError, animated, backdrop, soft};
 
 /// A picture ready to place. `x`, `y`, `w`, `h` are in frame pixels; what they are relative to depends on the layer.
 struct Placed {
@@ -84,7 +84,8 @@ struct Compositor<'a> {
     palette: Palette,
     white: Retained<CIColor>,
     background: Retained<CIImage>,
-    cursor: Option<Placed>,
+    /// The cursor upright, or at each tilt when it sways ([`sprites::cursors`]).
+    cursors: Vec<Placed>,
     ring: Option<Placed>,
     spotlight: Option<Placed>,
     arrows: Vec<Option<Placed>>,
@@ -103,14 +104,18 @@ impl<'a> Compositor<'a> {
         .ok_or_else(|| system("the sRGB colour space is missing"))?;
         let palette = Palette::get();
         let (w, h) = (layout.width as u32, layout.height as u32);
-        let pixels = wallpaper::rasterize(&project.wallpaper, w, h).map_err(RenderError::Project)?;
+        let pixels = backdrop::paint(&project.backdrop, project.background_blur, &project.wallpaper, w, h)
+            .map_err(RenderError::Project)?;
         let background = sprites::background(&layout, pixels, &palette)
             .ok_or_else(|| system("couldn't draw the background"))?;
         let background = to_ci(&background, &space);
         // Drawn at the largest zoom, so they're never enlarged.
         let res = project.max_zoom().clamp(1.0, 4.0);
-        let cursor =
-            sprites::cursor(project.cursor_look, layout.cursor_px, res, &palette).map(|s| placed(s, &space));
+        let cursors: Vec<Placed> =
+            sprites::cursors(project.cursor_look, layout.cursor_px, res, project.sway > 0.0, &palette)
+                .into_iter()
+                .map(|s| placed(s, &space))
+                .collect();
         let ring = sprites::ring(layout.cursor_px, res, &palette).map(|s| placed(s, &space));
         let spotlight = sprites::spotlight(layout.cursor_px, res, &palette).map(|s| placed(s, &space));
         let arrows = project
@@ -131,7 +136,7 @@ impl<'a> Compositor<'a> {
             palette,
             white,
             background,
-            cursor,
+            cursors,
             ring,
             spotlight,
             arrows,
@@ -445,7 +450,7 @@ impl<'a> Compositor<'a> {
                 let (x, y, w, h) = at(spot, 1.0);
                 out = Self::over(&self.place(&spot.image, x, y, w, h), &out);
             }
-            if let Some(cursor) = &self.cursor {
+            if let Some(cursor) = self.cursors.get(sprites::sway_index(c.angle, self.cursors.len())) {
                 let (x, y, w, h) = at(cursor, 1.0);
                 out = match c.from {
                     Some(from) => Self::over(

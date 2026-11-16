@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 // The GIF writer and the CPU-drawn sprites serve the exporters, which only macOS has so far.
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 mod animated;
+pub mod backdrop;
 pub mod click;
 // Mixes the sound where the system has no mixer of its own.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -270,6 +271,32 @@ pub fn import_music(root: &Path, file: &Path) -> Result<ImportedMusic, RenderErr
     std::fs::copy(file, &copy)?;
     let name_of = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     Ok(ImportedMusic { path: format!("media/{}", name_of(&copy)), name: name_of(file), seconds })
+}
+
+/// The kinds of picture a background can be.
+pub const PICTURE_TYPES: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
+
+/// Copies a picture into the project's media folder as its background, returning the copy's path relative to the
+/// project. It never overwrites an earlier picture, which undo may still need. Setting the background is up to the
+/// caller.
+pub fn import_picture(root: &Path, file: &Path) -> Result<String, RenderError> {
+    let ext = file
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| PICTURE_TYPES.contains(&e.as_str()))
+        .ok_or_else(|| RenderError::Project("a background picture can be PNG, JPEG or WebP".into()))?;
+    if !root.join("project.json").exists() {
+        return Err(RenderError::Project(format!("{} isn't a Shotmaxxing project", root.display())));
+    }
+    let bytes = std::fs::read(file)?;
+    image::load_from_memory(&bytes)
+        .map_err(|_| RenderError::Project(format!("{} isn't a picture that can be read", file.display())))?;
+    let media = root.join("media");
+    std::fs::create_dir_all(&media)?;
+    let copy = unique_path(&media, "background", &ext);
+    std::fs::write(&copy, &bytes)?;
+    Ok(format!("media/{}", copy.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
 }
 
 /// `<dir>/<stem>.<ext>`, or `<stem> 2.<ext>` and so on when that file exists.

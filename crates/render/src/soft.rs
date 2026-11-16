@@ -17,12 +17,12 @@ use tiny_skia::{
 use shotmaxxing_core::captions;
 
 use crate::RenderError;
+use crate::backdrop;
 use crate::model::{Bubble, RenderProject};
 use crate::scene::{Frame, Layout};
 use crate::sprites::{
     self, CaptionShown, LINE_HEIGHT, Label, Palette, Sprite, Weight, blur_alpha, rounded_rect,
 };
-use crate::wallpaper;
 
 /// Draws `text` in the system's interface font, `size` pixels and the given weight, centred in a `line_height` ×
 /// `size` tall box, in `color` on transparent.
@@ -37,7 +37,8 @@ pub struct Compositor<'a> {
     palette: Palette,
     text: DrawText,
     background: Pixmap,
-    cursor: Option<Sprite>,
+    /// The cursor upright, or at each tilt when it sways ([`sprites::cursors`]).
+    cursors: Vec<Sprite>,
     ring: Option<Sprite>,
     spotlight: Option<Sprite>,
     arrows: Vec<Option<Sprite>>,
@@ -57,7 +58,8 @@ impl<'a> Compositor<'a> {
         let palette = Palette::get();
         let (w, h) = (layout.width as u32, layout.height as u32);
         let failed = |what: &str| RenderError::System(format!("couldn't draw {what}"));
-        let pixels = wallpaper::rasterize(&project.wallpaper, w, h).map_err(RenderError::Project)?;
+        let pixels = backdrop::paint(&project.backdrop, project.background_blur, &project.wallpaper, w, h)
+            .map_err(RenderError::Project)?;
         let background =
             sprites::background(&layout, pixels, &palette).ok_or_else(|| failed("the background"))?;
         // Drawn at the largest zoom, so they're never enlarged.
@@ -82,7 +84,13 @@ impl<'a> Compositor<'a> {
         Ok(Self {
             project,
             layout,
-            cursor: sprites::cursor(project.cursor_look, layout.cursor_px, res, &palette),
+            cursors: sprites::cursors(
+                project.cursor_look,
+                layout.cursor_px,
+                res,
+                project.sway > 0.0,
+                &palette,
+            ),
             ring: sprites::ring(layout.cursor_px, res, &palette),
             spotlight: sprites::spotlight(layout.cursor_px, res, &palette),
             palette,
@@ -175,7 +183,7 @@ impl<'a> Compositor<'a> {
             {
                 draw(&mut self.out, spot.pixmap.as_ref(), at(spot, 1.0), 1.0, BlendMode::SourceOver, None);
             }
-            if let Some(cursor) = &self.cursor {
+            if let Some(cursor) = self.cursors.get(sprites::sway_index(c.angle, self.cursors.len())) {
                 let place = at(cursor, 1.0);
                 match c.from {
                     Some(from) => {

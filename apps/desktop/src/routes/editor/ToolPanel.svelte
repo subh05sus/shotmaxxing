@@ -8,6 +8,7 @@
     Blur,
     BookOpen,
     Captions,
+    Image,
     Lock,
     Mic,
     Music,
@@ -29,11 +30,27 @@
     Spinner,
     StatusDot,
     Switch,
+    toast,
   } from '@shotmaxxing/ui';
   import { languageName, width } from '../../lib/captions';
   import { timecode } from '../../lib/format';
   import { settings } from '../../lib/settings.svelte';
   import { WALLPAPERS } from '../../lib/wallpapers';
+  import {
+    CURSORS,
+    GRADIENTS,
+    MOST_BLUR,
+    PHOTOS,
+    SWATCHES,
+    FIRST_SOLID,
+    FIRST_GRADIENT,
+    gradientCss,
+    isHex,
+    photoThumb,
+    type Backdrop,
+  } from '../../lib/backdrops';
+  import { chooseBackground, fileUrl, isTauri } from '../../lib/native';
+  import CursorGlyph from './CursorGlyph.svelte';
   import { loadPacks, lookWallpaper, packWallpaperId, packs } from '../../lib/packs.svelte';
   import type { ContentPack, PackLook } from '../../lib/native';
   import { go } from '../../lib/router.svelte';
@@ -80,6 +97,7 @@
 
   function chooseWallpaper(id: string, css?: string) {
     ed.change('Wallpaper', () => {
+      p.canvas.backdrop = undefined;
       p.canvas.wallpaper = id;
       p.canvas.wallpaperCss = css;
     });
@@ -95,6 +113,7 @@
     ed.change(`${look.name} look`, () => {
       const wallpaper = lookWallpaper(pack, look);
       if (wallpaper) {
+        p.canvas.backdrop = undefined;
         p.canvas.wallpaper = wallpaper.id;
         p.canvas.wallpaperCss = wallpaper.css;
       }
@@ -112,12 +131,79 @@
     const wallpaper = lookWallpaper(pack, look);
     const aspect = lookAspect(look);
     return (
-      (!wallpaper || p.canvas.wallpaper === wallpaper.id) &&
+      (!wallpaper || (!p.canvas.backdrop && p.canvas.wallpaper === wallpaper.id)) &&
       same(p.canvas.padding, look.padding) &&
       same(p.canvas.radius, look.corner_radius) &&
       same(p.canvas.shadow, look.shadow) &&
       (!aspect || p.canvas.aspect === aspect)
     );
+  }
+
+  // Background: a photo or picture, a solid colour, or a gradient (the wallpapers and ones made here).
+  type BackgroundTab = 'image' | 'color' | 'gradient';
+  const tabOf = (b: Backdrop | undefined): BackgroundTab =>
+    b?.kind === 'photo' || b?.kind === 'image' ? 'image' : b?.kind === 'solid' ? 'color' : 'gradient';
+  let bgTab = $state<BackgroundTab>('gradient');
+  // The tab follows the project's background when another project opens or an undo changes its kind.
+  let shownKind = '';
+  $effect(() => {
+    const kind = p.canvas.backdrop?.kind ?? 'wallpaper';
+    if (kind !== shownKind) bgTab = tabOf(p.canvas.backdrop);
+    shownKind = kind;
+  });
+  const backdrop = $derived(p.canvas.backdrop);
+  const solid = $derived(backdrop?.kind === 'solid' ? backdrop.color : FIRST_SOLID);
+  const custom = $derived(
+    backdrop?.kind === 'gradient' ? backdrop : { kind: 'gradient' as const, ...FIRST_GRADIENT },
+  );
+  // A picture someone chose stays offered while it's the background.
+  const picture = $derived(
+    backdrop?.kind === 'image' && ed.path ? fileUrl(`${ed.path}/${backdrop.path}`) : '',
+  );
+
+  // Each tab remembers what it showed last, so a tab puts its background straight on: the last photo, colour or
+  // gradient chosen there, or a first one. (The Gradient tab's own choice can be the wallpaper, no backdrop at all.)
+  const lastOn: Record<BackgroundTab, Backdrop | undefined> = {
+    image: undefined,
+    color: undefined,
+    gradient: undefined,
+  };
+  $effect(() => {
+    const b = p.canvas.backdrop;
+    lastOn[tabOf(b)] = b ? { ...b } : undefined;
+  });
+  function chooseTab(tab: BackgroundTab) {
+    bgTab = tab;
+    if (tabOf(p.canvas.backdrop) === tab) return;
+    const next: Backdrop | undefined =
+      tab === 'image'
+        ? (lastOn.image ?? { kind: 'photo', id: PHOTOS[0].id })
+        : tab === 'color'
+          ? (lastOn.color ?? { kind: 'solid', color: FIRST_SOLID })
+          : lastOn.gradient;
+    ed.change('Background', () => (p.canvas.backdrop = next));
+  }
+
+  function setBackdrop(label: string, next: Backdrop) {
+    ed.change(label, () => (p.canvas.backdrop = next));
+  }
+
+  let uploading = $state(false);
+  async function uploadPicture() {
+    if (!ed.path || uploading) return;
+    uploading = true;
+    try {
+      const path = await chooseBackground(ed.path);
+      if (path) setBackdrop('Background picture', { kind: 'image', path });
+    } catch (error) {
+      toast(sentence(String(error)), { tone: 'danger' });
+    } finally {
+      uploading = false;
+    }
+  }
+
+  function setGradient(change: Partial<{ from: string; to: string; angle: number }>) {
+    setBackdrop('Gradient', { ...custom, ...change, kind: 'gradient' });
   }
 
   const silenceSeconds = $derived(p.audio.silences.reduce((sum, s) => sum + s.end - s.start, 0));
@@ -174,7 +260,10 @@
     </button>
   </header>
 
-  <div class="scroll-room flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-4 pb-4" data-tour="panel">
+  <div
+    class="scroll-room flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-4 pb-4 *:shrink-0"
+    data-tour="panel"
+  >
     {#if ed.tool === 'background'}
       {#each packLooks as pack (pack.id)}
         <p class="eyebrow mt-1">{pack.name} looks</p>
@@ -193,63 +282,249 @@
           {/each}
         </div>
       {/each}
-      <p class="eyebrow mt-1">Wallpaper</p>
-      <div class="grid grid-cols-3 gap-2 py-1" role="radiogroup" aria-label="Wallpaper">
-        {#if keptWallpaper}
-          <button
-            type="button"
-            role="radio"
-            aria-checked="true"
-            title="This project's wallpaper, from a content pack that isn't added here"
-            aria-label="This project's wallpaper"
-            class="press-card aspect-[4/3] rounded-[8px] shadow-[var(--elev-1)] ring-2 ring-accent ring-offset-2 ring-offset-surface"
-            style:background={keptWallpaper.css}
-          ></button>
-        {/if}
-        {#each WALLPAPERS as w (w.id)}
-          <button
-            type="button"
-            role="radio"
-            aria-checked={p.canvas.wallpaper === w.id}
-            title={w.name}
-            aria-label={w.name}
-            class={[
-              'press-card aspect-[4/3] rounded-[8px] shadow-[var(--elev-1)]',
-              p.canvas.wallpaper === w.id && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
-            ]}
-            style:background={w.css}
-            onclick={() => chooseWallpaper(w.id)}
-          ></button>
-        {/each}
+      <Segmented
+        label="Background kind"
+        size="lg"
+        value={bgTab}
+        onchange={chooseTab}
+        options={[
+          { value: 'image', label: 'Image' },
+          { value: 'color', label: 'Color' },
+          { value: 'gradient', label: 'Gradient' },
+        ]}
+      />
+      <!-- Right under the tabs, so it's in reach on every one without scrolling past the pictures. -->
+      <div class="mt-2">
+        <Slider
+          label="Background blur"
+          value={p.canvas.blur}
+          min={0}
+          max={MOST_BLUR}
+          step={0.5}
+          disabled={backdrop?.kind === 'solid'}
+          info={backdrop?.kind === 'solid' ? 'A single colour looks the same blurred.' : undefined}
+          format={(v) => `${v.toFixed(1)} px`}
+          onchange={(v) => ed.change('Background blur', () => (p.canvas.blur = v))}
+        />
       </div>
-      {#each packWallpapers as pack (pack.id)}
-        <p class="eyebrow mt-2">{pack.name}</p>
-        <div class="grid grid-cols-3 gap-2 py-1" role="radiogroup" aria-label="{pack.name} wallpapers">
-          {#each pack.wallpapers as w (w.id)}
-            {@const id = packWallpaperId(pack, w.id)}
+      {#if bgTab === 'image'}
+        <Button
+          variant="secondary"
+          size="lg"
+          class="mt-1 w-full rounded-[12px] text-callout font-medium"
+          disabled={!isTauri || !ed.path || uploading}
+          title={ed.path
+            ? 'A PNG, JPEG or WebP picture, kept with this project'
+            : 'Open a project to add a picture'}
+          onclick={uploadPicture}
+        >
+          {#if uploading}<Spinner size={14} />{:else}<Icon icon={Image} size={15} aria-hidden="true" />{/if}
+          Upload custom
+        </Button>
+        <div class="grid grid-cols-4 gap-1.5 py-2" role="radiogroup" aria-label="Background picture">
+          {#if picture}
             <button
               type="button"
               role="radio"
-              aria-checked={p.canvas.wallpaper === id}
-              title={w.name}
-              aria-label={w.name}
+              aria-checked="true"
+              aria-label="Your picture"
+              title="Your picture"
+              class="press-card aspect-square rounded-[9px] bg-cover bg-center shadow-[var(--elev-1)] ring-2 ring-accent ring-offset-2 ring-offset-surface"
+              style:background-image="url(&quot;{picture}&quot;)"
+            ></button>
+          {/if}
+          {#each PHOTOS as photo (photo.id)}
+            {@const on = backdrop?.kind === 'photo' && backdrop.id === photo.id}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={on}
+              aria-label={photo.name}
+              title={photo.name}
               class={[
-                'press-card aspect-[4/3] rounded-[8px] shadow-[var(--elev-1)]',
-                p.canvas.wallpaper === id && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+                'press-card aspect-square overflow-hidden rounded-[9px] bg-fill shadow-[var(--elev-1)]',
+                on && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
               ]}
-              style:background={w.css}
-              onclick={() => chooseWallpaper(id, w.css)}
+              onclick={() => setBackdrop('Background photo', { kind: 'photo', id: photo.id })}
+            >
+              <img
+                src={photoThumb(photo.id)}
+                alt=""
+                class="size-full object-cover"
+                loading="lazy"
+                draggable="false"
+              />
+            </button>
+          {/each}
+        </div>
+      {:else if bgTab === 'color'}
+        <div class="mt-2 flex items-center gap-2">
+          <label
+            class="relative size-9 shrink-0 cursor-pointer overflow-hidden rounded-[10px] shadow-[var(--elev-1)] ring-1 ring-inset ring-border"
+            style:background={solid}
+            title="Pick any colour"
+          >
+            <span class="sr-only">Background colour</span>
+            <input
+              type="color"
+              value={solid}
+              class="absolute inset-0 size-full cursor-pointer opacity-0"
+              oninput={(e) =>
+                setBackdrop('Background colour', { kind: 'solid', color: e.currentTarget.value })}
+            />
+          </label>
+          <input
+            type="text"
+            value={solid}
+            spellcheck="false"
+            maxlength="7"
+            aria-label="Colour as hex"
+            class="h-9 min-w-0 flex-1 rounded-[10px] border border-border bg-surface px-3 font-mono text-callout uppercase"
+            onchange={(e) => {
+              const v = e.currentTarget.value.trim().toLowerCase();
+              const hex = v.startsWith('#') ? v : `#${v}`;
+              if (isHex(hex)) setBackdrop('Background colour', { kind: 'solid', color: hex });
+              else e.currentTarget.value = solid;
+            }}
+          />
+        </div>
+        <div class="grid grid-cols-7 gap-1.5 py-2" role="radiogroup" aria-label="Colour swatches">
+          {#each SWATCHES as color (color)}
+            {@const on = backdrop?.kind === 'solid' && backdrop.color === color}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={on}
+              aria-label={color}
+              title={color}
+              class={[
+                'press-card aspect-square rounded-full shadow-[var(--elev-1)] ring-1 ring-inset ring-border',
+                on && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+              ]}
+              style:background={color}
+              onclick={() => setBackdrop('Background colour', { kind: 'solid', color })}
             ></button>
           {/each}
         </div>
-      {/each}
-      {#if packs.loaded && packs.list.length === 0}
-        <button
-          type="button"
-          class="press mb-1 self-start rounded-[6px] px-1 py-0.5 text-footnote text-fg-muted hover:text-fg"
-          onclick={() => go('home/settings')}>More wallpapers with a content pack</button
-        >
+      {:else}
+        <p class="eyebrow mt-2">Wallpapers</p>
+        <div class="grid grid-cols-4 gap-1.5 py-1" role="radiogroup" aria-label="Wallpaper">
+          {#if keptWallpaper}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!backdrop}
+              title="This project's wallpaper, from a content pack that isn't added here"
+              aria-label="This project's wallpaper"
+              class={[
+                'press-card aspect-square rounded-[9px] shadow-[var(--elev-1)]',
+                !backdrop && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+              ]}
+              style:background={keptWallpaper.css}
+              onclick={() => chooseWallpaper(keptWallpaper.id, keptWallpaper.css)}
+            ></button>
+          {/if}
+          {#each WALLPAPERS as w (w.id)}
+            {@const on = !backdrop && p.canvas.wallpaper === w.id}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={on}
+              title={w.name}
+              aria-label={w.name}
+              class={[
+                'press-card aspect-square rounded-[9px] shadow-[var(--elev-1)]',
+                on && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+              ]}
+              style:background={w.css}
+              onclick={() => chooseWallpaper(w.id)}
+            ></button>
+          {/each}
+        </div>
+        {#each packWallpapers as pack (pack.id)}
+          <p class="eyebrow mt-2">{pack.name}</p>
+          <div class="grid grid-cols-4 gap-1.5 py-1" role="radiogroup" aria-label="{pack.name} wallpapers">
+            {#each pack.wallpapers as w (w.id)}
+              {@const id = packWallpaperId(pack, w.id)}
+              {@const on = !backdrop && p.canvas.wallpaper === id}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={on}
+                title={w.name}
+                aria-label={w.name}
+                class={[
+                  'press-card aspect-square rounded-[9px] shadow-[var(--elev-1)]',
+                  on && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+                ]}
+                style:background={w.css}
+                onclick={() => chooseWallpaper(id, w.css)}
+              ></button>
+            {/each}
+          </div>
+        {/each}
+        {#if packs.loaded && packs.list.length === 0}
+          <button
+            type="button"
+            class="press mb-1 self-start rounded-[6px] px-1 py-0.5 text-footnote text-fg-muted hover:text-fg"
+            onclick={() => go('home/settings')}>More wallpapers with a content pack</button
+          >
+        {/if}
+        <p class="eyebrow mt-2">Make your own</p>
+        <div class="flex items-center gap-2 py-1">
+          {#each [['from', 'First colour'], ['to', 'Second colour']] as const as [end, name] (end)}
+            <label
+              class="relative size-9 shrink-0 cursor-pointer overflow-hidden rounded-[10px] shadow-[var(--elev-1)] ring-1 ring-inset ring-border"
+              style:background={custom[end]}
+              title={name}
+            >
+              <span class="sr-only">{name}</span>
+              <input
+                type="color"
+                value={custom[end]}
+                class="absolute inset-0 size-full cursor-pointer opacity-0"
+                oninput={(e) => setGradient({ [end]: e.currentTarget.value })}
+              />
+            </label>
+          {/each}
+          <span
+            class="h-9 min-w-0 flex-1 rounded-[10px] shadow-[var(--elev-1)]"
+            style:background={gradientCss(custom.from, custom.to, custom.angle)}
+            aria-hidden="true"
+          ></span>
+        </div>
+        <Slider
+          label="Angle"
+          value={custom.angle}
+          min={0}
+          max={360}
+          step={5}
+          format={(v) => `${Math.round(v)}°`}
+          onchange={(v) => setGradient({ angle: v })}
+        />
+        <div class="grid grid-cols-4 gap-1.5 py-1" role="radiogroup" aria-label="Gradient presets">
+          {#each GRADIENTS as g, i (i)}
+            {@const on =
+              backdrop?.kind === 'gradient' &&
+              backdrop.from === g.from &&
+              backdrop.to === g.to &&
+              backdrop.angle === g.angle}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={on}
+              aria-label="Gradient {i + 1}"
+              class={[
+                'press-card aspect-square rounded-[9px] shadow-[var(--elev-1)]',
+                on && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+              ]}
+              style:background={gradientCss(g.from, g.to, g.angle)}
+              onclick={() => setBackdrop('Gradient', { kind: 'gradient', ...g })}
+            ></button>
+          {/each}
+        </div>
       {/if}
+      <p class="eyebrow mt-3">Frame</p>
       <Slider
         label="Padding"
         value={p.canvas.padding}
@@ -292,109 +567,163 @@
         ]}
       />
     {:else if ed.tool === 'cursor'}
-      <Slider
-        label="Size"
-        value={p.cursor.size}
-        min={1}
-        max={3}
-        step={0.1}
-        format={(v) => `${v.toFixed(1)}×`}
-        onchange={(v) => ed.change('Cursor size', () => (p.cursor.size = v))}
-      />
-      <Slider
-        label="Smoothing"
-        value={p.cursor.smoothing}
-        min={0}
-        max={1}
-        step={0.05}
-        format={pct}
-        info="Irons out shaky movement. The cursor still lands exactly where you clicked."
-        onchange={(v) => ed.change('Smoothing', () => (p.cursor.smoothing = v))}
-      />
-      <p class="eyebrow mt-2">Style</p>
-      <Segmented
-        label="Cursor style"
-        size="sm"
-        value={p.cursor.style}
-        onchange={(v) => ed.change('Cursor style', () => (p.cursor.style = v))}
-        options={[
-          { value: 'mac', label: 'macOS' },
-          { value: 'windows', label: 'Windows' },
-          { value: 'dot', label: 'Dot' },
-        ]}
-      />
-      <p class="eyebrow mt-3">Clicks</p>
-      <Segmented
-        label="Click effect"
-        size="sm"
-        value={p.cursor.click}
-        onchange={(v) => ed.change('Click effect', () => (p.cursor.click = v))}
-        options={[
-          { value: 'ripple', label: 'Ripple' },
-          { value: 'press', label: 'Press' },
-          { value: 'none', label: 'None' },
-        ]}
-      />
-      <div class="mt-1 flex flex-col">
-        <label class="flex h-9 items-center justify-between text-callout">
-          <span class="flex items-center gap-1"
-            >Snap to clicks <InfoTip
-              text="Near misses land on the button you meant, so clicks look deliberate."
-            /></span
-          >
-          <Switch
-            checked={p.cursor.snap}
-            label="Snap to clicks"
-            onchange={(v) => ed.change('Snap', () => (p.cursor.snap = v))}
+      <label class="flex h-9 items-center justify-between text-callout font-medium">
+        Show cursor
+        <Switch
+          checked={p.cursor.visible}
+          label="Show cursor"
+          onchange={(v) => ed.change('Show cursor', () => (p.cursor.visible = v))}
+        />
+      </label>
+      <div
+        class={['flex flex-col gap-1', !p.cursor.visible && 'pointer-events-none opacity-45']}
+        aria-disabled={!p.cursor.visible}
+      >
+        <div class="grid grid-cols-4 gap-1.5 py-1" role="radiogroup" aria-label="Cursor style">
+          {#each CURSORS as c (c.id)}
+            {@const on = p.cursor.style === c.id}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={on}
+              aria-label={c.name}
+              title={c.name}
+              class={[
+                'press-card grid aspect-square place-items-center rounded-[10px] bg-fill hover:bg-fill-hover',
+                on && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+              ]}
+              onclick={() => ed.change('Cursor style', () => (p.cursor.style = c.id))}
+            >
+              <CursorGlyph style={c.id} size={26} />
+            </button>
+          {/each}
+        </div>
+        <Slider
+          label="Size"
+          value={p.cursor.size}
+          min={1}
+          max={3}
+          step={0.1}
+          format={(v) => `${v.toFixed(1)}×`}
+          onchange={(v) => ed.change('Cursor size', () => (p.cursor.size = v))}
+        />
+        <Slider
+          label="Smoothing"
+          value={p.cursor.smoothing}
+          min={0}
+          max={1}
+          step={0.05}
+          format={pct}
+          info="Irons out shaky movement. The cursor still lands exactly where you clicked."
+          onchange={(v) => ed.change('Smoothing', () => (p.cursor.smoothing = v))}
+        />
+        <Slider
+          label="Motion blur"
+          value={p.cursor.motionBlur}
+          min={0}
+          max={1}
+          step={0.05}
+          format={pct}
+          info="A soft trail behind fast moves, like a camera's shutter."
+          onchange={(v) => ed.change('Motion blur', () => (p.cursor.motionBlur = v))}
+        />
+        <Slider
+          label="Sway"
+          value={p.cursor.sway}
+          min={0}
+          max={1}
+          step={0.05}
+          format={pct}
+          info="The arrow leans into its movement, then settles."
+          onchange={(v) => ed.change('Sway', () => (p.cursor.sway = v))}
+        />
+        <p class="eyebrow mt-2">Clicks</p>
+        <Segmented
+          label="Click effect"
+          size="lg"
+          value={p.cursor.click}
+          onchange={(v) => ed.change('Click effect', () => (p.cursor.click = v))}
+          options={[
+            { value: 'ripple', label: 'Ripple' },
+            { value: 'press', label: 'Press' },
+            { value: 'none', label: 'None' },
+          ]}
+        />
+        {#if p.cursor.click === 'press'}
+          <Slider
+            label="Click bounce"
+            value={p.cursor.bounce}
+            min={0}
+            max={1}
+            step={0.05}
+            format={pct}
+            info="How far the cursor squashes on a click."
+            onchange={(v) => ed.change('Click bounce', () => (p.cursor.bounce = v))}
           />
-        </label>
-        <label class="flex h-9 items-center justify-between text-callout">
-          Click sounds
-          <Switch
-            checked={p.cursor.sounds}
-            label="Click sounds"
-            onchange={(v) => ed.change('Click sounds', () => (p.cursor.sounds = v))}
+          <Slider
+            label="Bounce speed"
+            value={p.cursor.bounceTime}
+            min={0.1}
+            max={1}
+            step={0.05}
+            format={(v) => `${Math.round(v * 1000)} ms`}
+            info="How long the cursor takes to spring back."
+            onchange={(v) => ed.change('Bounce speed', () => (p.cursor.bounceTime = v))}
           />
-        </label>
+        {/if}
+        <div class="mt-1 flex flex-col">
+          <label class="flex h-9 items-center justify-between text-callout">
+            <span class="flex items-center gap-1"
+              >Snap to clicks <InfoTip
+                text="Near misses land on the button you meant, so clicks look deliberate."
+              /></span
+            >
+            <Switch
+              checked={p.cursor.snap}
+              label="Snap to clicks"
+              onchange={(v) => ed.change('Snap', () => (p.cursor.snap = v))}
+            />
+          </label>
+          <label class="flex h-9 items-center justify-between text-callout">
+            Click sounds
+            <Switch
+              checked={p.cursor.sounds}
+              label="Click sounds"
+              onchange={(v) => ed.change('Click sounds', () => (p.cursor.sounds = v))}
+            />
+          </label>
+        </div>
+        <Advanced id="cursor">
+          <label class="flex h-9 items-center justify-between text-callout">
+            Hide when still
+            <Switch
+              checked={p.cursor.hideIdle}
+              label="Hide when still"
+              onchange={(v) => ed.change('Hide idle', () => (p.cursor.hideIdle = v))}
+            />
+          </label>
+          <label class="flex h-9 items-center justify-between text-callout">
+            <span class="flex items-center gap-1"
+              >Spotlight <InfoTip text="A soft light around the cursor, for busy screens." /></span
+            >
+            <Switch
+              checked={p.cursor.spotlight}
+              label="Spotlight"
+              onchange={(v) => ed.change('Spotlight', () => (p.cursor.spotlight = v))}
+            />
+          </label>
+          <label class="flex h-9 items-center justify-between text-callout">
+            <span class="flex items-center gap-1"
+              >Loop to start <InfoTip text="Ends where it began, so GIFs loop without a jump." /></span
+            >
+            <Switch
+              checked={p.cursor.loop}
+              label="Loop to start"
+              onchange={(v) => ed.change('Loop', () => (p.cursor.loop = v))}
+            />
+          </label>
+        </Advanced>
       </div>
-      <Advanced id="cursor">
-        <label class="flex h-9 items-center justify-between text-callout">
-          Motion blur
-          <Switch
-            checked={p.cursor.motionBlur}
-            label="Motion blur"
-            onchange={(v) => ed.change('Motion blur', () => (p.cursor.motionBlur = v))}
-          />
-        </label>
-        <label class="flex h-9 items-center justify-between text-callout">
-          Hide when still
-          <Switch
-            checked={p.cursor.hideIdle}
-            label="Hide when still"
-            onchange={(v) => ed.change('Hide idle', () => (p.cursor.hideIdle = v))}
-          />
-        </label>
-        <label class="flex h-9 items-center justify-between text-callout">
-          <span class="flex items-center gap-1"
-            >Spotlight <InfoTip text="A soft light around the cursor, for busy screens." /></span
-          >
-          <Switch
-            checked={p.cursor.spotlight}
-            label="Spotlight"
-            onchange={(v) => ed.change('Spotlight', () => (p.cursor.spotlight = v))}
-          />
-        </label>
-        <label class="flex h-9 items-center justify-between text-callout">
-          <span class="flex items-center gap-1"
-            >Loop to start <InfoTip text="Ends where it began, so GIFs loop without a jump." /></span
-          >
-          <Switch
-            checked={p.cursor.loop}
-            label="Loop to start"
-            onchange={(v) => ed.change('Loop', () => (p.cursor.loop = v))}
-          />
-        </label>
-      </Advanced>
     {:else if ed.tool === 'zoom'}
       <label class="flex h-10 items-center justify-between text-callout font-medium">
         Auto zoom

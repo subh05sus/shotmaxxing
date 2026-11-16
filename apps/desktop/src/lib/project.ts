@@ -7,6 +7,7 @@
  */
 
 import type { EffectBlock, ZoomBlock } from './sample';
+import { MOST_BLUR, PHOTOS, type Backdrop, type CursorStyle } from './backdrops';
 import type { Aspect, Clip, Project } from '../routes/editor/store.svelte';
 
 type Os = 'mac' | 'windows';
@@ -50,7 +51,18 @@ export interface CoreProject {
   }[];
   canvas: {
     aspect: string | { custom: { width: number; height: number } };
-    background: { kind: string; id?: string; css?: string };
+    background: {
+      kind: string;
+      id?: string;
+      css?: string;
+      path?: string;
+      color?: string;
+      from?: string;
+      to?: string;
+      angle_deg?: number;
+    };
+    /** Older projects leave it out. */
+    background_blur?: number;
     padding: number;
     corner_radius: number;
     shadow: { opacity: number; [key: string]: unknown };
@@ -58,12 +70,16 @@ export interface CoreProject {
   };
   cursor: {
     visible: boolean;
-    theme: 'native' | 'macos_classic' | 'windows' | 'minimal';
+    theme: CoreCursorTheme;
     size: number;
     smoothing: number;
     snap_to_clicks: boolean;
     click_effect: ClickEffect;
     click_sound: boolean;
+    /** Older projects leave these out. */
+    click_bounce?: number;
+    bounce_ms?: number;
+    sway?: number;
     motion_blur: number;
     loop_to_start: boolean;
     spotlight: { enabled: boolean; [key: string]: unknown };
@@ -130,6 +146,68 @@ export interface CoreProject {
   voice?: { cleanup: boolean; cut_silences: boolean; silences: CoreRange[] };
   [key: string]: unknown;
 }
+
+type CoreCursorTheme =
+  'native' | 'macos_classic' | 'macos_white' | 'windows' | 'outline' | 'minimal' | 'ring' | 'bold' | 'hand';
+
+/** Each cursor style as the project file names it. */
+const THEMES: Record<CursorStyle, CoreCursorTheme> = {
+  mac: 'macos_classic',
+  'mac-white': 'macos_white',
+  windows: 'windows',
+  outline: 'outline',
+  dot: 'minimal',
+  ring: 'ring',
+  bold: 'bold',
+  hand: 'hand',
+};
+
+function styleOf(theme: CoreCursorTheme, os: Os): CursorStyle {
+  if (theme === 'native') return os;
+  return (Object.entries(THEMES).find(([, t]) => t === theme)?.[0] as CursorStyle | undefined) ?? 'mac';
+}
+
+/** The project file's background as the editor's backdrop, or none for a wallpaper (or one it can't show). */
+export function backdropOf(bg: CoreProject['canvas']['background']): Backdrop | undefined {
+  switch (bg.kind) {
+    case 'photo':
+      return bg.id && PHOTOS.some((p) => p.id === bg.id) ? { kind: 'photo', id: bg.id } : undefined;
+    case 'image':
+      return bg.path ? { kind: 'image', path: bg.path } : undefined;
+    case 'solid':
+      return bg.color ? { kind: 'solid', color: bg.color } : undefined;
+    case 'gradient':
+      return bg.from && bg.to
+        ? { kind: 'gradient', from: bg.from, to: bg.to, angle: bg.angle_deg ?? 180 }
+        : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** The editor's backdrop, or its wallpaper, as the project file's background. */
+export function backgroundOf(canvas: Project['canvas']): CoreProject['canvas']['background'] {
+  const b = canvas.backdrop;
+  switch (b?.kind) {
+    case 'photo':
+      return { kind: 'photo', id: b.id };
+    case 'image':
+      return { kind: 'image', path: b.path };
+    case 'solid':
+      return { kind: 'solid', color: b.color };
+    case 'gradient':
+      return { kind: 'gradient', from: b.from, to: b.to, angle_deg: b.angle };
+    default:
+      return {
+        kind: 'wallpaper',
+        id: canvas.wallpaper,
+        ...(canvas.wallpaperCss ? { css: canvas.wallpaperCss } : {}),
+      };
+  }
+}
+
+const clamp01 = (v: number | undefined, fallback: number) =>
+  typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback;
 
 const us = (seconds: number) => Math.max(0, Math.round(seconds * 1_000_000));
 const sec = (micros: number) => micros / 1_000_000;
@@ -216,7 +294,6 @@ export function fromCore(core: CoreProject, os: Os): Project {
       to: { ...a.to },
     })),
   ];
-  const theme = core.cursor.theme;
   const mic = core.tracks.find((t) => t.kind === 'microphone');
   const system = core.tracks.find((t) => t.kind === 'system_audio');
   const music = core.tracks.find((t) => t.kind === 'music' && !t.muted);
@@ -234,19 +311,25 @@ export function fromCore(core: CoreProject, os: Os): Project {
       ...(core.canvas.background.kind === 'wallpaper' && core.canvas.background.css
         ? { wallpaperCss: core.canvas.background.css }
         : {}),
+      ...(backdropOf(core.canvas.background) ? { backdrop: backdropOf(core.canvas.background) } : {}),
+      blur: Math.min(MOST_BLUR, Math.max(0, core.canvas.background_blur ?? 0)),
       padding: core.canvas.padding,
       radius: core.canvas.corner_radius,
       shadow: Math.min(1, Math.max(0, core.canvas.shadow.opacity / 0.6)),
       aspect: aspectOf(core.canvas.aspect),
     },
     cursor: {
+      visible: core.cursor.visible ?? true,
       size: core.cursor.size,
       smoothing: core.cursor.smoothing,
-      style: theme === 'minimal' ? 'dot' : theme === 'windows' ? 'windows' : theme === 'native' ? os : 'mac',
+      style: styleOf(core.cursor.theme, os),
       click: core.cursor.click_effect.kind,
+      bounce: clamp01(core.cursor.click_bounce, 0.375),
+      bounceTime: Math.min(1, Math.max(0.1, (core.cursor.bounce_ms ?? 300) / 1000)),
+      sway: clamp01(core.cursor.sway, 0),
       snap: core.cursor.snap_to_clicks,
       sounds: core.cursor.click_sound,
-      motionBlur: core.cursor.motion_blur > 0,
+      motionBlur: clamp01(core.cursor.motion_blur, 0),
       hideIdle: (core.cursor.auto_hide_ms ?? 0) > 0,
       loop: core.cursor.loop_to_start,
       spotlight: core.cursor.spotlight.enabled,
@@ -344,23 +427,24 @@ export function toCore(p: Project, base: CoreProject): CoreProject {
   const core = plainCopy(base);
   core.name = p.title;
   core.canvas.aspect = p.canvas.aspect;
-  core.canvas.background = {
-    kind: 'wallpaper',
-    id: p.canvas.wallpaper,
-    ...(p.canvas.wallpaperCss ? { css: p.canvas.wallpaperCss } : {}),
-  };
+  core.canvas.background = backgroundOf(p.canvas);
+  core.canvas.background_blur = p.canvas.blur;
   core.canvas.padding = p.canvas.padding;
   core.canvas.corner_radius = p.canvas.radius;
   core.canvas.shadow = { ...core.canvas.shadow, opacity: shadowOpacity(p.canvas.shadow) };
 
-  const theme = { mac: 'macos_classic', windows: 'windows', dot: 'minimal' } as const;
-  const wasNative = core.cursor.theme === 'native';
-  core.cursor.theme = wasNative && p.cursor.style !== 'dot' ? 'native' : theme[p.cursor.style];
+  // The style shown is the one saved, so the export draws what the preview showed, on any system. (A project that
+  // followed the system's cursor reads as that system's arrow, so an untouched one exports the same.)
+  core.cursor.theme = THEMES[p.cursor.style];
+  core.cursor.visible = p.cursor.visible;
+  core.cursor.click_bounce = p.cursor.bounce;
+  core.cursor.bounce_ms = Math.round(p.cursor.bounceTime * 1000);
+  core.cursor.sway = p.cursor.sway;
   core.cursor.size = p.cursor.size;
   core.cursor.smoothing = p.cursor.smoothing;
   core.cursor.snap_to_clicks = p.cursor.snap;
   core.cursor.click_sound = p.cursor.sounds;
-  core.cursor.motion_blur = p.cursor.motionBlur ? core.cursor.motion_blur || 0.3 : 0;
+  core.cursor.motion_blur = p.cursor.motionBlur;
   core.cursor.auto_hide_ms = p.cursor.hideIdle ? core.cursor.auto_hide_ms || 2500 : null;
   core.cursor.loop_to_start = p.cursor.loop;
   core.cursor.spotlight = { ...core.cursor.spotlight, enabled: p.cursor.spotlight };

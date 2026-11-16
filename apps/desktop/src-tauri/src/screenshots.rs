@@ -22,6 +22,13 @@ pub struct Look {
     /// The wallpaper itself, when it came from a content pack.
     #[serde(default)]
     wallpaper_css: Option<String>,
+    /// A built-in photo, a solid colour or a gradient in place of the wallpaper. A picture someone chose belongs to
+    /// its own project, so it isn't carried over.
+    #[serde(default)]
+    backdrop: Option<Background>,
+    /// The background's blur, in pixels at 1080p.
+    #[serde(default)]
+    blur: f64,
     padding: f64,
     corner_radius: f64,
     shadow_opacity: f64,
@@ -49,8 +56,24 @@ impl Look {
         let fits = within(self.padding, 0.3)
             && within(self.corner_radius, 200.0)
             && within(self.shadow_opacity, 1.0);
+        let hex = shotmaxxing_render::backdrop::is_hex;
+        let background = match &self.backdrop {
+            None => Background::Wallpaper { id: self.wallpaper.clone(), css },
+            Some(Background::Photo { id }) if shotmaxxing_render::backdrop::photo(id).is_some() => {
+                Background::Photo { id: id.clone() }
+            }
+            Some(Background::Solid { color }) if hex(color) => Background::Solid { color: color.clone() },
+            Some(Background::Gradient { from, to, angle_deg })
+                if hex(from) && hex(to) && angle_deg.is_finite() =>
+            {
+                Background::Gradient { from: from.clone(), to: to.clone(), angle_deg: *angle_deg }
+            }
+            Some(_) => return None,
+        };
+        let fits = fits && within(self.blur, shotmaxxing_render::backdrop::MOST_BLUR);
         (named && fits).then(|| Canvas {
-            background: Background::Wallpaper { id: self.wallpaper.clone(), css },
+            background,
+            background_blur: self.blur,
             padding: self.padding,
             corner_radius: self.corner_radius,
             shadow: Shadow { opacity: self.shadow_opacity, ..Shadow::default() },
@@ -120,9 +143,32 @@ mod tests {
         Look {
             wallpaper: wallpaper.into(),
             wallpaper_css: None,
+            backdrop: None,
+            blur: 0.0,
             padding,
             corner_radius: 20.0,
             shadow_opacity: 0.3,
+        }
+    }
+
+    #[test]
+    fn a_photo_colour_or_gradient_carries_over_but_not_a_picture() {
+        let with =
+            |backdrop: Background, blur: f64| Look { backdrop: Some(backdrop), blur, ..look("ocean", 0.1) };
+        let photo = with(Background::Photo { id: "summit".into() }, 8.0).canvas().unwrap();
+        assert_eq!(
+            (photo.background, photo.background_blur),
+            (Background::Photo { id: "summit".into() }, 8.0)
+        );
+        let gradient = Background::Gradient { from: "#000000".into(), to: "#ffffff".into(), angle_deg: 90.0 };
+        assert_eq!(with(gradient.clone(), 0.0).canvas().unwrap().background, gradient);
+        for bad in [
+            with(Background::Photo { id: "nope".into() }, 0.0),
+            with(Background::Solid { color: "red".into() }, 0.0),
+            with(Background::Image { path: "/etc/passwd".into() }, 0.0),
+            with(Background::Solid { color: "#000000".into() }, 99.0),
+        ] {
+            assert!(bad.canvas().is_none(), "{bad:?} should be left out");
         }
     }
 

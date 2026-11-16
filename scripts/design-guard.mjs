@@ -28,6 +28,7 @@ const SKIP_DIRS = new Set([
 const COLOUR_FILES = [
   'packages/ui/src/styles/tokens.css',
   'apps/desktop/src/lib/wallpapers.ts',
+  'apps/desktop/src/lib/backdrops.ts',
   'apps/desktop/src/lib/scenes.css',
   'apps/site/app/globals.css',
   // React Bits' GradientASCII, used as is: its default colours are part of the component.

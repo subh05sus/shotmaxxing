@@ -16,6 +16,7 @@ use shotmaxxing_core::project::{
 use shotmaxxing_core::telemetry::{CursorSample, InputEvent, decode_cursor, read_events};
 
 use crate::RenderError;
+use crate::backdrop::{self, Backdrop};
 use crate::wallpaper;
 
 const CURSOR_FILE: &str = "telemetry/cursor.smxc";
@@ -40,8 +41,13 @@ pub struct Zoom {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CursorLook {
     Mac,
+    MacWhite,
     Windows,
+    Outline,
     Dot,
+    Ring,
+    Bold,
+    Hand,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,8 +142,13 @@ pub struct RenderProject {
     pub zooms: Vec<Zoom>,
     pub instant_zoom: bool,
     pub follow_cursor: bool,
-    /// The wallpaper to draw, as CSS: the project's own copy of a content pack's wallpaper, or a built-in one.
+    /// The gradient wallpaper, as CSS: the project's own copy of a content pack's wallpaper, or a built-in one. A
+    /// photo or picture that can't be read falls back to it.
     pub wallpaper: String,
+    /// What fills the frame behind the window.
+    pub backdrop: Backdrop,
+    /// The background's blur, sigma in pixels at 1080p.
+    pub background_blur: f64,
     pub padding: f64,
     pub radius: f64,
     /// 0 to 1.
@@ -148,6 +159,12 @@ pub struct RenderProject {
     pub cursor_look: CursorLook,
     pub cursor_size: f64,
     pub click: Click,
+    /// The cursor's size at the bottom of a press, 0.6 to 1.
+    pub press_scale: f64,
+    /// How long a press takes, in seconds.
+    pub press_s: f64,
+    /// How far the arrow leans into its movement, 0 to 1.
+    pub sway: f64,
     pub spotlight: bool,
     pub hide_idle: bool,
     /// Motion blur strength, 0 (off) to 1: the cursor smears over `MOTION_BLUR_S` times this.
@@ -227,6 +244,11 @@ pub fn clips_of(project: &Project, duration: f64) -> Vec<Clip> {
     clips
 }
 
+/// `v` held to 0 to 1, with anything not a number as 0.
+fn finite01(v: f64) -> f64 {
+    if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 }
+}
+
 fn zoom_of(z: &ZoomRegion) -> Zoom {
     Zoom { start: sec(z.start_us), end: sec(z.end_us), scale: z.scale, focus: z.focus }
 }
@@ -279,11 +301,29 @@ impl RenderProject {
             Background::Wallpaper { id, .. } => wallpaper::find(id).map(|w| w.css).unwrap_or_default(),
             _ => wallpaper::find("aurora-lime").map(|w| w.css).unwrap_or_default(),
         };
+        let backdrop = match &project.canvas.background {
+            Background::Photo { id } if backdrop::photo(id).is_some() => Backdrop::Photo(id.clone()),
+            Background::Image { path } if !path.is_empty() => Backdrop::Image(root.join(path)),
+            Background::Solid { color } => {
+                backdrop::solid_css(color).map_or_else(|| Backdrop::Css(wallpaper.clone()), Backdrop::Css)
+            }
+            Background::Gradient { from, to, angle_deg } => backdrop::gradient_css(from, to, *angle_deg)
+                .map_or_else(|| Backdrop::Css(wallpaper.clone()), Backdrop::Css),
+            _ => Backdrop::Css(wallpaper.clone()),
+        };
+        let background_blur = project.canvas.background_blur;
+        let background_blur =
+            if background_blur.is_finite() { background_blur.clamp(0.0, backdrop::MOST_BLUR) } else { 0.0 };
         let style = &project.cursor;
         let cursor_look = match style.theme {
             CursorTheme::Minimal => CursorLook::Dot,
             CursorTheme::Windows => CursorLook::Windows,
             CursorTheme::MacosClassic => CursorLook::Mac,
+            CursorTheme::MacosWhite => CursorLook::MacWhite,
+            CursorTheme::Outline => CursorLook::Outline,
+            CursorTheme::Ring => CursorLook::Ring,
+            CursorTheme::Bold => CursorLook::Bold,
+            CursorTheme::Hand => CursorLook::Hand,
             CursorTheme::Native => {
                 if cfg!(windows) {
                     CursorLook::Windows
@@ -387,6 +427,8 @@ impl RenderProject {
             instant_zoom: project.zoom.motion == ZoomMotion::Instant,
             follow_cursor: project.zoom.follow_mouse,
             wallpaper,
+            backdrop,
+            background_blur,
             padding: project.canvas.padding,
             radius: project.canvas.corner_radius,
             shadow: (project.canvas.shadow.opacity / 0.6).clamp(0.0, 1.0),
@@ -395,6 +437,9 @@ impl RenderProject {
             cursor_look,
             cursor_size: style.size,
             click,
+            press_scale: 1.0 - 0.4 * finite01(style.click_bounce),
+            press_s: f64::from(style.bounce_ms.clamp(100, 1000)) / 1000.0,
+            sway: finite01(style.sway),
             spotlight: style.spotlight.enabled,
             hide_idle: style.auto_hide_ms.unwrap_or(0) > 0,
             motion_blur: if style.motion_blur.is_finite() { style.motion_blur.clamp(0.0, 1.0) } else { 0.0 },
@@ -562,8 +607,9 @@ mod tests {
     #[test]
     fn a_content_packs_wallpaper_is_drawn_from_the_projects_own_copy() {
         let mut project = Project::default();
-        let built_in = RenderProject::from_parts(Path::new("/tmp"), &project, &[], &[]).wallpaper;
-        assert_eq!(built_in, wallpaper::find("aurora-lime").unwrap().css);
+        let built_in = RenderProject::from_parts(Path::new("/tmp"), &project, &[], &[]);
+        assert_eq!(built_in.wallpaper, wallpaper::find("aurora-lime").unwrap().css);
+        assert_eq!(built_in.backdrop, Backdrop::Css(built_in.wallpaper.clone()));
         // A pack's wallpaper exports from the copy the project keeps, with or without the pack.
         let css = "linear-gradient(135deg, oklch(0.82 0.12 75), oklch(0.55 0.17 35))";
         project.canvas.background =
@@ -574,6 +620,36 @@ mod tests {
             Background::Wallpaper { id: "graphite".into(), css: Some("url(//example.com/a.png)".into()) };
         let fallback = RenderProject::from_parts(Path::new("/tmp"), &project, &[], &[]).wallpaper;
         assert_eq!(fallback, wallpaper::find("graphite").unwrap().css);
+    }
+
+    #[test]
+    fn photos_pictures_colours_and_gradients_become_backdrops() {
+        let mut project = Project::default();
+        let draw = |project: &Project| RenderProject::from_parts(Path::new("/proj"), project, &[], &[]);
+        project.canvas.background = Background::Photo { id: "summit".into() };
+        project.canvas.background_blur = 12.0;
+        let r = draw(&project);
+        assert_eq!((r.backdrop, r.background_blur), (Backdrop::Photo("summit".into()), 12.0));
+        // An unknown photo, a bad colour or an absurd blur fall back to something drawable.
+        project.canvas.background = Background::Photo { id: "nope".into() };
+        project.canvas.background_blur = f64::NAN;
+        let r = draw(&project);
+        assert_eq!((r.backdrop.clone(), r.background_blur), (Backdrop::Css(r.wallpaper.clone()), 0.0));
+        project.canvas.background = Background::Image { path: "media/background.png".into() };
+        assert_eq!(draw(&project).backdrop, Backdrop::Image("/proj/media/background.png".into()));
+        project.canvas.background = Background::Solid { color: "#112233".into() };
+        assert_eq!(
+            draw(&project).backdrop,
+            Backdrop::Css("linear-gradient(180deg, #112233, #112233)".into())
+        );
+        project.canvas.background = Background::Solid { color: "url(x)".into() };
+        assert_eq!(draw(&project).backdrop, Backdrop::Css(draw(&project).wallpaper));
+        project.canvas.background =
+            Background::Gradient { from: "#000000".into(), to: "#ffffff".into(), angle_deg: 135.0 };
+        assert_eq!(
+            draw(&project).backdrop,
+            Backdrop::Css("linear-gradient(135deg, #000000, #ffffff)".into())
+        );
     }
 
     #[test]

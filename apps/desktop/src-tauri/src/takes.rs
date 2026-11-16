@@ -31,6 +31,9 @@ use crate::{edge, recording, tray, windows};
 
 /// How long the card waits for an answer before saying no for the person.
 const ASK_SECONDS: u64 = 120;
+/// How long a request waits for another agent's to finish before giving up. The command allows for it too
+/// (`BUSY_SECONDS` in crates/cli/src/mcp.rs).
+const BUSY_SECONDS: u64 = 120;
 
 /// The widest picture of a window sent to an agent.
 const PICTURE_WIDTH: u32 = 1280;
@@ -613,20 +616,33 @@ impl Takes {
         mut card: Card,
         phase: Phase,
     ) -> Result<u64, String> {
-        let id = {
-            let mut inner = self.0.lock().map_err(|_| busy())?;
-            if inner.card.as_ref().is_some_and(Card::live) {
-                return Err(
-                    "Shotmaxxing is busy with another agent request. Try again when it's done.".into()
-                );
+        // Another agent's request on the card goes first: this one waits its turn rather than failing, so two agents
+        // (or an agent filming while another prepares) take turns. It gives up after a while, or when called off.
+        let give_up = Instant::now() + Duration::from_secs(BUSY_SECONDS);
+        let id = loop {
+            {
+                let mut inner = self.0.lock().map_err(|_| busy())?;
+                if !inner.card.as_ref().is_some_and(Card::live) {
+                    inner.next += 1;
+                    card.id = inner.next;
+                    card.phase = phase;
+                    let id = card.id;
+                    inner.card = Some(card);
+                    inner.answer = (phase == Phase::Asking).then(|| conn.events.clone());
+                    break id;
+                }
             }
-            inner.next += 1;
-            card.id = inner.next;
-            card.phase = phase;
-            let id = card.id;
-            inner.card = Some(card);
-            inner.answer = (phase == Phase::Asking).then(|| conn.events.clone());
-            id
+            if Instant::now() >= give_up {
+                return Err(format!(
+                    "Shotmaxxing is still busy with another agent's request after {BUSY_SECONDS} seconds. Try again \
+                     when it's done."
+                ));
+            }
+            if let Ok(Event::Message(ToApp::Cancel) | Event::Gone) =
+                conn.rx.recv_timeout(Duration::from_millis(250))
+            {
+                return Err("The agent called it off.".into());
+            }
         };
         self.show(app);
         Ok(id)

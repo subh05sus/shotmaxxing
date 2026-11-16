@@ -201,8 +201,13 @@ pub enum Background {
         to: String,
         angle_deg: f64,
     },
+    /// A picture file, relative to the project folder (an upload is copied in) or absolute.
     Image {
         path: String,
+    },
+    /// One of the photos that ship with the app, by id (`crates/render/assets/photos.json`).
+    Photo {
+        id: String,
     },
     None,
 }
@@ -245,6 +250,8 @@ impl Default for Shadow {
 pub struct Canvas {
     pub aspect: AspectRatio,
     pub background: Background,
+    /// How much the background is blurred: the Gaussian's sigma in output pixels at 1080p (0 to 40).
+    pub background_blur: f64,
     /// Space around the capture as a fraction of the canvas's shorter side (0 to 0.3).
     pub padding: f64,
     /// Corner radius of the capture, in output pixels at 1080p.
@@ -261,6 +268,7 @@ impl Default for Canvas {
         Self {
             aspect: AspectRatio::Widescreen,
             background: Background::default(),
+            background_blur: 0.0,
             padding: 0.08,
             corner_radius: 12.0,
             shadow: Shadow::default(),
@@ -276,9 +284,22 @@ pub enum CursorTheme {
     /// The recording platform's own cursors.
     #[default]
     Native,
+    /// The black macOS arrow with a white edge.
     MacosClassic,
+    /// The macOS arrow inverted: white with a dark edge.
+    MacosWhite,
+    /// The white Windows arrow with a black edge.
     Windows,
+    /// A hollow arrow: only its edge is drawn.
+    Outline,
+    /// A dot.
     Minimal,
+    /// A hollow ring, like a touch.
+    Ring,
+    /// A chunky arrow with rounded corners.
+    Bold,
+    /// A pointing hand.
+    Hand,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -328,6 +349,12 @@ pub struct CursorStyle {
     pub snap_to_clicks: bool,
     pub click_effect: ClickEffect,
     pub click_sound: bool,
+    /// How deep a press squashes the cursor, 0 to 1: at 1 it shrinks to 60% of its size, at the default 0.375 to 85%.
+    pub click_bounce: f64,
+    /// How long a press takes to spring back, in milliseconds (100 to 1000).
+    pub bounce_ms: u32,
+    /// How far the arrow leans into its movement, 0 (upright) to 1 (about 25 degrees at speed).
+    pub sway: f64,
     /// 0 to 1.
     pub motion_blur: f64,
     /// Curve agent and smoothed paths instead of straight lines.
@@ -350,6 +377,9 @@ impl Default for CursorStyle {
             snap_to_clicks: true,
             click_effect: ClickEffect::default(),
             click_sound: false,
+            click_bounce: 0.375,
+            bounce_ms: 300,
+            sway: 0.0,
             motion_blur: 0.3,
             arcs: true,
             loop_to_start: false,

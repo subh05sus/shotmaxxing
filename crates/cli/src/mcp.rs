@@ -206,7 +206,7 @@ fn handle(out: &Outbox, state: &State, message: Value) {
                             let text = serde_json::to_string_pretty(&value).unwrap_or_default();
                             let mut content = vec![json!({ "type": "text", "text": text })];
                             content.extend(image);
-                            json!({ "content": content, "structuredContent": value })
+                            json!({ "content": content, "structuredContent": structured(value) })
                         }
                         Err(message) => {
                             json!({ "content": [{ "type": "text", "text": message }], "isError": true })
@@ -217,6 +217,12 @@ fn handle(out: &Outbox, state: &State, message: Value) {
         }
         _ => out.error(&id, -32601, &format!("there's no method called {method}")),
     }
+}
+
+/// A tool's result as MCP's `structuredContent`, which must be a JSON object: clients such as Claude Code reject
+/// the whole reply otherwise. A list or a plain value is wrapped as `{ "result": … }`.
+fn structured(value: Value) -> Value {
+    if value.is_object() { value } else { json!({ "result": value }) }
 }
 
 /// The prompts an agent can offer as commands (in Claude Code, `/mcp__shotmaxxing__plan-demo`).
@@ -859,7 +865,7 @@ fn plan_zooms(args: &Value) -> Reply {
         other => return Err(format!("“{other}” isn't a depth; use subtle, standard or bold")),
     };
     let (root, project) = crate::replan(&path, depth).map_err(|e| format!("{e:#}"))?;
-    Ok(summary(&root, &project)["zooms"].clone())
+    Ok(json!({ "zooms": summary(&root, &project)["zooms"].clone() }))
 }
 
 /// What a project keeps of the wallpaper `id`: nothing for a built-in one, a copy of a content pack's.
@@ -1025,6 +1031,8 @@ const ASK_SECONDS: u64 = 120;
 /// How long a request may take in the app beyond the person's answer: starting a recording can wait on the system's
 /// microphone and camera questions.
 const WORK_SECONDS: u64 = 180;
+/// How long the app lets a request wait for another agent's to finish (`BUSY_SECONDS` in the app's takes.rs).
+const BUSY_SECONDS: u64 = 120;
 
 /// How long the app may take to open and start listening.
 const OPEN_SECONDS: u64 = 30;
@@ -1165,10 +1173,27 @@ fn spawn_app(program: &Path) -> Result<(), String> {
 /// Sends one request to the app and waits for its answer: as long as the person may take to answer on the card and
 /// the work needs, or until the call is cancelled (which also takes the question off the card).
 fn ask_app(state: &State, request: ToApp, cancel: &AtomicBool, launch: Launch) -> Result<FromApp, String> {
-    let mut client = reach_app(state, launch)?;
-    client.send(&request).map_err(|e| format!("lost touch with Shotmaxxing: {e}"))?;
-    let deadline = Instant::now() + Duration::from_secs(ASK_SECONDS + WORK_SECONDS);
-    match client.receive_until(deadline, cancel) {
+    let mut tries = 0;
+    loop {
+        tries += 1;
+        let mut client = reach_app(state, launch)?;
+        client.send(&request).map_err(|e| format!("lost touch with Shotmaxxing: {e}"))?;
+        let sent = Instant::now();
+        let deadline = sent + Duration::from_secs(BUSY_SECONDS + ASK_SECONDS + WORK_SECONDS);
+        let reply = client.receive_until(deadline, cancel);
+        // An app that hangs up at once without answering didn't get to the request (it was starting up or
+        // quitting), so that's asked once more. One that hangs up later may have done the work: never repeated.
+        if matches!(reply, Ok(None)) && tries < 2 && sent.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(400));
+            continue;
+        }
+        return answer_of(reply, cancel);
+    }
+}
+
+/// The app's reply to one request, or what went wrong.
+fn answer_of(reply: std::io::Result<Option<FromApp>>, cancel: &AtomicBool) -> Result<FromApp, String> {
+    match reply {
         Ok(Some(FromApp::Failed { message })) => Err(message),
         Ok(Some(reply)) => Ok(reply),
         Ok(None) => Err("the Shotmaxxing app closed the connection before answering".into()),
@@ -1306,7 +1331,7 @@ fn perform_take(
     client
         .send(&ToApp::Take { take: Box::new(take) })
         .map_err(|e| format!("lost touch with Shotmaxxing: {e}"))?;
-    let deadline = Instant::now() + Duration::from_secs(ASK_SECONDS + 10);
+    let deadline = Instant::now() + Duration::from_secs(BUSY_SECONDS + ASK_SECONDS + 10);
     match client.receive_until(deadline, cancel) {
         Ok(Some(FromApp::Answer { allowed: true, .. })) => {}
         Ok(Some(FromApp::Answer { allowed: false, reason })) => {
