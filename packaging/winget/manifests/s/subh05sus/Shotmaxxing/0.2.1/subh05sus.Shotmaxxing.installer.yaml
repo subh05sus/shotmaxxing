@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: subh05sus.Shotmaxxing
+PackageVersion: 0.2.1
+MinimumOSVersion: 10.0.19041.0
+InstallerType: nullsoft
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+UpgradeBehavior: install
+ReleaseDate: 2026-11-16
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/subh05sus/shotmaxxing/releases/download/v0.2.1/Shotmaxxing_0.2.1_x64-setup.exe
+    InstallerSha256: A6D8645AD0987F83DA0FF18EB0D878003E85786BB3402F6784544B80D55ED679
+ManifestType: installer
+ManifestVersion: 1.6.0

@@ -69,6 +69,13 @@ jobs:
           app="$RUNNER_TEMP/Apps/Shotmaxxing.app"
           v="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' install.sh)"
           codesign --verify --deep --strict "$app"
+          # Signed with the fixed identity (the one release.yml names), so macOS keeps the permissions across updates.
+          want="$(sed -n 's/^  SIGNING_REQUIREMENT: //p' .github/workflows/release.yml)"
+          got="$(codesign -d -r- "$app" 2>&1 | sed -nE 's/^(# )?designated => //p')"
+          if [ -z "$want" ] || [ "$got" != "$want" ]; then
+            echo "::error::the installed app's designated requirement is \"$got\", not the fixed identity's \"$want\""
+            exit 1
+          fi
           test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$v"
           "$app/Contents/MacOS/shotmaxxing" --version | grep -F "$v"
           if xattr -r "$app" | grep -q com.apple.quarantine; then
@@ -132,6 +139,12 @@ jobs:
         run: |
           app=/Applications/Shotmaxxing.app
           codesign --verify --deep --strict "$app"
+          want="$(sed -n 's/^  SIGNING_REQUIREMENT: //p' .github/workflows/release.yml)"
+          got="$(codesign -d -r- "$app" 2>&1 | sed -nE 's/^(# )?designated => //p')"
+          if [ -z "$want" ] || [ "$got" != "$want" ]; then
+            echo "::error::the app the cask installed has the designated requirement \"$got\", not \"$want\""
+            exit 1
+          fi
           if xattr -r "$app" | grep -q com.apple.quarantine; then
             echo "::error::the cask left the quarantine mark on the app, so macOS would stop it the first time it opens"
             exit 1
