@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/subh05sus/shotmaxxing/releases">Download</a> ·
+  <a href="#install">Install</a> ·
   <a href="docs/agents.md">Agents</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/roadmap.md">Roadmap</a>

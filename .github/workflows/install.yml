@@ -128,7 +128,7 @@ jobs:
             echo "::error::Homebrew warned while installing the cask"
             exit 1
           fi
-      - name: The app carries no quarantine mark, and the command is on the PATH
+      - name: The app carries no quarantine mark, opens, and the command is on the PATH
         run: |
           app=/Applications/Shotmaxxing.app
           codesign --verify --deep --strict "$app"
@@ -137,6 +137,20 @@ jobs:
             exit 1
           fi
           shotmaxxing --version
+          # In the background: if Gatekeeper stopped the app, open would wait on its dialog.
+          open "$app" >/dev/null 2>&1 &
+          opener=$!
+          for _ in $(seq 1 30); do
+            if pgrep -f "$app/Contents/MacOS/shotmaxxing-desktop" >/dev/null; then break; fi
+            sleep 1
+          done
+          if ! pgrep -f "$app/Contents/MacOS/shotmaxxing-desktop" >/dev/null; then
+            echo "::error::the app Homebrew installed didn't open"
+            exit 1
+          fi
+          echo "The app Homebrew installed opened."
+          pkill -f "$app/Contents/MacOS/shotmaxxing-desktop" || true
+          kill "$opener" 2>/dev/null || true
       - name: Homebrew's style check
         run: brew style --cask subh05sus/shotmaxxing/shotmaxxing
       - name: Uninstall
