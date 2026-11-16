@@ -1,16 +1,33 @@
 # Packaging
 
-Manifests for package managers, filled in for each release from the hashes on its GitHub release page.
+The one-line installers and the manifests for package managers, filled in for each release from the hashes on its
+GitHub release page.
 
+- **One-line installers:** [`install.sh`](../install.sh) (macOS, `curl -fsSL …/install.sh | bash`) and
+  [`install.ps1`](../install.ps1) (Windows, `irm …/install.ps1 | iex`), at the root so their addresses stay short.
+  They download with curl and PowerShell, which don't put the "downloaded from the internet" mark on what they fetch,
+  so the app opens on the first click although the builds aren't notarized or signed yet. Each checks the download
+  against the SHA-256 it pins.
 - **Homebrew:** [`Casks/shotmaxxing.rb`](../Casks/shotmaxxing.rb), at the root so this repository works as its own
   tap: `brew tap subh05sus/shotmaxxing https://github.com/subh05sus/shotmaxxing`, then
-  `brew install --cask subh05sus/shotmaxxing/shotmaxxing`.
+  `brew install --cask subh05sus/shotmaxxing/shotmaxxing`. Homebrew marks every cask download as quarantined, so the
+  cask takes the mark off the installed app after Homebrew has checked the download's SHA-256.
 - **winget:** [`winget/manifests`](winget/manifests), laid out as in
   [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). They're ready to submit there, which the
   maintainers do by hand; until then, `winget install --manifest packaging/winget/manifests/s/subh05sus/Shotmaxxing/0.2.0`
   installs from them on a computer with local manifests allowed.
 
-For a new release, change the version and the SHA-256 of each installer, which GitHub shows on the release page.
+For a new release, once it's published:
+
+1. In `install.sh`, change `VERSION` and the SHA-256 of both `.app.tar.gz` files.
+2. In `install.ps1`, change `$Version` and the SHA-256 of the `-setup.exe`.
+3. In the cask, change `version` and the SHA-256 of both `.dmg` files.
+4. Copy the winget manifests to a folder for the new version, and change the version, the address and the SHA-256.
+5. In the README, change the download links under **Or download the installer yourself**.
+
+GitHub shows each file's SHA-256 on the release page. CI checks that all five name the same release, and the
+[Install workflow](../.github/workflows/install.yml) checks every hash against the release and installs from the
+installers and the cask on clean Macs and Windows computers.
 
 ## Installer pictures
 

@@ -31,6 +31,23 @@ jobs:
       - run: pnpm check
       - run: pnpm build
 
+  # The install workflow installs from these for real; this is the quick check on every push.
+  installers:
+    name: Install lines (shellcheck, one release everywhere)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: shellcheck install.sh
+      - name: install.sh, install.ps1, the cask, winget and the README name the same release
+        run: |
+          v="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' install.sh)"
+          test -n "$v"
+          fail() { echo "::error::$1 doesn't name release $v, as install.sh does"; exit 1; }
+          grep -qx "  \$Version = '$v'" install.ps1 || fail install.ps1
+          grep -qx "  version \"$v\"" Casks/shotmaxxing.rb || fail "The cask"
+          test -d "packaging/winget/manifests/s/subh05sus/Shotmaxxing/$v" || fail "packaging/winget"
+          if grep -o 'releases/download/v[^/]*' README.md | grep -vx "releases/download/v$v"; then fail README.md; fi
+
   rust:
     name: Rust on ${{ matrix.name }}
     strategy:

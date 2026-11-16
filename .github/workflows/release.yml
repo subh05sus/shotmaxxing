@@ -19,12 +19,14 @@ env:
   # Only a tag makes a release.
   TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
   RELEASE_BODY: |
-    A preview build.
+    A preview build. Install or update it with one line, which opens the app without a security warning:
 
-    - **macOS 14 or later.** It isn't notarized yet, so macOS blocks it the first time: open System Settings →
-      Privacy & Security and choose Open Anyway.
-    - **Windows 10 (version 2004) or later, 64-bit.** It isn't signed yet, so SmartScreen may warn about it: choose
-      More info → Run anyway.
+    - **macOS 14 or later**, in Terminal: `curl -fsSL https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.sh | bash`
+    - **Windows 10 (version 2004) or later, 64-bit**, in PowerShell: `irm https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.ps1 | iex`
+
+    The files below, downloaded in a browser, aren't notarized or signed yet: macOS stops the app the first time
+    (choose Done, then Open Anyway in System Settings → Privacy & Security), and SmartScreen asks for More info → Run
+    anyway.
 
 jobs:
   build:

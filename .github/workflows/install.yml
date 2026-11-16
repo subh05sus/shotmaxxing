@@ -1,0 +1,175 @@
+name: Install
+
+# Installs Shotmaxxing on clean computers the ways the README gives (the one-line installers and the Homebrew cask),
+# from the release they name, and checks that it opens without the "Not Opened" dialog: the installed app mustn't
+# carry macOS's quarantine mark. Runs when the installers change, and by hand (Actions → Install → Run workflow).
+on:
+  push:
+    branches: [main]
+    paths:
+      - install.sh
+      - install.ps1
+      - Casks/**
+      - packaging/winget/**
+      - .github/workflows/install.yml
+  workflow_dispatch:
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  hashes:
+    name: Pinned hashes match the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Every SHA-256 written down is the one GitHub shows for that file
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' install.sh)"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v$v" --jq '.assets[] | "\(.name) \(.digest)"' > digests.txt
+          cat digests.txt
+          check() {
+            if ! grep -qx "$1 sha256:$2" digests.txt; then
+              echo "::error::$3 pins $2 for $1, which isn't the release's SHA-256"
+              exit 1
+            fi
+          }
+          winget="packaging/winget/manifests/s/subh05sus/Shotmaxxing/$v/subh05sus.Shotmaxxing.installer.yaml"
+          check "Shotmaxxing_${v}_aarch64.app.tar.gz" "$(sed -n 's/^SHA256_AARCH64="\(.*\)"$/\1/p' install.sh)" install.sh
+          check "Shotmaxxing_${v}_x64.app.tar.gz" "$(sed -n 's/^SHA256_X64="\(.*\)"$/\1/p' install.sh)" install.sh
+          check "Shotmaxxing_${v}_x64-setup.exe" "$(sed -n "s/^  \$Sha256 = '\(.*\)'$/\1/p" install.ps1 | tr 'A-F' 'a-f')" install.ps1
+          check "Shotmaxxing_${v}_aarch64.dmg" "$(sed -n 's/.*arm: *"\([0-9a-f]*\)".*/\1/p' Casks/shotmaxxing.rb)" "the cask"
+          check "Shotmaxxing_${v}_x64.dmg" "$(sed -n 's/.*intel: *"\([0-9a-f]*\)".*/\1/p' Casks/shotmaxxing.rb)" "the cask"
+          check "Shotmaxxing_${v}_x64-setup.exe" "$(sed -n 's/^ *InstallerSha256: *\([0-9A-Fa-f]*\).*/\1/p' "$winget" | tr 'A-F' 'a-f')" "the winget manifest"
+
+  mac-script:
+    name: install.sh on macOS
+    runs-on: macos-latest
+    env:
+      SHOTMAXXING_NO_OPEN: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the line, reading the script from standard input as curl | bash does
+        run: SHOTMAXXING_APP_DIR="$RUNNER_TEMP/Apps" bash < install.sh
+      - name: Run it again, as an update does
+        run: SHOTMAXXING_APP_DIR="$RUNNER_TEMP/Apps" bash < install.sh
+      - name: The app is whole, the right version, and carries no quarantine mark
+        run: |
+          app="$RUNNER_TEMP/Apps/Shotmaxxing.app"
+          v="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' install.sh)"
+          codesign --verify --deep --strict "$app"
+          test "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$v"
+          "$app/Contents/MacOS/shotmaxxing" --version | grep -F "$v"
+          if xattr -r "$app" | grep -q com.apple.quarantine; then
+            echo "::error::the installed app carries the quarantine mark, so macOS would stop it the first time it opens"
+            exit 1
+          fi
+      - name: It opens, while a copy with a browser download's mark is stopped
+        run: |
+          spctl --status || true
+          started() {
+            for _ in $(seq 1 30); do
+              if pgrep -f "$1/Contents/MacOS/shotmaxxing-desktop" >/dev/null; then return 0; fi
+              sleep 1
+            done
+            return 1
+          }
+          app="$RUNNER_TEMP/Apps/Shotmaxxing.app"
+          open "$app"
+          if ! started "$app"; then
+            echo "::error::the installed app didn't open"
+            exit 1
+          fi
+          echo "The installed app opened."
+          pkill -f "$app/Contents/MacOS/shotmaxxing-desktop" || true
+          # The control: the same app, marked the way a browser marks a download.
+          copy="$RUNNER_TEMP/Marked/Shotmaxxing.app"
+          mkdir -p "$RUNNER_TEMP/Marked"
+          ditto "$app" "$copy"
+          xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");Chrome;$(uuidgen)" "$copy"
+          open "$copy" || true
+          if started "$copy"; then
+            echo "::notice::Gatekeeper let the marked copy open on this runner too, so the control can't tell them apart here"
+            pkill -f "$copy/Contents/MacOS/shotmaxxing-desktop" || true
+          else
+            echo "::notice::Gatekeeper stopped the marked copy and let the installed app open"
+          fi
+
+  cask:
+    name: Homebrew cask on macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tap this checkout and install the cask, with no warnings
+        run: |
+          brew tap subh05sus/shotmaxxing "$GITHUB_WORKSPACE"
+          brew install --cask subh05sus/shotmaxxing/shotmaxxing 2>&1 | tee install.log
+          # Homebrew's own warnings, such as a deprecated line in the cask; hdiutil's notices start "hdiutil:".
+          if grep '^Warning' install.log; then
+            echo "::error::Homebrew warned while installing the cask"
+            exit 1
+          fi
+      - name: The app carries no quarantine mark, and the command is on the PATH
+        run: |
+          app=/Applications/Shotmaxxing.app
+          codesign --verify --deep --strict "$app"
+          if xattr -r "$app" | grep -q com.apple.quarantine; then
+            echo "::error::the cask left the quarantine mark on the app, so macOS would stop it the first time it opens"
+            exit 1
+          fi
+          shotmaxxing --version
+      - name: Homebrew's style check
+        run: brew style --cask subh05sus/shotmaxxing/shotmaxxing
+      - name: Uninstall
+        run: |
+          brew uninstall --cask subh05sus/shotmaxxing/shotmaxxing
+          test ! -e /Applications/Shotmaxxing.app
+
+  windows:
+    name: install.ps1 on Windows
+    runs-on: windows-latest
+    env:
+      SHOTMAXXING_NO_OPEN: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run the line in Windows PowerShell 5.1, as irm | iex does
+        shell: powershell
+        run: Get-Content -Raw install.ps1 | Invoke-Expression
+      - name: Run it again, as an update does
+        shell: powershell
+        run: Get-Content -Raw install.ps1 | Invoke-Expression
+      - name: Shotmaxxing is installed, the right version, and the command runs
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = [regex]::Match((Get-Content -Raw install.ps1), "\`$Version = '([^']+)'").Groups[1].Value
+          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Shotmaxxing'
+          if ($entry.DisplayVersion -ne $v) { throw "Windows lists version $($entry.DisplayVersion), not $v" }
+          $dir = "$($entry.InstallLocation)".Trim('"')
+          if (-not (Test-Path -LiteralPath (Join-Path $dir "$($entry.MainBinaryName)"))) { throw "the app isn't in $dir" }
+          $out = & (Join-Path $dir 'shotmaxxing.exe') --version
+          if ("$out" -notlike "*$v*") { throw "shotmaxxing --version said: $out" }
+          Write-Host $out
+      - name: PowerShell's download carries no "downloaded from the internet" mark
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $text = Get-Content -Raw install.ps1
+          $v = [regex]::Match($text, "\`$Version = '([^']+)'").Groups[1].Value
+          $file = Join-Path $env:RUNNER_TEMP 'probe-setup.exe'
+          Invoke-WebRequest -Uri "https://github.com/subh05sus/shotmaxxing/releases/download/v$v/Shotmaxxing_${v}_x64-setup.exe" -OutFile $file -UseBasicParsing
+          if (Get-Item -LiteralPath $file -Stream Zone.Identifier -ErrorAction SilentlyContinue) {
+            throw 'the download carries a Zone.Identifier stream, so SmartScreen would check it'
+          }
+          Write-Host 'No Zone.Identifier stream on the download.'
