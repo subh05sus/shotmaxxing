@@ -84,8 +84,13 @@ const KEY = 'smx.settings';
 function load(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    const loaded: Settings = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    const stored = raw ? (JSON.parse(raw) as Partial<Settings>) : null;
+    const loaded: Settings = { ...DEFAULTS, ...stored };
     if (loaded.saveFolder === OLD_DEFAULT_FOLDER) loaded.saveFolder = '';
+    // Earlier builds didn't note whether Screen Recording worked. Their setup didn't go on without it, so a finished
+    // setup had it.
+    if (stored && !('screenAllowedBefore' in stored) && loaded.onboardingDone)
+      loaded.screenAllowedBefore = true;
     return loaded;
   } catch {
     return { ...DEFAULTS };
