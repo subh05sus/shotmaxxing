@@ -298,7 +298,7 @@ export class EditorState {
   cursorPath = $state.raw<TimedPoint[]>(SAMPLE_CURSOR);
   clicks = $state.raw<TimedPoint[]>(SAMPLE_PROJECT.clicks);
   keys = $state.raw<{ t: number; label: string }[]>(SAMPLE_KEYS);
-  time = $state(10.6);
+  time = $state(12.4);
   playing = $state(false);
   rate = $state(1);
   selection = $state<Selection>(null);

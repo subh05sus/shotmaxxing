@@ -54,7 +54,7 @@
       <p class="eyebrow">Start here</p>
       <h2 class="mt-1 text-title-2">Explore the sample project</h2>
       <p class="measure mt-1.5 text-callout text-fg-muted">
-        A 42-second sign-up demo filmed by an agent. Open it and a short tour shows you every tool, one at a
+        A 21-second sign-up demo filmed by an agent. Open it and a short tour shows you every tool, one at a
         time.
       </p>
       <div class="mt-4 flex items-center gap-3">

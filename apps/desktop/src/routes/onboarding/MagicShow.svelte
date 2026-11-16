@@ -10,6 +10,7 @@
   import { Check, RefreshCw, ZoomIn } from '@shotmaxxing/ui/icons';
   import Scene from '../../components/Scene.svelte';
   import { wallpaper } from '../../lib/wallpapers';
+  import { NORTHWIND as N } from '../../lib/sample';
   import { ease, lerp, seg } from '../../lib/aperture';
 
   let { play = true }: { play?: boolean } = $props();
@@ -55,8 +56,8 @@
   const k = $derived(winW / 1440);
   const at = (x: number, y: number) => [winX + k * x, winY + k * y] as const;
 
-  const EMAIL = [985, 442] as const;
-  const CREATE = [1080, 602] as const;
+  const EMAIL = [N.email.x - 60, N.email.y + 3] as const;
+  const CREATE = [N.create.x + 10, N.create.y + 3] as const;
   const START = [560, 790] as const;
 
   /** Where the cursor is, in capture pixels: it glides on a gentle arc between the places it clicks. */
@@ -85,24 +86,26 @@
     })),
   );
 
-  /** The pretend page's own clock: empty, the email, the password, a beat after the click, then signed up. */
+  /** The pretend page's own clock: the card open, the email, the password, the click, then signed up. */
   const pageT = $derived(
     T < 2.1
-      ? 0
+      ? N.emailFocus - 0.3
       : T < 4.6
-        ? lerp(9.4, 15.39, (T - 2.1) / 2.5)
+        ? lerp(N.emailFocus, N.passwordFocus - 0.01, (T - 2.1) / 2.5)
         : T < 5.6
-          ? lerp(15.4, 17.6, T - 4.6)
-          : T < 7
-            ? 18.7
-            : 20.3,
+          ? lerp(N.passwordFocus, N.passwordStart + N.passwordStep * 10 + 0.1, T - 4.6)
+          : T < 6.61
+            ? N.submit - 0.4
+            : T < 7
+              ? lerp(N.submit, N.done - 0.05, (T - 6.61) / 0.39)
+              : lerp(N.done, N.done + 0.6, Math.min(1, (T - 7) / 0.6)),
   );
 
   /** The camera: how far in, and on what (capture pixels). */
   const camera = $derived.by(() => {
     const centre = [720, 450];
-    const field = [1060, 440];
-    const card = [1060, 450];
+    const field = [N.email.x, N.email.y];
+    const card = [N.card.x, N.card.y];
     const zoomTo = (from: number, to: number, a: number[], za: number, b: number[], zb: number) => {
       const p = seg(T, from, to, ease.inOutCubic);
       return { z: lerp(za, zb, p), f: [lerp(a[0], b[0], p), lerp(a[1], b[1], p)] };

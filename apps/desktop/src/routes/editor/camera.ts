@@ -103,7 +103,11 @@ export function cameraAt(
 
 const minJerk = (u: number) => u * u * u * (10 - 15 * u + 6 * u * u);
 
-/** The cursor along its recorded path: Catmull–Rom through the samples with minimum-jerk timing between them. */
+/**
+ * The cursor along its recorded path: a Catmull–Rom curve through the samples with minimum-jerk timing between them.
+ * Where the cursor rests (a sample repeats the one before or after it), the curve has no tangent there, so it stays
+ * put instead of looping out and back.
+ */
 export function cursorAt(t: number, path: { t: number; x: number; y: number }[]): { x: number; y: number } {
   if (!path.length) return { x: 0, y: 0 };
   if (t <= path[0].t) return { x: path[0].x, y: path[0].y };
@@ -115,10 +119,21 @@ export function cursorAt(t: number, path: { t: number; x: number; y: number }[])
   const p1 = path[i];
   const p2 = path[i + 1];
   const p3 = path[i + 2] ?? p2;
+  const same = (a: { x: number; y: number }, b: { x: number; y: number }) => a.x === b.x && a.y === b.y;
+  if (same(p1, p2)) return { x: p1.x, y: p1.y };
   const u = minJerk((t - p1.t) / (p2.t - p1.t));
-  const cr = (a: number, b: number, c: number, d: number) =>
-    0.5 * (2 * b + (-a + c) * u + (2 * a - 5 * b + 4 * c - d) * u * u + (-a + 3 * b - 3 * c + d) * u * u * u);
-  return { x: cr(p0.x, p1.x, p2.x, p3.x), y: cr(p0.y, p1.y, p2.y, p3.y) };
+  const m1 = same(p0, p1) ? { x: 0, y: 0 } : { x: (p2.x - p0.x) / 2, y: (p2.y - p0.y) / 2 };
+  const m2 = same(p2, p3) ? { x: 0, y: 0 } : { x: (p3.x - p1.x) / 2, y: (p3.y - p1.y) / 2 };
+  const u2 = u * u;
+  const u3 = u2 * u;
+  const h00 = 2 * u3 - 3 * u2 + 1;
+  const h10 = u3 - 2 * u2 + u;
+  const h01 = -2 * u3 + 3 * u2;
+  const h11 = u3 - u2;
+  return {
+    x: h00 * p1.x + h10 * m1.x + h01 * p2.x + h11 * m2.x,
+    y: h00 * p1.y + h10 * m1.y + h01 * p2.y + h11 * m2.y,
+  };
 }
 
 /** Where the window sits in the output frame: centred, padded, keeping the capture's aspect. */

@@ -27,7 +27,7 @@ export const LIBRARY: LibraryItem[] = [
     id: 'launch-demo',
     title: 'Launch demo',
     app: 'Safari',
-    duration: 42,
+    duration: 21,
     created: hours(2),
     wallpaper: 'aurora-lime',
     scene: 0,
@@ -381,94 +381,142 @@ export interface EffectBlock {
   to?: { x: number; y: number };
 }
 
+/**
+ * The sample's sign-up page, Northwind, and when things happen on it (seconds on the recording's timeline). The
+ * page, the cursor, the clicks, the zooms and the setup screen's practice show all read these, so they stay in step.
+ * Positions are in the 1440 × 900 capture.
+ */
+export const NORTHWIND = {
+  getStarted: { x: 1298, y: 113 },
+  pricing: { x: 446, y: 113 },
+  email: { x: 1072, y: 527 },
+  password: { x: 1072, y: 611 },
+  create: { x: 1070, y: 683 },
+  /** The card's middle, for a zoom on the result. */
+  card: { x: 1070, y: 476 },
+  /** Get started is clicked, and the sign-up card takes the product preview's place. */
+  reveal: 1.75,
+  emailFocus: 3.75,
+  typeStart: 3.95,
+  typeStep: 0.085,
+  address: 'maya@northwind.app',
+  passwordFocus: 5.9,
+  passwordStart: 6.1,
+  passwordStep: 0.09,
+  /** Create account is clicked; the account is ready a moment later. */
+  submit: 8.45,
+  done: 9.3,
+  /** The cursor rests on Pricing. */
+  pricingHover: [15.3, 18.85],
+} as const;
+
 /** The sample's captions, as transcribing its voice would make them (seconds on the recording's timeline). */
 export const SAMPLE_CAPTIONS = [
-  { start: 0.4, end: 2.8, text: 'Here’s how sign-up works in Northwind.' },
-  { start: 2.9, end: 6.4, text: 'Start with Get started, top right.' },
-  { start: 9.0, end: 14.6, text: 'Then enter your work email.' },
-  { start: 15.3, end: 18.6, text: 'Pick a password you’ll remember.' },
-  { start: 18.8, end: 23.6, text: 'Create the account, and you’re in.' },
-  { start: 30.0, end: 35.0, text: 'Pricing is one click away.' },
+  { start: 0.2, end: 1.6, text: 'Here’s how sign-up works in Northwind.' },
+  { start: 1.7, end: 3.2, text: 'Start with Get started, top right.' },
+  { start: 3.4, end: 5.6, text: 'Then enter your work email.' },
+  { start: 5.8, end: 7.2, text: 'Pick a password you’ll remember.' },
+  { start: 7.4, end: 10.0, text: 'Create the account, and you’re in.' },
+  { start: 14.6, end: 18.4, text: 'Pricing is one click away.' },
 ];
+
+const NW = NORTHWIND;
 
 export const SAMPLE_PROJECT = {
   id: 'sample',
   title: 'Launch demo',
-  duration: 42,
+  duration: 21,
   capture: { width: 1440, height: 900 },
   zooms: [
     {
       id: 'z1',
-      start: 2.1,
-      end: 6.2,
-      scale: 1.9,
-      focus: { x: 1305, y: 110 },
+      start: 1.0,
+      end: 2.6,
+      scale: 1.8,
+      focus: NW.getStarted,
       reason: 'Click on Get started',
       source: 'auto',
     },
     {
       id: 'z2',
-      start: 9.0,
-      end: 15.4,
-      scale: 2.2,
-      focus: { x: 1060, y: 440 },
+      start: 3.0,
+      end: 7.2,
+      scale: 2.0,
+      focus: { x: 1072, y: 566 },
       reason: 'Typing in Work email',
       source: 'auto',
     },
     {
       id: 'z3',
-      start: 18.4,
-      end: 23.6,
-      scale: 1.6,
-      focus: { x: 1060, y: 520 },
+      start: 7.6,
+      end: 11.0,
+      scale: 1.5,
+      focus: NW.card,
       reason: 'Click on Create account, then the result',
       source: 'auto',
     },
     {
       id: 'z4',
-      start: 30.2,
-      end: 35.0,
+      start: 14.6,
+      end: 18.8,
       scale: 1.45,
-      focus: { x: 430, y: 110 },
+      focus: NW.pricing,
       reason: 'Pointing at Pricing',
       source: 'manual',
     },
   ] as ZoomBlock[],
   effects: [
-    {
-      id: 'e1',
-      kind: 'blur',
-      start: 10.0,
-      end: 15.0,
-      label: 'Blur email',
-      rect: { x: 840, y: 416, width: 440, height: 48 },
-    },
-    { id: 'e2', kind: 'text', start: 24.5, end: 29.0, label: 'New in 0.3' },
+    { id: 'e1', kind: 'text', start: 11.0, end: 14.0, label: 'Sign up in three steps' },
   ] as EffectBlock[],
   clicks: [
-    { t: 3.0, x: 1305, y: 110 },
-    { t: 9.4, x: 1060, y: 440 },
-    { t: 19.2, x: 1060, y: 600 },
-    { t: 31.0, x: 430, y: 110 },
+    { t: NW.reveal, ...NW.getStarted },
+    { t: NW.emailFocus, ...NW.email },
+    { t: NW.submit, ...NW.create },
   ],
 };
 
-/** A cursor path through the sample, keyed by time (seconds). */
-export const SAMPLE_CURSOR: { t: number; x: number; y: number }[] = [
-  { t: 0, x: 720, y: 760 },
-  { t: 2.5, x: 1305, y: 110 },
-  { t: 4.6, x: 1240, y: 190 },
-  { t: 9.0, x: 1060, y: 440 },
-  { t: 15.2, x: 1090, y: 460 },
-  { t: 18.9, x: 1060, y: 600 },
-  { t: 26.0, x: 860, y: 520 },
-  { t: 30.6, x: 430, y: 110 },
-  { t: 36.0, x: 760, y: 470 },
-  { t: 42.0, x: 900, y: 640 },
+/**
+ * Where the cursor rests in the sample, and when: it arrives at `arrive` and stays until `leave`. Between rests it
+ * moves the way a hand does, along a gentle arc, speeding up and slowing down (minimum jerk). It ends where it began,
+ * so the sample loops.
+ */
+const RESTS = [
+  { x: 720, y: 800, arrive: 0, leave: 0.45 },
+  { x: 1300, y: 117, arrive: 1.4, leave: 2.7 },
+  { x: 1074, y: 530, arrive: 3.5, leave: 7.3 },
+  { x: 1072, y: 686, arrive: 8.1, leave: 10.2 },
+  { x: 1150, y: 700, arrive: 11.0, leave: 14.4 },
+  { x: 448, y: 117, arrive: 15.4, leave: 18.8 },
+  { x: 720, y: 800, arrive: 19.9, leave: 21 },
 ];
 
+/** The cursor through the sample, sampled 60 times a second like a recording (seconds, capture points). */
+export const SAMPLE_CURSOR: { t: number; x: number; y: number }[] = (() => {
+  const out: { t: number; x: number; y: number }[] = [];
+  const jerk = (u: number) => u * u * u * (10 - 15 * u + 6 * u * u);
+  RESTS.forEach((rest, i) => {
+    out.push({ t: rest.arrive, x: rest.x, y: rest.y }, { t: rest.leave, x: rest.x, y: rest.y });
+    const next = RESTS[i + 1];
+    if (!next) return;
+    // The arc bows to one side of the straight line by a little of its length, the way a wrist swings.
+    const dx = next.x - rest.x;
+    const dy = next.y - rest.y;
+    const bow = 0.12 * (i % 2 ? -1 : 1);
+    const cx = rest.x + dx / 2 - dy * bow;
+    const cy = rest.y + dy / 2 + dx * bow;
+    const steps = Math.round((next.arrive - rest.leave) * 60);
+    for (let s = 1; s < steps; s++) {
+      const p = jerk(s / steps);
+      const q = 1 - p;
+      out.push({
+        t: rest.leave + (s / steps) * (next.arrive - rest.leave),
+        x: Math.round((q * q * rest.x + 2 * q * p * cx + p * p * next.x) * 10) / 10,
+        y: Math.round((q * q * rest.y + 2 * q * p * cy + p * p * next.y) * 10) / 10,
+      });
+    }
+  });
+  return out;
+})();
+
 /** Shortcuts shown in the sample, keyed by time (seconds). */
-export const SAMPLE_KEYS: { t: number; label: string }[] = [
-  { t: 15.2, label: '⇥  Tab' },
-  { t: 19.0, label: '↩  Return' },
-];
+export const SAMPLE_KEYS: { t: number; label: string }[] = [{ t: NW.passwordFocus, label: '⇥  Tab' }];
