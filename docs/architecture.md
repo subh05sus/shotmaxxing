@@ -93,7 +93,9 @@ These are the rules the code is reviewed against.
   the window's edge is cut at that edge: record the screen or an area to keep it whole.
 - **Other Spaces.** macOS only pictures the Space that's showing, so windows elsewhere are listed by their app's
   icon, and recording one takes the Mac to its Space first: full-screen apps (each has a Space of its own) and, from
-  inside a full-screen app, windows on the desktop. Which Space a window is on comes from the window server's own
+  inside a full-screen app, windows on the desktop. The window server is asked for that window rather than its app's
+  front window, and its app, through Accessibility when allowed, raises it: an app with windows on two Spaces would
+  otherwise take the Mac to its front window's. Which Space a window is on comes from the window server's own
   calls (SkyLight's, looked up when first needed; without them, full-screen apps are told by their shape), which
   also keep out windows on no Space: minimised, hidden, tabs behind others and helpers. Only windows macOS will go
   to are listed: an app with a window showing here stays here when it comes forward. The record dialog opens over a
