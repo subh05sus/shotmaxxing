@@ -3,7 +3,10 @@
 What changed in each release. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version
 can change how things work.
 
-## Unreleased
+## 0.2.0 (2026-11-16)
+
+The second preview: agents plan their takes from your app's code, a red switch lets them film without asking, the
+first launch is new, and Home gets one search.
 
 - **The logo builds itself on the first launch:** a point of lime light draws the ring, the blades swing in and
   click shut, light fills the icon, and the view flies through the lens onto the welcome. Any key or click skips it;
@@ -32,6 +35,10 @@ can change how things work.
   show a red dot while it's on.
 - **A red edge** goes round every screen while an agent's take moves the pointer and types. It lets clicks through and
   stays out of the recording.
+- **The installers have their own pictures:** the disk image window shows dragging Shotmaxxing to Applications and
+  how to open it the first time, and the Windows setup and `.msi` pages are drawn in the app's colours.
+- **Homebrew:** `brew tap subh05sus/shotmaxxing https://github.com/subh05sus/shotmaxxing`, then
+  `brew install --cask subh05sus/shotmaxxing/shotmaxxing`. winget manifests are ready to submit.
 - **Fixed:** with the Light theme on a Mac in Dark Mode, the sidebar stayed dark and its labels were unreadable. The
   window material, menus and dialogs now follow the theme chosen in Settings, from the first frame of the next launch.
 - **Fixed:** an app with two full-screen windows (Chrome on two Spaces, say) showed only one of them in the picker,

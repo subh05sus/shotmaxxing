@@ -3989,7 +3989,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shotmaxxing-agent"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
@@ -4003,7 +4003,7 @@ dependencies = [
 
 [[package]]
 name = "shotmaxxing-captions"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "block2",
  "objc2-foundation",
@@ -4018,7 +4018,7 @@ dependencies = [
 
 [[package]]
 name = "shotmaxxing-capture"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "block2",
  "dispatch2",
@@ -4042,7 +4042,7 @@ dependencies = [
 
 [[package]]
 name = "shotmaxxing-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4061,7 +4061,7 @@ dependencies = [
 
 [[package]]
 name = "shotmaxxing-control"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "core-foundation",
  "libc",
@@ -4074,7 +4074,7 @@ dependencies = [
 
 [[package]]
 name = "shotmaxxing-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "schemars 1.2.3",
  "serde",
@@ -4088,7 +4088,7 @@ dependencies = [
 
 [[package]]
 name = "shotmaxxing-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4125,7 +4125,7 @@ dependencies = [
 
 [[package]]
 name = "shotmaxxing-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "block2",
  "color_quant",
