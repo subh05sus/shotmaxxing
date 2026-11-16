@@ -36,7 +36,8 @@ no "Not Opened" dialog on the Mac and no SmartScreen warning on Windows. On a Ma
 your user, without administrator rights. Run the same line again to update. Both scripts are short, so you can read
 [install.sh](install.sh) or [install.ps1](install.ps1) before you run them.
 
-**With Homebrew** on a Mac, which also puts the `shotmaxxing` command on your PATH, and `brew upgrade` updates it:
+**With Homebrew** on a Mac. The app opens on the first click this way too, the `shotmaxxing` command goes on your
+PATH, and `brew upgrade` updates it:
 
 ```sh
 brew tap subh05sus/shotmaxxing https://github.com/subh05sus/shotmaxxing
