@@ -77,6 +77,23 @@ jobs:
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           # Tauri signs with the identity named here instead of the release config's ad-hoc "-".
           echo "APPLE_SIGNING_IDENTITY=Shotmaxxing" >> "$GITHUB_ENV"
+          # Tauri would sign the disk image with it too, and macOS 15 stops a downloaded disk image signed by an
+          # identity Apple doesn't vouch for before anyone reaches the app inside (tauri-apps/tauri#12288). Unsigned,
+          # as before, it opens, and only the app asks for Open Anyway. So during the build, codesign leaves .dmg
+          # files alone; everything else, and every check, goes to the real one.
+          shim="$RUNNER_TEMP/codesign-shim"
+          mkdir -p "$shim"
+          cat > "$shim/codesign" <<'EOF'
+          #!/bin/bash
+          for arg in "$@"; do
+            if [ "$arg" = -s ] || [ "$arg" = --sign ]; then
+              case "${!#}" in *.dmg) echo "Leaving ${!#} unsigned"; exit 0 ;; esac
+            fi
+          done
+          exec /usr/bin/codesign "$@"
+          EOF
+          chmod +x "$shim/codesign"
+          echo "$shim" >> "$GITHUB_PATH"
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -104,20 +121,46 @@ jobs:
           uploadUpdaterJson: false
           uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
           args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
-      - name: The app carries the fixed signing identity
+      - name: The app carries the fixed signing identity, and the disk image isn't signed
         if: runner.os == 'macOS' && env.HAS_SIGNING_IDENTITY == 'true'
         run: |
           set -euo pipefail
-          app="target/${{ matrix.target }}/release/bundle/macos/Shotmaxxing.app"
+          bundle="target/${{ matrix.target }}/release/bundle"
+          app="$bundle/macos/Shotmaxxing.app"
           if [ ! -d "$app" ]; then
             echo "::error::no app at $app; these were built:"
             find . -type d -name Shotmaxxing.app -not -path '*/node_modules/*'
             exit 1
           fi
+          requirement() { codesign -d -r- "$1" 2>&1 | sed -nE 's/^(# )?designated => //p'; }
           codesign --verify --deep --strict --verbose=2 "$app"
-          got="$(codesign -d -r- "$app" 2>&1 | sed -nE 's/^(# )?designated => //p')"
+          got="$(requirement "$app")"
           echo "Designated requirement: $got"
           if [ "$got" != "$SIGNING_REQUIREMENT" ]; then
             echo "::error::the app's designated requirement isn't the fixed identity's, so permissions wouldn't carry over"
             exit 1
           fi
+          dmg="$(find "$bundle/dmg" -name '*.dmg' | head -1)"
+          if [ -z "$dmg" ]; then
+            echo "::error::no disk image in $bundle/dmg"
+            exit 1
+          fi
+          signature="$(/usr/bin/codesign -dv "$dmg" 2>&1 || true)"
+          case "$signature" in
+            *"not signed at all"*) echo "$(basename "$dmg") isn't signed, so a copy downloaded in a browser opens" ;;
+            *)
+              echo "::error::$(basename "$dmg") is signed, so macOS would stop a downloaded copy: $signature"
+              exit 1
+              ;;
+          esac
+          # The app inside it is the signed one. The disk image asks to agree to the license first.
+          mount="$RUNNER_TEMP/dmg-mount"
+          mkdir -p "$mount"
+          printf 'qy\n' | hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mount" "$dmg" >/dev/null
+          inside="$(requirement "$mount/Shotmaxxing.app")"
+          hdiutil detach "$mount" -force >/dev/null
+          if [ "$inside" != "$SIGNING_REQUIREMENT" ]; then
+            echo "::error::the app in $(basename "$dmg") has the designated requirement \"$inside\""
+            exit 1
+          fi
+          echo "The app in $(basename "$dmg") carries it too."
