@@ -8,8 +8,8 @@ can change how things work.
 Permissions that stay: Shotmaxxing sees each one as it is, and from this release on macOS keeps them when Shotmaxxing
 updates. After updating to 0.2.1, turn Screen Recording and Accessibility on once more (the first entry says how).
 
-- **Permissions carry over between updates:** every macOS release is now signed with one fixed identity. It's
-  self-signed, so it costs nothing and needs no Apple account. Before, each build was signed ad-hoc and looked like a
+- **Permissions carry over between updates:** the macOS app in every release is now signed with one fixed identity.
+  It's self-signed, so it costs nothing and needs no Apple account. Before, each build was signed ad-hoc and looked like a
   new app to macOS, so after an update the switches in System Settings stayed on but no longer counted. 0.2.1 is the
   first build with the identity, so macOS sees it as new one last time: in System Settings › Privacy & Security,
   select Shotmaxxing under Screen & System Audio Recording (Screen Recording on macOS 14) and under Accessibility,
