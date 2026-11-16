@@ -7,14 +7,18 @@ export const REPO = 'subh05sus/shotmaxxing';
 export const GITHUB = `https://github.com/${REPO}`;
 const RAW = `https://raw.githubusercontent.com/${REPO}/main`;
 
+/** The site's production address. Canonical links, the sitemap, OG images and the install lines all use it. */
+export const DOMAIN = 'https://shotmaxxing.app';
+
 /**
- * The site's own address: SITE_URL when set, else the production domain Vercel gives the project (the custom domain
- * once one is connected, such as shotmaxxing.com). Null in development, where the install lines point at GitHub.
+ * The site's own address: SITE_URL when set, else the production domain on any Vercel build (previews included, so
+ * their canonical links point at the real site rather than a *.vercel.app address). Null in development, where the
+ * install lines point at GitHub.
  */
 export const SITE = process.env.SITE_URL
   ? process.env.SITE_URL.replace(/\/$/, '')
-  : process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : process.env.VERCEL
+    ? DOMAIN
     : null;
 
 /**
