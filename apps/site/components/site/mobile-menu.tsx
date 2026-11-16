@@ -18,7 +18,7 @@ export function MobileMenu({ links, sections, download }: Props) {
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger
-        className="press grid size-11 place-items-center rounded-full text-paper hover:bg-fill md:hidden"
+        className="press grid size-11 place-items-center rounded-full text-paper hover:bg-fill lg:hidden"
         aria-label="Menu"
       >
         <Icon icon={BurgerMenuThreeIcon} size={20} />

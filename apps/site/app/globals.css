@@ -576,10 +576,11 @@ svg[data-act='lift'] {
   --frame-r: 26px;
   --frame-gap: 12px;
   --nav-fillet: 16px;
+  --nav-r: 20px;
   @media (width >= 40rem) {
     --frame-r: 32px;
     --frame-gap: 16px;
-    --nav-fillet: 24px;
+    --nav-fillet: 20px;
   }
 }
 @utility frame {
@@ -626,22 +627,24 @@ svg[data-act='lift'] {
   );
 }
 
-/* The top bar. Docked (the home page, scrolled to the top) it's a notch cut into the hero's frame, flush with the top
-   of the page. Scrolled, its connecting arcs shrink into it as its corners round, and it glides down into a floating
-   pill. The arcs' size is a registered property so it can transition, which makes them melt away rather than fade. */
-@property --fillet {
-  syntax: '<length>';
-  /* The arcs are the bar's ::before and ::after, so they must inherit it. */
+/* The top bar. Docked (the home page near the top) it's a notch cut into the hero's frame, flush with the top of the
+   page, its arcs curving into the frame's top edge. The arcs belong to the frame's edge, not to the bar: NavShell
+   passes the scroll in as --sy and --p, so they ride up with the frame and tighten as it goes (--p runs 1 → 0), and
+   they're gone before the bar undocks. Undocked, the bar's corners round and it glides down into a floating pill.
+   The bar's side is straight wherever an arc touches it (gap + arc ≤ bar height − bottom radius), so no step shows. */
+@property --k {
+  syntax: '<number>';
   inherits: true;
-  initial-value: 0px;
+  initial-value: 0;
 }
 .nav-bar {
-  --fillet: 0px;
+  --k: 0;
+  --fillet: calc(var(--nav-fillet) * var(--k) * var(--p, 1));
   position: relative;
   border-radius: 28px;
   translate: 0 12px;
   transition:
-    --fillet 520ms var(--ease-out),
+    --k 0ms,
     border-radius 560ms var(--ease-spring),
     translate 560ms var(--ease-spring),
     background-color 260ms var(--ease-out),
@@ -652,9 +655,9 @@ svg[data-act='lift'] {
 .nav-bar::after {
   content: '';
   position: absolute;
-  /* They sit on the frame's top edge, a gap below the top of the page, and a pixel larger each way so they overlap
+  /* On the frame's top edge (a gap below the page top, minus the scroll), and a pixel larger each way so they overlap
      the bar's border and the page margin without a seam. */
-  top: calc(var(--frame-gap) - 2px);
+  top: calc(var(--frame-gap) - 2px - var(--sy, 0px));
   width: calc(var(--fillet) + min(var(--fillet), 1px));
   height: calc(var(--fillet) + min(var(--fillet), 1px));
   pointer-events: none;
@@ -676,16 +679,26 @@ svg[data-act='lift'] {
   );
 }
 [data-docked] .nav-bar {
-  --fillet: var(--nav-fillet);
-  border-radius: 0 0 24px 24px;
+  --k: 1;
+  border-radius: 0 0 var(--nav-r) var(--nav-r);
   translate: 0 0;
   background-color: var(--graphite);
   border-color: transparent;
   box-shadow: none;
+  /* Docking from further down: the arcs grow in once the bar has settled flat against the top. */
+  transition:
+    --k 260ms var(--ease-out) 340ms,
+    border-radius 320ms var(--ease-out),
+    translate 320ms var(--ease-out),
+    background-color 260ms var(--ease-out),
+    border-color 260ms var(--ease-out),
+    box-shadow 200ms var(--ease-out);
 }
 @media (prefers-reduced-motion: reduce) {
-  .nav-bar {
+  .nav-bar,
+  [data-docked] .nav-bar {
     transition-duration: 0ms;
+    transition-delay: 0ms;
   }
 }
 /* The bar stays clear of the frame's rounded corners plus its arcs, so the notch has a flat edge to curve into. */

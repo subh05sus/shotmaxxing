@@ -11,8 +11,8 @@ export function Hero({ release }: { release: Release }) {
   return (
     <section className="relative -mt-14" aria-labelledby="hero-title">
       <div className="frame relative isolate mt-(--frame-gap) overflow-hidden bg-stage pt-14">
-        {/* The light. Its dark horizon rises behind the buttons and the video. */}
-        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[92%]">
+        {/* The light glows across the top; its dark horizon rises behind the title, so the type is white. */}
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-64 lg:h-80">
           <HeroLight />
         </div>
         <div className="shell pt-14 pb-[clamp(9rem,22vw,19rem)] sm:pt-20">
@@ -31,12 +31,12 @@ export function Hero({ release }: { release: Release }) {
           <SplitHeading
             as="h1"
             onLoad
-            className="display mx-auto mt-6 max-w-[14ch] text-center text-[clamp(3rem,8vw,7rem)] text-lime-ink"
+            className="display mx-auto mt-6 max-w-[14ch] text-center text-[clamp(3rem,8vw,7rem)] text-paper"
           >
             <span id="hero-title">Demos that edit themselves.</span>
           </SplitHeading>
           <p
-            className="mx-auto mt-6 max-w-[52ch] text-center text-[clamp(1.05rem,1.5vw,1.25rem)] leading-[1.5] font-medium text-lime-ink/85"
+            className="mx-auto mt-6 max-w-[52ch] text-center text-[clamp(1.05rem,1.5vw,1.25rem)] leading-[1.5] text-paper-muted"
             data-rise
           >
             Record your screen, or let an AI agent film it. Shotmaxxing adds the zooms, smooths the cursor and

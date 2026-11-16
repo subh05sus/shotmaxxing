@@ -32,12 +32,12 @@ export async function Nav({ download = '/#install', dock = false }: { download?:
           <AppIcon className="size-8 transition-transform duration-300 ease-[var(--spring)] group-hover:-rotate-12" />
           <span className="font-display text-[17px] font-bold tracking-[-0.03em]">Shotmaxxing</span>
         </Link>
-        <ul className="ml-2 hidden items-center md:flex">
+        <ul className="ml-2 hidden items-center lg:flex">
           {LINKS.map((l) => (
             <li key={l.href}>
               <Link
                 href={l.href}
-                className="press flex h-10 items-center rounded-full px-3.5 text-sm text-paper-muted outline-none hover:bg-fill hover:text-paper focus-visible:ring-2 focus-visible:ring-lime focus-visible:ring-inset"
+                className="press flex h-10 items-center rounded-full px-3.5 text-sm whitespace-nowrap text-paper-muted outline-none hover:bg-fill hover:text-paper focus-visible:ring-2 focus-visible:ring-lime focus-visible:ring-inset"
               >
                 {l.label}
               </Link>
