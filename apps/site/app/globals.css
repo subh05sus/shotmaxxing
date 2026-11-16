@@ -651,11 +651,11 @@ svg[data-act='lift'] {
   border-radius: 28px;
   translate: 0 12px;
   transition:
-    border-radius 560ms var(--ease-spring),
-    translate 560ms var(--ease-spring),
-    background-color 260ms var(--ease-out),
-    border-color 260ms var(--ease-out),
-    box-shadow 360ms var(--ease-out);
+    border-radius 300ms var(--ease-spring),
+    translate 300ms var(--ease-spring),
+    background-color 240ms var(--ease-out),
+    border-color 240ms var(--ease-out),
+    box-shadow 300ms var(--ease-out);
 }
 [data-docked] .nav-bar {
   border-radius: 0 0 var(--nav-r) var(--nav-r);
@@ -664,11 +664,11 @@ svg[data-act='lift'] {
   border-color: transparent;
   box-shadow: none;
   transition:
-    border-radius 320ms var(--ease-out),
-    translate 320ms var(--ease-out),
-    background-color 260ms var(--ease-out),
-    border-color 260ms var(--ease-out),
-    box-shadow 200ms var(--ease-out);
+    border-radius 220ms var(--ease-out),
+    translate 220ms var(--ease-out),
+    background-color 220ms var(--ease-out),
+    border-color 220ms var(--ease-out),
+    box-shadow 160ms var(--ease-out);
 }
 
 /* The anchor spans exactly the bar's width, in the frame's own coordinates: the bar is inset gap + corner + arc from
@@ -684,13 +684,13 @@ svg[data-act='lift'] {
   height: 0;
   pointer-events: none;
   transition: --k 0ms;
-  animation: nav-arcs-tighten linear both;
+  animation: nav-arcs-tighten var(--ease-out) both;
   animation-timeline: scroll(root);
   animation-range: 0px calc(var(--frame-gap) + var(--nav-fillet));
 }
 :root:has([data-docked]) .nav-arcs {
   --k: 1;
-  transition: --k 260ms var(--ease-out) 340ms;
+  transition: --k 180ms var(--ease-out) 240ms;
 }
 @keyframes nav-arcs-tighten {
   from {
