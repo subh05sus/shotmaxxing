@@ -11,6 +11,8 @@ export function Hero({ release }: { release: Release }) {
   return (
     <section className="relative -mt-14" aria-labelledby="hero-title">
       <div className="frame relative isolate mt-(--frame-gap) overflow-hidden bg-stage pt-14">
+        {/* The arcs that join the docked top bar to the frame's edge; they scroll with the frame. */}
+        <div aria-hidden className="nav-arcs" />
         {/* The light glows across the top; its dark horizon rises behind the title, so the type is white. */}
         <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-64 lg:h-80">
           <HeroLight />

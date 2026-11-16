@@ -2,9 +2,8 @@
 
 /**
  * The top bar's frame. With `dock` (the home page) the bar sits cut into the hero's frame near the top of the page,
- * and floats off as a pill below that. While docked it passes the scroll to the CSS (--sy, --p) so the notch's arcs
- * stay on the frame's top edge as it scrolls, and tighten until they're gone at the point the bar undocks. It only
- * reads the scroll position; it never moves the page.
+ * and floats off as a pill below that. The notch's arcs belong to the hero's frame (.nav-arcs), so they scroll with
+ * it natively; this only decides when the bar is docked. It reads the scroll position and never moves the page.
  */
 import { useEffect, useRef, useState } from 'react';
 
@@ -16,8 +15,7 @@ export function NavShell({ dock, children }: { dock: boolean; children: React.Re
     if (!dock || !el) return;
     let frame = 0;
     let reach = 36;
-    let last = -1;
-    // The arcs are gone once the frame's top edge has scrolled a gap plus an arc past the top of the page.
+    // Undock once the frame's top edge, and the arcs on it, have scrolled past the top of the page.
     const measure = () => {
       const css = getComputedStyle(el);
       reach =
@@ -26,14 +24,7 @@ export function NavShell({ dock, children }: { dock: boolean; children: React.Re
     };
     const check = () => {
       frame = 0;
-      const y = Math.min(Math.max(scrollY, 0), reach);
-      const p = 1 - y / reach;
-      if (p !== last) {
-        last = p;
-        el.style.setProperty('--sy', `${y}px`);
-        el.style.setProperty('--p', p.toFixed(4));
-      }
-      setDocked(y < reach);
+      setDocked(scrollY < reach);
     };
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(check);

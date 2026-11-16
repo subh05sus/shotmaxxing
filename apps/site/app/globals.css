@@ -628,79 +628,112 @@ svg[data-act='lift'] {
 }
 
 /* The top bar. Docked (the home page near the top) it's a notch cut into the hero's frame, flush with the top of the
-   page, its arcs curving into the frame's top edge. The arcs belong to the frame's edge, not to the bar: NavShell
-   passes the scroll in as --sy and --p, so they ride up with the frame and tighten as it goes (--p runs 1 → 0), and
-   they're gone before the bar undocks. Undocked, the bar's corners round and it glides down into a floating pill.
-   The bar's side is straight wherever an arc touches it (gap + arc ≤ bar height − bottom radius), so no step shows. */
+   page; scrolled further, its corners round and it glides down into a floating pill.
+
+   The notch's arcs are drawn by the frame (.nav-arcs, in the hero), not by the bar, so the browser scrolls them with
+   the frame in the same frame, however fast the page moves; script never positions them. They're tangent to the bar's
+   sides, which stay put (the header is sticky) and straight wherever an arc touches them. They tighten as the page
+   scrolls (a scroll-linked --p, 1 → 0) and are past the top of the page by the time the bar undocks. They only show
+   while the bar is docked, and grow in only once it has settled flat (--k, after a delay), so an arc never meets a
+   rounded or moving bar. */
 @property --k {
   syntax: '<number>';
   inherits: true;
   initial-value: 0;
 }
+@property --p {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 1;
+}
 .nav-bar {
-  --k: 0;
-  --fillet: calc(var(--nav-fillet) * var(--k) * var(--p, 1));
   position: relative;
   border-radius: 28px;
   translate: 0 12px;
   transition:
-    --k 0ms,
     border-radius 560ms var(--ease-spring),
     translate 560ms var(--ease-spring),
     background-color 260ms var(--ease-out),
     border-color 260ms var(--ease-out),
     box-shadow 360ms var(--ease-out);
 }
-.nav-bar::before,
-.nav-bar::after {
-  content: '';
-  position: absolute;
-  /* On the frame's top edge (a gap below the page top, minus the scroll), and a pixel larger each way so they overlap
-     the bar's border and the page margin without a seam. */
-  top: calc(var(--frame-gap) - 2px - var(--sy, 0px));
-  width: calc(var(--fillet) + min(var(--fillet), 1px));
-  height: calc(var(--fillet) + min(var(--fillet), 1px));
-  pointer-events: none;
-}
-.nav-bar::before {
-  right: 100%;
-  background: radial-gradient(
-    circle at 0 100%,
-    transparent calc(var(--fillet) - 0.5px),
-    var(--graphite) var(--fillet)
-  );
-}
-.nav-bar::after {
-  left: 100%;
-  background: radial-gradient(
-    circle at 100% 100%,
-    transparent calc(var(--fillet) - 0.5px),
-    var(--graphite) var(--fillet)
-  );
-}
 [data-docked] .nav-bar {
-  --k: 1;
   border-radius: 0 0 var(--nav-r) var(--nav-r);
   translate: 0 0;
   background-color: var(--graphite);
   border-color: transparent;
   box-shadow: none;
-  /* Docking from further down: the arcs grow in once the bar has settled flat against the top. */
   transition:
-    --k 260ms var(--ease-out) 340ms,
     border-radius 320ms var(--ease-out),
     translate 320ms var(--ease-out),
     background-color 260ms var(--ease-out),
     border-color 260ms var(--ease-out),
     box-shadow 200ms var(--ease-out);
 }
+
+/* The anchor spans exactly the bar's width, in the frame's own coordinates: the bar is inset gap + corner + arc from
+   the page edge and at most 76rem wide; the frame is already inset by the gap. */
+.nav-arcs {
+  --k: 0;
+  --fillet: calc(var(--nav-fillet) * var(--k) * var(--p));
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: max(calc(var(--frame-r) + var(--nav-fillet)), calc((100% - 76rem) / 2));
+  right: max(calc(var(--frame-r) + var(--nav-fillet)), calc((100% - 76rem) / 2));
+  height: 0;
+  pointer-events: none;
+  transition: --k 0ms;
+  animation: nav-arcs-tighten linear both;
+  animation-timeline: scroll(root);
+  animation-range: 0px calc(var(--frame-gap) + var(--nav-fillet));
+}
+:root:has([data-docked]) .nav-arcs {
+  --k: 1;
+  transition: --k 260ms var(--ease-out) 340ms;
+}
+@keyframes nav-arcs-tighten {
+  from {
+    --p: 1;
+  }
+  to {
+    --p: 0;
+  }
+}
+/* A pixel larger each way, overlapping the bar and the page margin above the frame, so no seam shows. */
+.nav-arcs::before,
+.nav-arcs::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  width: calc(var(--fillet) + min(var(--fillet), 1px));
+  height: calc(var(--fillet) + min(var(--fillet), 1px));
+}
+.nav-arcs::before {
+  right: calc(100% - min(var(--fillet), 1px));
+  background: radial-gradient(
+    circle at 0 100%,
+    transparent calc(var(--fillet) - 0.5px),
+    var(--graphite) var(--fillet)
+  );
+}
+.nav-arcs::after {
+  left: calc(100% - min(var(--fillet), 1px));
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(var(--fillet) - 0.5px),
+    var(--graphite) var(--fillet)
+  );
+}
 @media (prefers-reduced-motion: reduce) {
   .nav-bar,
-  [data-docked] .nav-bar {
+  [data-docked] .nav-bar,
+  :root:has([data-docked]) .nav-arcs {
     transition-duration: 0ms;
     transition-delay: 0ms;
   }
 }
+
 /* The bar stays clear of the frame's rounded corners plus its arcs, so the notch has a flat edge to curve into. */
 .nav-shell {
   padding-inline: calc(var(--frame-gap) + var(--frame-r) + var(--nav-fillet));
