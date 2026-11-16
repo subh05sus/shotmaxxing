@@ -74,6 +74,12 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
 - [ ] macOS virtual display
 - [x] One-click connect for Claude Code, Claude Desktop, Codex, Cursor, VS Code, Windsurf, OpenCode, Gemini CLI
 - [x] Agent skill ([skills/shotmaxxing](../skills/shotmaxxing/SKILL.md))
+- [x] Agents plan from the code: the server's instructions and a `plan-demo` prompt have them learn the flow from
+      the app's code and show a plan in plain steps first; `check_take` and `shotmaxxing take check` test a take
+      script against the screen and suggest what to try instead; the plan shows on the take card
+- [x] Allow everything: one switch lets the `shotmaxxing` command's requests through without the take card asking,
+      kept in memory until the app quits, with a red dot on the menu-bar icon; a red edge goes round every screen
+      while a take drives (Windows: written, awaiting testing on Windows)
 
 ## Milestone 4: Local AI and polish
 
