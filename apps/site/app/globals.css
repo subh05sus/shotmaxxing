@@ -627,15 +627,18 @@ svg[data-act='lift'] {
   );
 }
 
-/* The top bar. Docked (the home page near the top) it's a notch cut into the hero's frame, flush with the top of the
-   page; scrolled further, its corners round and it glides down into a floating pill.
+/* The top bar. On the home page it starts as a notch cut into the hero's frame, flush with the top of the page, and
+   becomes a floating pill as the page scrolls. Every part of that is a function of the scroll position, not of time,
+   so no scroll speed can catch it half way:
 
-   The notch's arcs are drawn by the frame (.nav-arcs, in the hero), not by the bar, so the browser scrolls them with
-   the frame in the same frame, however fast the page moves; script never positions them. They're tangent to the bar's
-   sides, which stay put (the header is sticky) and straight wherever an arc touches them. They tighten as the page
-   scrolls (a scroll-linked --p, 1 → 0) and are past the top of the page by the time the bar undocks. They only show
-   while the bar is docked, and grow in only once it has settled flat (--k, after a delay), so an arc never meets a
-   rounded or moving bar. */
+     scroll 0 → gap + arc       the bar is flat against the top; the arcs that join it to the frame tighten to nothing
+     the next 56px              the bar's corners round and it glides 12px down into the pill
+     further                    the pill
+
+   The arcs are drawn by the frame (.nav-arcs, in the hero), so the browser scrolls them with it in the same frame.
+   They're tangent to the bar's sides, which stay put (the header is sticky) and straight wherever an arc touches them
+   (gap + arc ≤ bar height − bottom radius). Browsers without scroll-linked animation use NavShell's data-docked
+   instead, with the arcs growing in only once the bar has settled. */
 @property --k {
   syntax: '<number>';
   inherits: true;
@@ -650,25 +653,6 @@ svg[data-act='lift'] {
   position: relative;
   border-radius: 28px;
   translate: 0 12px;
-  transition:
-    border-radius 300ms var(--ease-spring),
-    translate 300ms var(--ease-spring),
-    background-color 240ms var(--ease-out),
-    border-color 240ms var(--ease-out),
-    box-shadow 300ms var(--ease-out);
-}
-[data-docked] .nav-bar {
-  border-radius: 0 0 var(--nav-r) var(--nav-r);
-  translate: 0 0;
-  background-color: var(--graphite);
-  border-color: transparent;
-  box-shadow: none;
-  transition:
-    border-radius 220ms var(--ease-out),
-    translate 220ms var(--ease-out),
-    background-color 220ms var(--ease-out),
-    border-color 220ms var(--ease-out),
-    box-shadow 160ms var(--ease-out);
 }
 
 /* The anchor spans exactly the bar's width, in the frame's own coordinates: the bar is inset gap + corner + arc from
@@ -683,22 +667,6 @@ svg[data-act='lift'] {
   right: max(calc(var(--frame-r) + var(--nav-fillet)), calc((100% - 76rem) / 2));
   height: 0;
   pointer-events: none;
-  transition: --k 0ms;
-  animation: nav-arcs-tighten var(--ease-out) both;
-  animation-timeline: scroll(root);
-  animation-range: 0px calc(var(--frame-gap) + var(--nav-fillet));
-}
-:root:has([data-docked]) .nav-arcs {
-  --k: 1;
-  transition: --k 180ms var(--ease-out) 240ms;
-}
-@keyframes nav-arcs-tighten {
-  from {
-    --p: 1;
-  }
-  to {
-    --p: 0;
-  }
 }
 /* A pixel larger each way, overlapping the bar and the page margin above the frame, so no seam shows. */
 .nav-arcs::before,
@@ -725,12 +693,70 @@ svg[data-act='lift'] {
     var(--graphite) var(--fillet)
   );
 }
-@media (prefers-reduced-motion: reduce) {
-  .nav-bar,
-  [data-docked] .nav-bar,
+@keyframes nav-arcs-tighten {
+  to {
+    --p: 0;
+  }
+}
+/* From the notch; it ends on the bar's own pill styles. */
+@keyframes nav-undock {
+  from {
+    border-radius: 0 0 var(--nav-r) var(--nav-r);
+    translate: 0 0;
+    background-color: var(--graphite);
+    border-color: transparent;
+    box-shadow: none;
+  }
+}
+
+@supports (animation-timeline: scroll()) {
+  [data-dock] .nav-bar {
+    animation: nav-undock var(--ease-out) both;
+    animation-timeline: scroll(root);
+    animation-range: calc(var(--frame-gap) + var(--nav-fillet))
+      calc(var(--frame-gap) + var(--nav-fillet) + 56px);
+  }
+  .nav-arcs {
+    --k: 1;
+    animation: nav-arcs-tighten var(--ease-out) both;
+    animation-timeline: scroll(root);
+    animation-range: 0px calc(var(--frame-gap) + var(--nav-fillet));
+  }
+}
+
+@supports not (animation-timeline: scroll()) {
+  .nav-bar {
+    transition:
+      border-radius 300ms var(--ease-spring),
+      translate 300ms var(--ease-spring),
+      background-color 240ms var(--ease-out),
+      border-color 240ms var(--ease-out),
+      box-shadow 300ms var(--ease-out);
+  }
+  [data-docked] .nav-bar {
+    border-radius: 0 0 var(--nav-r) var(--nav-r);
+    translate: 0 0;
+    background-color: var(--graphite);
+    border-color: transparent;
+    box-shadow: none;
+    transition:
+      border-radius 220ms var(--ease-out),
+      translate 220ms var(--ease-out),
+      background-color 220ms var(--ease-out),
+      border-color 220ms var(--ease-out),
+      box-shadow 160ms var(--ease-out);
+  }
   :root:has([data-docked]) .nav-arcs {
-    transition-duration: 0ms;
-    transition-delay: 0ms;
+    --k: 1;
+    transition: --k 180ms var(--ease-out) 240ms;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nav-bar,
+    [data-docked] .nav-bar,
+    :root:has([data-docked]) .nav-arcs {
+      transition-duration: 0ms;
+      transition-delay: 0ms;
+    }
   }
 }
 
