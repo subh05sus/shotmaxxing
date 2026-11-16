@@ -18,15 +18,18 @@ env:
   CARGO_TERM_COLOR: always
   # Only a tag makes a release.
   TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+  # What macOS ties Screen Recording and Accessibility to. Every release signed with the fixed identity carries the same
+  # requirement, so permissions carry over between updates. A new identity would reset everyone's permissions.
+  SIGNING_REQUIREMENT: identifier "dev.shotmaxxing.desktop" and certificate leaf = H"176751cd515f9ced4a53a3734aeaebd6645581a2"
   RELEASE_BODY: |
     A preview build. Install or update it with one line, which opens the app without a security warning:
 
     - **macOS 14 or later**, in Terminal: `curl -fsSL https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.sh | bash`
     - **Windows 10 (version 2004) or later, 64-bit**, in PowerShell: `irm https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.ps1 | iex`
 
-    The files below, downloaded in a browser, aren't notarized or signed yet: macOS stops the app the first time
-    (choose Done, then Open Anyway in System Settings → Privacy & Security), and SmartScreen asks for More info → Run
-    anyway.
+    The files below, downloaded in a browser, aren't notarized by Apple or signed for Windows yet: macOS stops the app
+    the first time (choose Done, then Open Anyway in System Settings → Privacy & Security), and SmartScreen asks for
+    More info → Run anyway.
 
 jobs:
   build:
@@ -46,8 +49,34 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    env:
+      # Secrets can't be read in an if, so this says whether the signing identity is there.
+      HAS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_P12 != '' }}
     steps:
       - uses: actions/checkout@v7
+      # An ad-hoc build's requirement is its own hash, so after every update the switches in System Settings stay on
+      # but no longer match. The fixed self-signed identity (free, no Apple account) keeps one requirement for every
+      # release. Without the secret the build is ad-hoc, as before.
+      - name: Signing identity
+        if: runner.os == 'macOS' && env.HAS_SIGNING_IDENTITY == 'true'
+        env:
+          SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          SIGNING_PASSWORD: ${{ secrets.MACOS_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          printf '%s' "$SIGNING_P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$SIGNING_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          # Tauri signs with the identity named here instead of the release config's ad-hoc "-".
+          echo "APPLE_SIGNING_IDENTITY=Shotmaxxing" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -75,3 +104,20 @@ jobs:
           uploadUpdaterJson: false
           uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
           args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+      - name: The app carries the fixed signing identity
+        if: runner.os == 'macOS' && env.HAS_SIGNING_IDENTITY == 'true'
+        run: |
+          set -euo pipefail
+          app="target/${{ matrix.target }}/release/bundle/macos/Shotmaxxing.app"
+          if [ ! -d "$app" ]; then
+            echo "::error::no app at $app; these were built:"
+            find . -type d -name Shotmaxxing.app -not -path '*/node_modules/*'
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$app"
+          got="$(codesign -d -r- "$app" 2>&1 | sed -nE 's/^(# )?designated => //p')"
+          echo "Designated requirement: $got"
+          if [ "$got" != "$SIGNING_REQUIREMENT" ]; then
+            echo "::error::the app's designated requirement isn't the fixed identity's, so permissions wouldn't carry over"
+            exit 1
+          fi
