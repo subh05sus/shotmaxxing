@@ -106,7 +106,6 @@ export function AgentTake() {
 
       <div
         data-card
-        data-point="agents-card"
         className="rounded-3xl bg-graphite-2 p-5 text-paper shadow-float ring-1 ring-line-strong"
       >
         <div className="flex items-center justify-between">

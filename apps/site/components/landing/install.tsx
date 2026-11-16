@@ -1,6 +1,7 @@
 'use client';
 
-import { AppleLogoIcon, DownloadDownIcon, LaptopIcon, Package01Icon } from '@pikaicons/core-free';
+import { AppleLogoIcon, DownloadDownIcon, Package01Icon } from '@pikaicons/core-free';
+import { WindowsLogoIcon } from '@/components/site/logos';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { Release } from '@/lib/release';
@@ -8,8 +9,9 @@ import { CapsuleTabs, TabPanel } from '@/components/site/capsule-tabs';
 import { CopyButton } from '@/components/site/copy-button';
 import { Icon } from '@/components/site/icon';
 import { SplitHeading } from '@/components/site/split-heading';
+import { useOs } from '@/lib/os';
 
-function Command({ lines, point }: { lines: string[]; point?: string }) {
+function Command({ lines }: { lines: string[] }) {
   return (
     <div className="flex items-start gap-3 rounded-2xl border border-line bg-code p-2 pl-4">
       <pre className="scroll-room min-w-0 flex-1 overflow-x-auto py-1.5 font-mono text-[13.5px] leading-7 text-paper sm:text-[14.5px]">
@@ -20,9 +22,7 @@ function Command({ lines, point }: { lines: string[]; point?: string }) {
           </div>
         ))}
       </pre>
-      <span data-point={point}>
-        <CopyButton text={lines.join('\n')} />
-      </span>
+      <CopyButton text={lines.join('\n')} />
     </div>
   );
 }
@@ -46,9 +46,11 @@ function Note({ title, children }: { title: string; children: React.ReactNode })
 
 export function Install({ release }: { release: Release }) {
   const [os, setOs] = useState('mac');
+  // The visitor's computer, found by itself, or the one a logo or button picked.
+  const picked = useOs();
   useEffect(() => {
-    if (/Win/.test(navigator.platform || navigator.userAgent)) setOs('windows');
-  }, []);
+    if (picked) setOs(picked);
+  }, [picked]);
   const f = release.files;
 
   return (
@@ -74,7 +76,7 @@ export function Install({ release }: { release: Release }) {
             onValueChange={setOs}
             items={[
               { value: 'mac', label: 'macOS', icon: AppleLogoIcon },
-              { value: 'windows', label: 'Windows', icon: LaptopIcon },
+              { value: 'windows', label: 'Windows', icon: WindowsLogoIcon },
               { value: 'brew', label: 'Homebrew', icon: Package01Icon },
               { value: 'files', label: 'Download', icon: DownloadDownIcon },
             ]}
@@ -85,7 +87,7 @@ export function Install({ release }: { release: Release }) {
                   <span className="font-semibold text-paper">macOS 14 or later</span>, Apple silicon or Intel.
                   Paste this into Terminal:
                 </p>
-                <Command lines={[release.commands.mac]} point="install-copy" />
+                <Command lines={[release.commands.mac]} />
                 <Notes>
                   <Note title="Goes in Applications">
                     And the <code className="font-mono text-paper">shotmaxxing</code> command is linked onto

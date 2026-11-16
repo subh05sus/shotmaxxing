@@ -1,9 +1,10 @@
 import Link from 'next/link';
-import { ArrowRightIcon, DownloadDownIcon } from '@pikaicons/core-free';
+import { ArrowRightIcon } from '@pikaicons/core-free';
 import type { Release } from '@/lib/release';
 import { Icon } from '@/components/site/icon';
 import { SplitHeading } from '@/components/site/split-heading';
 import { HeroVideo } from './hero-video';
+import { HeroInstall, PlatformLinks } from './platforms';
 
 export function Hero({ release }: { release: Release }) {
   return (
@@ -37,13 +38,7 @@ export function Hero({ release }: { release: Release }) {
             keeps your computer cool.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3" data-rise>
-            <Link
-              href="#install"
-              className="press group inline-flex h-13 items-center gap-2.5 rounded-full bg-lime-ink px-7 text-[16px] font-semibold text-lime shadow-[0_14px_30px_-12px_var(--shadow)] hover:bg-stage"
-            >
-              <Icon icon={DownloadDownIcon} size={19} act="drop" />
-              Install free
-            </Link>
+            <HeroInstall />
             <Link
               href="/docs"
               className="press group inline-flex h-13 items-center gap-2 rounded-full px-6 text-[16px] font-semibold ring-2 ring-lime-ink/80 ring-inset hover:bg-lime-ink-subtle"
@@ -52,9 +47,9 @@ export function Hero({ release }: { release: Release }) {
               <Icon icon={ArrowRightIcon} size={18} act="nudge" />
             </Link>
           </div>
-          <p className="mt-5 text-center font-mono text-[12px] tracking-wide text-lime-ink-muted" data-rise>
-            macOS 14 or later · Windows in preview · Free and open source
-          </p>
+          <div className="mt-6" data-rise>
+            <PlatformLinks />
+          </div>
         </div>
       </div>
       {/* The video sits across the edge between the lime and the graphite below. */}

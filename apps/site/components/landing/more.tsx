@@ -13,6 +13,7 @@ import { CopyButton } from '@/components/site/copy-button';
 import { SplitHeading } from '@/components/site/split-heading';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { AgentTake } from './agent-take';
+import { InstallLine } from './platforms';
 import { cn } from '@/lib/utils';
 
 const SAFETY: { icon: IconData; title: string; text: string }[] = [
@@ -160,25 +161,7 @@ export function FinalCta({ release }: { release: Release }) {
         <SplitHeading className="display mx-auto max-w-[12ch] text-[clamp(3.2rem,10vw,9rem)]">
           <span id="final-title">Film your next demo.</span>
         </SplitHeading>
-        <div
-          data-point="final-copy"
-          className="mx-auto mt-10 flex max-w-2xl items-center gap-3 rounded-full bg-lime-ink p-2 pl-6 text-left"
-          data-rise
-        >
-          <code className="scroll-room min-w-0 flex-1 overflow-x-auto font-mono text-[13px] whitespace-nowrap text-lime sm:text-[14px]">
-            {release.commands.mac}
-          </code>
-          <CopyButton
-            text={release.commands.mac}
-            tone="lime"
-            className="h-10 bg-lime px-4 text-lime-ink hover:bg-lime-hover"
-          />
-        </div>
-        <p className="mt-5 text-[14px] text-lime-ink-muted" data-rise>
-          macOS in Terminal. On Windows, paste{' '}
-          <code className="font-mono font-semibold break-all">{release.commands.windows}</code> into
-          PowerShell.
-        </p>
+        <InstallLine mac={release.commands.mac} windows={release.commands.windows} />
       </div>
     </section>
   );

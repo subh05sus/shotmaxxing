@@ -8,6 +8,16 @@ export const GITHUB = `https://github.com/${REPO}`;
 const RAW = `https://raw.githubusercontent.com/${REPO}/main`;
 
 /**
+ * The site's own address: SITE_URL when set, else the production domain Vercel gives the project (the custom domain
+ * once one is connected, such as shotmaxxing.com). Null in development, where the install lines point at GitHub.
+ */
+export const SITE = process.env.SITE_URL
+  ? process.env.SITE_URL.replace(/\/$/, '')
+  : process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : null;
+
+/**
  * The release the installers point at. install.sh is the source of truth (CI checks that the PowerShell installer,
  * the cask, winget and the README name the same one), so the site can't advertise another.
  */
@@ -31,8 +41,9 @@ export function release() {
       winMsi: file('x64_en-US.msi'),
     },
     commands: {
-      mac: `curl -fsSL ${RAW}/install.sh | bash`,
-      windows: `irm ${RAW}/install.ps1 | iex`,
+      // The site serves both installers (app/install and app/install.ps1), so on the site the lines are short.
+      mac: SITE ? `curl -fsSL ${SITE}/install | bash` : `curl -fsSL ${RAW}/install.sh | bash`,
+      windows: SITE ? `irm ${SITE}/install.ps1 | iex` : `irm ${RAW}/install.ps1 | iex`,
       brew: [`brew tap ${REPO} https://github.com/${REPO}`, `brew install --cask ${REPO}/shotmaxxing`],
     },
   };
