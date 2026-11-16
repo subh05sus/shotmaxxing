@@ -23,8 +23,8 @@
   # Windows PowerShell 5.1 downloads many times slower while it draws a progress bar.
   $ProgressPreference = 'SilentlyContinue'
 
-  $Version = '0.2.1'
-  $Sha256 = 'A6D8645AD0987F83DA0FF18EB0D878003E85786BB3402F6784544B80D55ED679'
+  $Version = '0.3.0'
+  $Sha256 = '449A48FF759EBE7EEF784232BEFB882F5532260A5AF97CF8602CAAC8D09BE062'
   $Url = "https://github.com/subh05sus/shotmaxxing/releases/download/v$Version/Shotmaxxing_${Version}_x64-setup.exe"
 
   $tmp = Join-Path ([IO.Path]::GetTempPath()) ('shotmaxxing-' + [Guid]::NewGuid().ToString('N'))
