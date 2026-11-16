@@ -32,7 +32,7 @@ const SHOTS = [
   { name: 'agents', route: 'home/agents', size: [1120, 740] },
   { name: 'record', route: 'record', size: [840, 600] },
   // The take card sits at the bottom of its window, which the preview fills with a sample desktop.
-  { name: 'take-card', route: 'take', size: [420, 540], clip: { x: 0, y: 132, width: 420, height: 408 } },
+  { name: 'take-card', route: 'take', size: [420, 540], clip: { x: 0, y: 96, width: 420, height: 444 } },
 ];
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

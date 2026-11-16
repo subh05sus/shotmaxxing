@@ -163,7 +163,7 @@
       <section class="rounded-card border border-border bg-surface p-4 shadow-[var(--elev-1)]">
         <h3 class="text-callout font-semibold">How a take works</h3>
         <ol class="mt-3 flex flex-col gap-3">
-          {#each [{ icon: Wand, title: 'Prepare', body: 'The agent opens the app, finds each button and plans every step before filming.' }, { icon: Clapperboard, title: 'Perform', body: 'One smooth take with a natural cursor. Watch it live, pause it or take over.' }, { icon: Hand, title: 'Hand off', body: 'Sign-ins and passwords come to you. The agent waits until you hand back.' }, { icon: ShieldCheck, title: 'Polish', body: 'The take opens in the editor with zooms already added, ready to export.' }] as stepItem, i (stepItem.title)}
+          {#each [{ icon: Wand, title: 'Plan', body: 'The agent learns the flow from your code, shows you a plan in plain steps and checks each one on screen.' }, { icon: Clapperboard, title: 'Perform', body: 'One smooth take with a natural cursor. Watch it live, pause it or take over.' }, { icon: Hand, title: 'Hand off', body: 'Sign-ins and passwords come to you. The agent waits until you hand back.' }, { icon: ShieldCheck, title: 'Polish', body: 'The take opens in the editor with zooms already added, ready to export.' }] as stepItem, i (stepItem.title)}
             <li class="flex gap-3">
               <span
                 class="grid size-7 shrink-0 place-items-center rounded-full bg-accent-tint text-accent-text"
