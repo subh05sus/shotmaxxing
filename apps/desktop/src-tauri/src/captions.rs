@@ -25,6 +25,11 @@ pub struct Captioning {
 }
 
 impl Captioning {
+    /// Whether captions are being made or wait their turn.
+    pub fn busy(&self) -> bool {
+        self.jobs.lock().is_ok_and(|jobs| !jobs.is_empty())
+    }
+
     /// Stops every job, as the app quits.
     pub fn cancel_all(&self) {
         if let Ok(jobs) = self.jobs.lock() {

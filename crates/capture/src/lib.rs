@@ -49,7 +49,7 @@ use unsupported as imp;
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
     #[error(
-        "Screen Recording isn't allowed yet. Turn on Shotmaxxing in System Settings › Privacy & Security › Screen Recording, then try again."
+        "Screen Recording isn't allowed yet. Turn on Shotmaxxing in System Settings › Privacy & Security › Screen Recording, then reopen Shotmaxxing."
     )]
     PermissionDenied,
     #[error("Couldn't find {0}. It may have closed; list sources again.")]

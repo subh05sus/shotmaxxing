@@ -9,6 +9,7 @@
     Mic,
     Monitor,
     RecordDot,
+    RefreshCw,
     Video,
     Volume2,
   } from '@shotmaxxing/ui/icons';
@@ -34,7 +35,6 @@
     listDevices,
     listSources,
     onRecordMode,
-    openPermissionSettings,
     sourceThumbnails,
     type Device,
     startRecording,
@@ -43,6 +43,7 @@
     type SourcePicture,
   } from '../../lib/native';
   import { route } from '../../lib/router.svelte';
+  import { isScreenRecordingProblem, screenRecordingFix, type ScreenFix } from '../../lib/screen-access';
   import { recordingOptions, settings } from '../../lib/settings.svelte';
   import { wallpaper } from '../../lib/wallpapers';
 
@@ -78,16 +79,25 @@
   let countdown = $state<number | null>(null);
   let starting = $state(false);
   let loadError = $state('');
+  // When Screen Recording is what stops the list: open its settings, or reopen once it's on.
+  let loadFix = $state<ScreenFix | null>(null);
+  // Back from its settings with Screen Recording still off: the note says what else to try.
+  let stillOff = $state(false);
+  let wentToSettings = false;
+  let recheckAgain: ReturnType<typeof setTimeout> | undefined;
   let tileWidth = $state(0);
   let tick: ReturnType<typeof setInterval> | undefined;
 
   async function load() {
     loadError = '';
+    loadFix = null;
     try {
       sources = await listSources();
       selected = sources.find((s) => s.kind === 'window')?.id ?? sources[0]?.id ?? null;
     } catch (error) {
-      loadError = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      if (isScreenRecordingProblem(message)) loadFix = await screenRecordingFix();
+      loadError = message;
       return;
     }
     // Pictures arrive a moment later; tiles show a placeholder until then.
@@ -107,14 +117,39 @@
     cameras = found.cameras;
   }
 
+  function fix() {
+    if (!loadFix) return;
+    if (!loadFix.reopen) wentToSettings = true;
+    loadFix.run();
+  }
+
+  // Back from System Settings with the list still stopped by Screen Recording: check again, so the way out
+  // follows the switch (Reopen once it's on), and once more a moment later in case macOS took a moment.
+  async function recheck() {
+    if (!loadFix) return;
+    const found = await screenRecordingFix();
+    if (!loadFix) return;
+    if (!found) return void load();
+    loadFix = found;
+    stillOff = wentToSettings && !found.reopen;
+  }
+  function cameBack() {
+    void recheck();
+    clearTimeout(recheckAgain);
+    recheckAgain = setTimeout(recheck, 2000);
+  }
+
   onMount(() => {
     void load();
     void loadDevices();
     let stop: (() => void) | undefined;
     void onRecordMode((asked) => (kind = asked)).then((unlisten) => (stop = unlisten));
+    window.addEventListener('focus', cameBack);
     return () => {
       clearInterval(tick);
+      clearTimeout(recheckAgain);
       stop?.();
+      window.removeEventListener('focus', cameBack);
     };
   });
 
@@ -145,9 +180,7 @@
       toast(message, {
         tone: 'danger',
         timeout: 8000,
-        action: /Screen Recording/i.test(message)
-          ? { label: 'Open settings', run: () => openPermissionSettings('screen') }
-          : undefined,
+        action: (isScreenRecordingProblem(message) && (await screenRecordingFix())) || undefined,
       });
     } finally {
       starting = false;
@@ -188,13 +221,10 @@
       else await closeThisWindow();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const permission = /Screen Recording/i.test(message);
       toast(message, {
         tone: 'danger',
         timeout: 8000,
-        action: permission
-          ? { label: 'Open settings', run: () => openPermissionSettings('screen') }
-          : undefined,
+        action: (isScreenRecordingProblem(message) && (await screenRecordingFix())) || undefined,
       });
     } finally {
       starting = false;
@@ -263,12 +293,33 @@
       aria-label="Source"
     >
       {#if loadError}
-        <p class="col-span-full px-1 py-6 text-center text-callout text-fg-muted" role="alert">
-          {loadError}
-          <button type="button" class="ml-1 font-medium text-accent-text underline" onclick={load}
-            >Try again</button
-          >
-        </p>
+        <div
+          class="col-span-full flex flex-col items-center gap-3 px-1 py-6 text-center text-callout text-fg-muted"
+          role="alert"
+        >
+          <p class="measure">
+            {loadFix?.reopen
+              ? 'Screen Recording is on now. macOS lets Shotmaxxing use it once it reopens.'
+              : loadError}
+          </p>
+          {#if stillOff && !loadFix?.reopen}
+            <p class="measure text-footnote text-fg">
+              Already on in System Settings? macOS is remembering an older copy of Shotmaxxing: select
+              Shotmaxxing in that list, remove it with the − button, then choose Open settings here and turn
+              it on again.
+            </p>
+          {/if}
+          <div class="flex items-center gap-2">
+            {#if loadFix}
+              <Button size="sm" variant="primary" icon={loadFix.reopen ? RefreshCw : undefined} onclick={fix}
+                >{loadFix.reopen ? 'Reopen Shotmaxxing' : 'Open settings'}</Button
+              >
+            {/if}
+            {#if !loadFix?.reopen}
+              <Button size="sm" variant={loadFix ? 'ghost' : 'secondary'} onclick={load}>Try again</Button>
+            {/if}
+          </div>
+        </div>
       {/if}
       {#each shown as source, i (source.id)}
         <button

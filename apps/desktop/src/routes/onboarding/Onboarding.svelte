@@ -17,6 +17,7 @@
     Monitor,
     MousePointer2,
     RecordDot,
+    RefreshCw,
     Stop,
     Video,
     ZoomIn,
@@ -36,7 +37,8 @@
     toast,
     type IconData,
   } from '@shotmaxxing/ui';
-  import { recordingOptions, settings } from '../../lib/settings.svelte';
+  import { persist, recordingOptions, settings } from '../../lib/settings.svelte';
+  import { isScreenRecordingProblem, reopenApp, screenRecordingFix } from '../../lib/screen-access';
   import { go } from '../../lib/router.svelte';
   import { agents, agentsLoaded, connectProblem, refreshAgents } from '../../lib/agents.svelte';
   import {
@@ -164,29 +166,108 @@
   );
   let states = $state<Record<string, PermissionState>>({});
   let waiting = $state<PermissionKind | null>(null);
+  // A permission still off after its trip to System Settings: the note under the list says what else to try.
+  let missed = $state<PermissionKind | null>(null);
   let poll: ReturnType<typeof setInterval> | undefined;
+  let comeBack: ReturnType<typeof setTimeout> | undefined;
 
-  async function refresh() {
-    const list = await permissionStatus().catch(() => []);
-    for (const p of list) states[p.kind] = p.state;
-    if (waiting && (states[waiting] === 'granted' || states[waiting] === 'not_needed')) waiting = null;
+  /** Nothing left to switch on: allowed, not asked for here, or allowed and waiting for Shotmaxxing to reopen. */
+  const settled = (state: PermissionState | undefined) =>
+    state === 'granted' || state === 'not_needed' || state === 'needs_restart';
+
+  // One check at a time: a check asked for while one runs shares its answer.
+  let checking: Promise<void> | null = null;
+  function refresh(): Promise<void> {
+    checking ??= permissionStatus()
+      .catch(() => [])
+      .then((list) => {
+        for (const p of list) states[p.kind] = p.state;
+        if (waiting && settled(states[waiting])) waiting = null;
+        if (missed && settled(states[missed])) missed = null;
+      })
+      .finally(() => (checking = null));
+    return checking;
   }
 
-  $effect(() => {
-    if (step !== 1) return;
-    refresh();
-    poll = setInterval(refresh, 1000);
-    return () => clearInterval(poll);
-  });
-
-  async function allow(kind: PermissionKind) {
-    waiting = kind;
-    await openPermissionSettings(kind);
+  // Back from System Settings: check at once, and if the permission is still off a moment later, offer Allow
+  // again with what else to try.
+  function cameBack() {
+    void refresh();
+    clearTimeout(comeBack);
+    comeBack = setTimeout(async () => {
+      await refresh();
+      if (waiting && !settled(states[waiting])) {
+        missed = waiting;
+        waiting = null;
+      }
+    }, 2000);
   }
 
   const screenReady = $derived(
     env.os === 'windows' || states.screen === 'granted' || states.screen === 'not_needed',
   );
+  const screenReopen = $derived(states.screen === 'needs_restart');
+  // Before the first check there's nothing to say about Screen Recording yet.
+  const screenKnown = $derived(env.os === 'windows' || states.screen !== undefined);
+
+  // Every step starts from a fresh check (setup can open on any step), and it checks live while the Permissions
+  // step is open, or the practice take while Screen Recording isn't ready. Not while the window is hidden.
+  const watching = $derived(step === 1 || (step === 3 && !screenReady));
+  $effect(() => {
+    void step;
+    void refresh();
+  });
+  $effect(() => {
+    if (!watching) return;
+    poll = setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, 1000);
+    window.addEventListener('focus', cameBack);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(comeBack);
+      window.removeEventListener('focus', cameBack);
+    };
+  });
+
+  let waitLimit: ReturnType<typeof setTimeout> | undefined;
+  async function allow(kind: PermissionKind) {
+    waiting = kind;
+    if (missed === kind) missed = null;
+    // Should nothing come up (this window keeps its focus), Allow comes back instead of waiting for ever.
+    clearTimeout(waitLimit);
+    waitLimit = setTimeout(() => {
+      if (waiting === kind && document.hasFocus()) cameBack();
+    }, 8000);
+    await openPermissionSettings(kind).catch((error) =>
+      toast(`Couldn’t open System Settings: ${error}`, { tone: 'danger' }),
+    );
+  }
+
+  /** What to try when a permission stays off after a trip to System Settings. */
+  function missedHint(kind: PermissionKind): string {
+    const name = PERMISSIONS.find((p) => p.kind === kind)?.name ?? 'It';
+    if (env.os === 'windows') {
+      return `${name} is still off. In Settings › Privacy & security › ${name}, turn on access, including for desktop apps, then come back here.`;
+    }
+    if (kind === 'microphone' || kind === 'camera') {
+      return `${name} is still off. Choose Allow to open its page in System Settings, and turn on Shotmaxxing there.`;
+    }
+    return `${name} still looks off. If its switch is already on, macOS is remembering an older copy of Shotmaxxing: select Shotmaxxing in that list, remove it with the − button, then choose Allow here again.`;
+  }
+
+  // macOS gives Screen Recording to a running app only once it reopens. Setup opens again on this step, the one
+  // saved.
+  let reopening = $state(false);
+  async function reopen() {
+    if (reopening) return;
+    reopening = true;
+    settings.onboardingStep = step;
+    persist();
+    if (!(await reopenApp('onboarding'))) reopening = false;
+    // Should the app still be here a while later, the button works again.
+    else setTimeout(() => (reopening = false), 10_000);
+  }
 
   // Each permission's picture plays as the scene arrives, and again when you point at its row (not more than
   // once every two seconds, so passing over the list doesn't set them all off).
@@ -233,16 +314,13 @@
   let timer: ReturnType<typeof setInterval> | undefined;
   let stageWidth = $state(560);
 
-  function practiceFailed(error: unknown) {
+  async function practiceFailed(error: unknown) {
     practice = 'ready';
     const message = error instanceof Error ? error.message : String(error);
-    toast(message, {
-      tone: 'danger',
-      timeout: 8000,
-      action: /Screen Recording/i.test(message)
-        ? { label: 'Open settings', run: () => openPermissionSettings('screen') }
-        : undefined,
-    });
+    const fix = isScreenRecordingProblem(message) ? await screenRecordingFix() : null;
+    // The stage then shows the way out too, and watches until Screen Recording works.
+    if (fix) void refresh();
+    toast(message, { tone: 'danger', timeout: 8000, action: fix ?? undefined });
   }
 
   function startPractice() {
@@ -288,6 +366,8 @@
   onDestroy(() => {
     clearInterval(timer);
     clearInterval(poll);
+    clearTimeout(comeBack);
+    clearTimeout(waitLimit);
   });
 
   const machine = $derived(env.os === 'mac' ? 'Mac' : 'PC');
@@ -380,15 +460,36 @@
                   : 'Only Screen Recording is required. This page checks live, so it updates the moment you allow something.'}
               </p>
               <div class="mt-8 flex flex-wrap items-center gap-3">
-                <Button
-                  variant="primary"
-                  size="lg"
-                  iconEnd={ArrowRight}
-                  disabled={!screenReady}
-                  onclick={() => goTo(2)}>Continue</Button
-                >
-                {#if !screenReady}
-                  <span class="text-footnote text-fg-muted">Allow Screen Recording to continue</span>
+                {#if screenReopen}
+                  <Button variant="primary" size="lg" icon={RefreshCw} loading={reopening} onclick={reopen}>
+                    Reopen Shotmaxxing
+                  </Button>
+                {:else}
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    iconEnd={ArrowRight}
+                    disabled={!screenReady}
+                    onclick={() => goTo(2)}>Continue</Button
+                  >
+                {/if}
+              </div>
+              <!-- Two lines kept free, so the column doesn't jump as the note changes. -->
+              <div class="measure mt-3 min-h-[2lh] text-footnote text-fg-muted" aria-live="polite">
+                {#if screenReopen}
+                  <p in:fade>
+                    Screen Recording is on. macOS lets Shotmaxxing use it once it reopens, and setup comes
+                    back to this step.
+                  </p>
+                {:else if screenKnown && !screenReady}
+                  <p>
+                    Allow Screen Recording to continue, or
+                    <button
+                      type="button"
+                      class="press rounded-[4px] font-medium text-accent-text underline-offset-2 hover:underline"
+                      onclick={() => goTo(2)}>continue without it</button
+                    >.
+                  </p>
                 {/if}
               </div>
             </div>
@@ -415,11 +516,18 @@
                       </p>
                       <p class="mt-0.5 text-footnote text-fg-muted">{p.why}</p>
                     </div>
-                    <div class="flex w-28 shrink-0 justify-end">
+                    <div class="flex w-32 shrink-0 justify-end">
                       {#if state === 'granted' || state === 'not_needed'}
                         <span class="flex items-center gap-1.5 text-callout font-medium text-success" in:pop>
                           <CheckDraw size={16} />
                           {state === 'granted' ? 'Allowed' : 'Not needed'}
+                        </span>
+                      {:else if state === 'needs_restart'}
+                        <span
+                          class="flex items-center gap-1.5 text-footnote font-medium text-accent-text"
+                          in:fade
+                        >
+                          <Icon icon={RefreshCw} size={14} aria-hidden="true" /> Reopen to use
                         </span>
                       {:else if waiting === p.kind}
                         <span class="flex items-center gap-2 text-footnote text-fg-muted" in:fade>
@@ -436,10 +544,15 @@
                   </li>
                 {/each}
               </ul>
-              <p class="mt-3 text-footnote text-fg-muted">
-                {env.os === 'mac'
-                  ? 'Allow opens System Settings › Privacy & Security. Turn on Shotmaxxing, then come back here.'
-                  : 'Allow opens Settings › Privacy & security. Turn on access, including for desktop apps, then come back here.'}
+              <p class={['mt-3 text-footnote', missed ? 'text-fg' : 'text-fg-muted']} aria-live="polite">
+                {#if missed}
+                  {missedHint(missed)}
+                {:else if env.os === 'mac'}
+                  Allow opens System Settings › Privacy & Security. Turn on Shotmaxxing, then come back here.
+                {:else}
+                  Allow opens Settings › Privacy & security. Turn on access, including for desktop apps, then
+                  come back here.
+                {/if}
               </p>
             </div>
           {:else if step === 2}
@@ -536,7 +649,47 @@
                   <Scene variant={4} width={stageWidth * 0.84} />
                 </div>
                 <div class="absolute inset-0 grid place-items-center">
-                  {#if practice === 'ready'}
+                  {#if practice === 'ready' && screenKnown && !screenReady}
+                    <!-- Continued without Screen Recording: the way to turn it on, live, instead of a take that
+                         can't start. -->
+                    <div
+                      class="mx-6 flex max-w-[340px] flex-col items-center gap-2 rounded-[16px] border border-border bg-surface px-5 py-4 text-center text-fg shadow-[var(--elev-3)]"
+                      in:pop
+                    >
+                      <Icon icon={Monitor} size={26} class="text-fg-muted" aria-hidden="true" />
+                      <span class="text-callout font-semibold">
+                        {screenReopen
+                          ? 'Reopen Shotmaxxing to record'
+                          : 'The practice take needs Screen Recording'}
+                      </span>
+                      <span class="text-footnote text-fg-muted" aria-live="polite">
+                        {screenReopen
+                          ? 'Screen Recording is on. macOS lets Shotmaxxing use it once it reopens, and setup comes back here.'
+                          : missed === 'screen'
+                            ? missedHint('screen')
+                            : 'Allow opens System Settings › Privacy & Security. Turn on Shotmaxxing, then come back here.'}
+                      </span>
+                      <div class="mt-1">
+                        {#if screenReopen}
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            icon={RefreshCw}
+                            loading={reopening}
+                            onclick={reopen}>Reopen Shotmaxxing</Button
+                          >
+                        {:else if waiting === 'screen'}
+                          <span class="flex items-center gap-2 text-footnote text-fg-muted" in:fade>
+                            <Spinner size={14} label="Waiting" /> Waiting…
+                          </span>
+                        {:else}
+                          <Button size="sm" variant="primary" onclick={() => allow('screen')}
+                            >Allow Screen Recording</Button
+                          >
+                        {/if}
+                      </div>
+                    </div>
+                  {:else if practice === 'ready'}
                     <button
                       type="button"
                       class="press group flex flex-col items-center gap-3 rounded-[20px] p-4 text-fg-on-stage"
@@ -645,8 +798,19 @@
                 class="flex flex-col gap-2.5 rounded-card border border-border bg-surface p-4 text-callout shadow-[var(--elev-2)]"
               >
                 <li class="flex items-center gap-2.5">
-                  <Icon icon={Check} size={16} class="text-success" aria-hidden="true" />
-                  {env.os === 'windows' ? 'Ready to record your screen' : 'Screen Recording allowed'}
+                  <Icon
+                    icon={Check}
+                    size={16}
+                    class={screenReady ? 'text-success' : 'text-fg-subtle'}
+                    aria-hidden="true"
+                  />
+                  {env.os === 'windows'
+                    ? 'Ready to record your screen'
+                    : screenReady
+                      ? 'Screen Recording allowed'
+                      : screenReopen
+                        ? 'Screen Recording works once Shotmaxxing reopens'
+                        : 'Screen Recording is still off. Record shows how to turn it on.'}
                 </li>
                 <li class="flex items-center gap-2.5">
                   <Icon

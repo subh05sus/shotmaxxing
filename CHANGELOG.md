@@ -12,6 +12,12 @@ can change how things work.
   with them.
 - **Homebrew:** the app the cask installs opens on the first click too, and the cask no longer makes Homebrew warn
   about its `depends_on macos:` line.
+- **Setup sees permissions as they are:** Screen Recording turned on while Shotmaxxing is open shows as on, with a
+  Reopen button (macOS gives it to an open app only after a reopen), and reopening comes back to the same step of
+  setup. A switch that stays off after a trip to System Settings gets a note on what else to try, Allow always opens
+  System Settings for Accessibility, and setup can go on without Screen Recording: the practice take then shows how
+  to turn it on. The record dialog offers Reopen too, and its Screen Recording message says to reopen Shotmaxxing
+  rather than to try again.
 
 ## 0.2.0 (2026-11-16)
 

@@ -23,6 +23,12 @@ mod windows;
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
+/// In a copy of the app started only to read its own permissions: answers and returns true, before anything else
+/// starts, and the copy should then end. False for a normal launch.
+pub fn answer_permission_probe() -> bool {
+    platform::answer_permission_probe()
+}
+
 /// Starts the app and blocks until it quits.
 pub fn run() {
     tracing_subscriber::fmt()
@@ -58,14 +64,20 @@ pub fn run() {
             shortcuts::register(handle)?;
             takes::listen(handle);
             windows::restore_theme(handle);
-            // "launch" tells the UI the app has just started, for the logo's short build.
-            windows::open_home(handle, Some("launch"))?;
+            // "launch" tells the UI the app has just started, for the logo's short build. Reopened by itself (to
+            // finish turning on Screen Recording), it goes back to the page it was on.
+            let launch = match commands::reopened_to() {
+                Some(to) => format!("launch?to={to}"),
+                None => "launch".to_owned(),
+            };
+            windows::open_home(handle, Some(&launch))?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::platform_info,
             commands::permission_status,
             commands::open_permission_settings,
+            commands::relaunch,
             commands::power_status,
             commands::list_sources,
             commands::source_thumbnails,

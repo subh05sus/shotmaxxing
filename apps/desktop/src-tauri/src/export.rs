@@ -40,6 +40,11 @@ impl Drop for Turn<'_> {
 }
 
 impl Exports {
+    /// Whether an export is rendering or waiting its turn.
+    pub fn busy(&self) -> bool {
+        self.jobs.lock().is_ok_and(|jobs| !jobs.is_empty())
+    }
+
     /// Joins the line and waits to be first. `waiting` is called once if there's a wait. `None` when the export is
     /// cancelled while it waits.
     fn wait_turn(&self, id: &str, cancel: &AtomicBool, waiting: impl FnOnce()) -> Option<Turn<'_>> {

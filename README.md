@@ -80,8 +80,12 @@ Your recordings and projects stay where they are.
 
 On macOS, Shotmaxxing needs Screen Recording to record. The microphone and the camera are asked for when you turn
 them on, and Accessibility lets auto zoom notice clicks and typing and lets agents press buttons. The onboarding
-walks you through each one. Recording, export and agent takes on Windows are written but haven't been tested on a
-Windows computer yet, so expect rough edges there. Linux isn't supported yet; it's on the [roadmap](docs/roadmap.md).
+walks you through each one and shows each switch live. Screen Recording starts working once Shotmaxxing reopens, and
+setup has a button for that. If System Settings shows a switch as on but setup still asks for it, macOS is matching
+the switch to an earlier copy of the app (preview builds aren't signed with a fixed identity yet, so an update looks
+like a new app to it): select Shotmaxxing in that list, remove it with the − button, and choose Allow again.
+Recording, export and agent takes on Windows are written but haven't been tested on a Windows computer yet, so expect
+rough edges there. Linux isn't supported yet; it's on the [roadmap](docs/roadmap.md).
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/editor-light.png">

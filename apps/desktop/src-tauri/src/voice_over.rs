@@ -25,6 +25,11 @@ struct Active {
 }
 
 impl VoiceOvers {
+    /// Whether a voice-over is being recorded.
+    pub fn busy(&self) -> bool {
+        self.active.lock().is_ok_and(|active| active.is_some())
+    }
+
     fn take(&self) -> Option<Active> {
         self.active.lock().ok().and_then(|mut active| active.take())
     }

@@ -77,11 +77,14 @@
     checkPower();
     const powerTimer = setInterval(checkPower, 30_000);
 
-    if (location.hash === '#/launch') {
+    const launch = location.hash.match(/^#\/launch(?:\?(.*))?$/);
+    if (launch) {
       // The app has just started: the logo builds itself quickly and opens onto the first page. Setup's welcome
-      // has the full build instead (routes/onboarding).
-      if (settings.onboardingDone || settings.onboardingStep > 0) playIris('launch');
-      go(settings.onboardingDone ? 'home/library' : 'onboarding');
+      // has the full build instead (routes/onboarding). Reopened by itself from setup (to finish turning on
+      // Screen Recording), it goes back to setup, on the step it was on.
+      const setup = !settings.onboardingDone || new URLSearchParams(launch[1]).get('to') === 'onboarding';
+      if (!setup || settings.onboardingStep > 0) playIris('launch');
+      go(setup ? 'onboarding' : 'home/library');
     } else if (!location.hash || location.hash === '#/' || location.hash === '#') {
       go(settings.onboardingDone ? 'home/library' : 'onboarding');
     }

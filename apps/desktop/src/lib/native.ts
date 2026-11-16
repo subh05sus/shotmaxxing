@@ -10,7 +10,8 @@ import NORTHWIND from '../../../../docs/content-packs/northwind.json';
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
 export type PermissionKind = 'screen' | 'microphone' | 'camera' | 'accessibility' | 'input_monitoring';
-export type PermissionState = 'granted' | 'denied' | 'not_determined' | 'not_needed';
+/** `needs_restart`: allowed in System Settings, but macOS gives Screen Recording to the running app only once it reopens. */
+export type PermissionState = 'granted' | 'denied' | 'not_determined' | 'not_needed' | 'needs_restart';
 
 export interface PermissionStatus {
   kind: PermissionKind;
@@ -63,6 +64,8 @@ async function call<T>(
 
 // Browser preview: permissions flip to granted a moment after "opening settings", so the flow can be tried out.
 const previewGrants = new Set<PermissionKind>(['screen', 'microphone']);
+// Turned on while the page is open. On a Mac, Screen Recording turned on then waits for the app to reopen.
+const previewTurnedOn = new Set<PermissionKind>();
 
 export function permissionStatus(): Promise<PermissionStatus[]> {
   const kinds: PermissionKind[] = ['screen', 'microphone', 'camera', 'accessibility', 'input_monitoring'];
@@ -77,12 +80,27 @@ function previewState(kind: PermissionKind): PermissionState {
     if (kind !== 'microphone' && kind !== 'camera') return 'not_needed';
     return previewGrants.has(kind) ? 'granted' : 'denied';
   }
-  return previewGrants.has(kind) ? 'granted' : 'not_determined';
+  if (!previewGrants.has(kind)) return 'not_determined';
+  return kind === 'screen' && previewTurnedOn.has(kind) ? 'needs_restart' : 'granted';
 }
 
 export function openPermissionSettings(kind: PermissionKind): Promise<void> {
   return call('open_permission_settings', { kind }, () => {
-    setTimeout(() => previewGrants.add(kind), 1200);
+    setTimeout(() => {
+      previewGrants.add(kind);
+      previewTurnedOn.add(kind);
+    }, 1200);
+  });
+}
+
+/** Opens Shotmaxxing again, so a Screen Recording permission it was given while open takes effect, on the page `to`
+ *  of Home (its usual first page without one). Refused while it records or works on something, with a message
+ *  saying what. */
+export function relaunch(to?: string): Promise<void> {
+  return call('relaunch', { to: to ?? null }, () => {
+    // Like the app, the page comes back through its launch (and the preview's permissions start over).
+    history.replaceState(null, '', `#/launch${to ? `?to=${to}` : ''}`);
+    location.reload();
   });
 }
 

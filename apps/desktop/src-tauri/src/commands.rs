@@ -2,10 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 use shotmaxxing_core::power::{LowPowerSetting, PowerInputs, PowerPolicy, ThermalState};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::{platform, windows};
+use crate::{captions, export, platform, recording, takes, voice_over, windows};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,6 +33,10 @@ pub enum PermissionState {
     NotDetermined,
     /// The platform doesn't ask for this (screen capture on Windows, for example).
     NotNeeded,
+    /// Allowed in System Settings, but this running copy only gets it once it reopens: macOS answers Screen
+    /// Recording once per process.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    NeedsRestart,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,12 +57,17 @@ pub fn platform_info() -> PlatformInfo {
     PlatformInfo { os: std::env::consts::OS, arch: std::env::consts::ARCH, family: std::env::consts::FAMILY }
 }
 
+/// Off the main thread: on macOS, Screen Recording can take a moment to read (see `platform::permission`).
 #[tauri::command]
-pub fn permission_status() -> Vec<PermissionStatus> {
-    PermissionKind::ALL
-        .into_iter()
-        .map(|kind| PermissionStatus { kind, state: platform::permission(kind) })
-        .collect()
+pub async fn permission_status() -> Vec<PermissionStatus> {
+    tauri::async_runtime::spawn_blocking(|| {
+        PermissionKind::ALL
+            .into_iter()
+            .map(|kind| PermissionStatus { kind, state: platform::permission(kind) })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Asks the system for a permission. Where the system shows its own prompt, that comes first; otherwise (or after
@@ -71,6 +80,65 @@ pub fn open_permission_settings<R: Runtime>(app: AppHandle<R>, kind: PermissionK
     match platform::settings_url(kind) {
         Some(url) => app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string()),
         None => Ok(()),
+    }
+}
+
+/// The argument the app reopens itself with to come back to a page of Home: `--reopen-to onboarding`.
+const REOPEN_TO: &str = "--reopen-to";
+
+/// Opens Shotmaxxing again, for a Screen Recording permission that only a new copy gets, on the page `to` of Home
+/// (its usual first page without one). Refused while something is recording or working, which quitting would cut
+/// short.
+#[tauri::command]
+pub fn relaunch<R: Runtime>(app: AppHandle<R>, to: Option<String>) -> Result<(), String> {
+    if let Some(what) = busy(&app) {
+        return Err(format!("Shotmaxxing can't reopen while {what}. Try again once it's done."));
+    }
+    let to = to.filter(|to| is_page(to));
+    let args: Vec<&str> = to.as_deref().map(|to| vec![REOPEN_TO, to]).unwrap_or_default();
+    // The new copy opens once this one has gone, so it never meets the old menu-bar icon, shortcuts or sockets.
+    // Elsewhere (and in a development build) Tauri restarts it, after letting its plugins clean up.
+    if platform::reopen_after_exit(&args) {
+        app.exit(0);
+    } else {
+        app.request_restart();
+    }
+    Ok(())
+}
+
+/// The page of Home the app asked to come back to when it reopened itself, if any.
+pub fn reopened_to() -> Option<String> {
+    reopen_target(std::env::args_os().skip(1).map(|arg| arg.to_string_lossy().into_owned()))
+}
+
+fn reopen_target(mut args: impl Iterator<Item = String>) -> Option<String> {
+    while let Some(arg) = args.next() {
+        if arg == REOPEN_TO {
+            return args.next().filter(|to| is_page(to));
+        }
+    }
+    None
+}
+
+/// A page of Home as its address names it: lowercase words, dashes and slashes, nothing else.
+fn is_page(to: &str) -> bool {
+    !to.is_empty() && to.len() <= 64 && to.bytes().all(|b| b.is_ascii_lowercase() || b == b'-' || b == b'/')
+}
+
+/// What's running that quitting would cut short, in words for a message.
+fn busy<R: Runtime>(app: &AppHandle<R>) -> Option<&'static str> {
+    if app.state::<recording::Recordings>().is_recording() {
+        Some("it's recording")
+    } else if app.state::<takes::Takes>().is_live() {
+        Some("an agent's take is on")
+    } else if app.state::<export::Exports>().busy() {
+        Some("it's exporting")
+    } else if app.state::<captions::Captioning>().busy() {
+        Some("it's making captions")
+    } else if app.state::<voice_over::VoiceOvers>().busy() {
+        Some("it's recording a voice-over")
+    } else {
+        None
     }
 }
 
@@ -289,4 +357,30 @@ pub fn open_link<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), Strin
         return Err("Only web links can be opened.".into());
     }
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> impl Iterator<Item = String> {
+        list.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>().into_iter()
+    }
+
+    #[test]
+    fn a_reopen_comes_back_to_the_page_it_names() {
+        assert_eq!(reopen_target(args(&[REOPEN_TO, "onboarding"])), Some("onboarding".into()));
+        assert_eq!(reopen_target(args(&["--other", REOPEN_TO, "home/library"])), Some("home/library".into()));
+        assert_eq!(reopen_target(args(&[])), None);
+        assert_eq!(reopen_target(args(&[REOPEN_TO])), None);
+    }
+
+    #[test]
+    fn only_plain_page_names_are_followed() {
+        assert!(is_page("onboarding") && is_page("home/library") && is_page("run-setup"));
+        for odd in ["", "Onboarding", "../x", "a?b=c", "a#b", "x y", "editor/a.mp4", "%2e", &"a".repeat(65)] {
+            assert!(!is_page(odd), "{odd:?}");
+        }
+        assert_eq!(reopen_target(args(&[REOPEN_TO, "../../etc"])), None);
+    }
 }
