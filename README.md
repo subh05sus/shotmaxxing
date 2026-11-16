@@ -11,9 +11,14 @@
 
 <p align="center">
   <a href="#install">Install</a> ·
+  <a href="docs/guides/README.md">Guides</a> ·
   <a href="docs/agents.md">Agents</a> ·
   <a href="docs/architecture.md">Architecture</a> ·
   <a href="docs/roadmap.md">Roadmap</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/hero.gif" width="960" alt="The Shotmaxxing editor playing its sample project: the camera zooms in on a click, on typing and on the result, each zoom on the timeline says why it is there, and the tools change from Zoom to Cursor to Background.">
 </p>
 
 ## Install
