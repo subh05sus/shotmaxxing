@@ -7,10 +7,19 @@
     /** Hide the label visually (it stays the accessible name). */
     hideLabel?: boolean;
     disabled?: boolean;
+    /** `danger`: red while on, for a setting that takes a safety check away. */
+    tone?: 'accent' | 'danger';
     onchange?: (checked: boolean) => void;
   }
 
-  let { checked = $bindable(false), label, hideLabel = true, disabled = false, onchange }: Props = $props();
+  let {
+    checked = $bindable(false),
+    label,
+    hideLabel = true,
+    disabled = false,
+    tone = 'accent',
+    onchange,
+  }: Props = $props();
 
   // macOS switches are small capsules; Windows toggles are larger with a dot that grows when on.
   const mac = $derived(env.os === 'mac');
@@ -35,7 +44,11 @@
     class={[
       'relative inline-flex shrink-0 items-center rounded-full transition-colors duration-[var(--dur-base)]',
       mac ? 'h-[18px] w-[30px]' : 'h-5 w-10 border',
-      checked ? 'bg-accent border-transparent' : mac ? 'bg-fill-strong' : 'border-fg-muted bg-transparent',
+      checked
+        ? [tone === 'danger' ? 'bg-danger' : 'bg-accent', 'border-transparent']
+        : mac
+          ? 'bg-fill-strong'
+          : 'border-fg-muted bg-transparent',
     ]}
   >
     <span
@@ -44,7 +57,7 @@
         mac
           ? 'left-[2px] size-[14px] bg-knob shadow-[var(--knob-shadow)]'
           : 'left-[3px] size-3 group-active:scale-110',
-        !mac && (checked ? 'bg-accent-fg' : 'bg-fg-muted'),
+        !mac && (checked ? (tone === 'danger' ? 'bg-record-fg' : 'bg-accent-fg') : 'bg-fg-muted'),
       ]}
       style:translate={checked ? (mac ? '12px 0' : '20px 0') : '0 0'}
     ></span>

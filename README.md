@@ -65,11 +65,14 @@ the way.
 Connect Claude Code, Claude Desktop, Codex, Cursor, VS Code, Windsurf, OpenCode or Gemini CLI from the **Agents**
 page, then ask for a demo: "Film a 30-second demo of my app's sign-up flow and export it for X."
 
+- Agents plan first: one working in your app's code reads the flow there, writes a plan in plain steps for you to
+  check, tests each step against the screen, then films it in one smooth pass. `/mcp__shotmaxxing__plan-demo` runs
+  the whole routine in Claude Code.
 - Nothing happens until you allow it: the take card asks before an agent sees or records your screen, and before
-  every take.
-- The agent opens the app, finds each control and plans the take, then performs it in one smooth pass.
-- The take card shows every step as it happens. Pause, take over or stop at any time: pressing Esc three times or
-  moving the mouse stops a take straight away.
+  every take, showing the agent's plan. If you trust your agents, **Allow everything** in Settings skips both
+  questions until you quit, and everything below still holds.
+- The take card shows every step as it happens, and a thin red edge goes round the screen while the agent drives.
+  Pause, take over or stop at any time: pressing Esc three times or moving the mouse stops a take straight away.
 - Agents never type into password fields. Sign-ins come to you, and the agent waits until you hand back.
 - The finished take opens in the editor with its zooms already added.
 

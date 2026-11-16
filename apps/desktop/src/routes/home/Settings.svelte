@@ -30,6 +30,7 @@
     type ContentPack,
   } from '../../lib/native';
   import { loadPacks, packs } from '../../lib/packs.svelte';
+  import AllowEverything from './AllowEverything.svelte';
 
   const mac = $derived(env.os === 'mac');
   const version = import.meta.env.VITE_APP_VERSION;
@@ -271,6 +272,13 @@
       {/each}
       <Row label="All shortcuts">
         <Button size="sm" onclick={() => (ui.shortcuts = true)}>Show <Keycap chord="mod+/" /></Button>
+      </Row>
+    </Group>
+
+    <Group title="Agents" footer="Connecting agents, and the rules every take keeps, are on the Agents page.">
+      <AllowEverything />
+      <Row label="Connect agents" description="Claude Code, Codex, Cursor and others, in one click.">
+        <Button size="sm" onclick={() => go('home/agents')}>Open Agents</Button>
       </Row>
     </Group>
 

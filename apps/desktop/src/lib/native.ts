@@ -567,6 +567,10 @@ export interface TakeCardState {
   waiting: string | null;
   /** The hold the person asked for, from the moment they ask until it's lifted. It starts after the current step. */
   hold: 'pause' | 'take_over' | null;
+  /** What the take is for, as the agent showed the person before filming: a title and plain steps. */
+  plan: { title: string; steps: string[] } | null;
+  /** Allow everything let the take through without asking. */
+  trusted: boolean;
   result: {
     beats_done: number;
     stopped: string | null;
@@ -609,6 +613,23 @@ export function handBackTake(id: number): Promise<void> {
 
 export function dismissTake(id: number): Promise<void> {
   return call('dismiss_take', { id }, () => undefined);
+}
+
+/** Whether Allow everything is on: the shotmaxxing command's requests go through without the take card asking. */
+export function agentTrust(): Promise<boolean> {
+  return call('agent_trust', undefined, () => false);
+}
+
+/** Turns Allow everything on or off. It lasts until it's turned off or Shotmaxxing quits. */
+export function setAgentTrust(on: boolean): Promise<void> {
+  return call('set_agent_trust', { on }, () => undefined);
+}
+
+/** Calls `listener` when Allow everything is turned on or off, in any window. Returns a function that stops it. */
+export async function onAgentTrust(listener: (on: boolean) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+  return getCurrentWebviewWindow().listen<boolean>('agent-trust', (event) => listener(event.payload));
 }
 
 /** Calls `listener` whenever the take card changes. Returns a function that stops listening. */

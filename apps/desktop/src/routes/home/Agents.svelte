@@ -1,30 +1,19 @@
 <script lang="ts">
   import { Ai, Bot, Clapperboard, Copy, Hand, Lock, Play, ShieldCheck, Wand } from '@shotmaxxing/ui/icons';
-  import {
-    Button,
-    CheckDraw,
-    Group,
-    Icon,
-    Row,
-    Segmented,
-    StatusDot,
-    Switch,
-    env,
-    toast,
-  } from '@shotmaxxing/ui';
+  import { Button, CheckDraw, Group, Icon, Row, StatusDot, env, toast } from '@shotmaxxing/ui';
   import { onMount } from 'svelte';
   import { STARTER_PROMPTS, type Agent } from '../../lib/sample';
   import { connectAgent, disconnectAgent, mcpCommand, openWindow } from '../../lib/native';
   import { go } from '../../lib/router.svelte';
   import { agents, connectProblem, refreshAgents, type AgentEntry } from '../../lib/agents.svelte';
+  import { trust } from '../../lib/trust.svelte';
+  import AllowEverything from './AllowEverything.svelte';
 
   let command = $state('shotmaxxing');
   onMount(() => {
     void refreshAgents();
     void mcpCommand().then((path) => (command = path));
   });
-  let askMode = $state<'session' | 'every'>('session');
-  let showLiveCard = $state(true);
 
   async function connect(agent: AgentEntry) {
     agent.busy = true;
@@ -106,40 +95,28 @@
 
       <Group
         title="Safety"
-        footer="An agent can always see these rules. A visible Stop button and pressing Esc three times end any take."
+        footer="An agent can always see these rules. Stop on the take card, pressing Esc three times, or moving the mouse ends any take."
       >
         <Row
-          label="Ask before using my mouse and keyboard"
-          description={askMode === 'every'
-            ? 'Asks before every take.'
-            : 'Asks once each session, then remembers until you quit.'}
+          label="Ask before an agent sees the screen"
+          description="Once each agent session, on the take card, which names the program that’s asking."
         >
-          <div class="w-56">
-            <Segmented
-              label="When to ask"
-              size="sm"
-              bind:value={askMode}
-              options={[
-                { value: 'session', label: 'Once a session' },
-                { value: 'every', label: 'Every take' },
-              ]}
-            />
-          </div>
+          <StatusDot tone={trust.on ? 'danger' : 'success'} label={trust.on ? 'Skipped' : 'On'} />
         </Row>
         <Row
-          label="Never type into password fields"
-          description="Agents hand those steps to you. This can’t be turned off."
+          label="Ask before every take"
+          description="The take card shows the plan and each step before anything moves."
         >
-          <span class="flex items-center gap-1.5 text-footnote text-fg-muted"
-            ><Icon icon={Lock} size={13} aria-hidden="true" /> Always on</span
-          >
+          <StatusDot tone={trust.on ? 'danger' : 'success'} label={trust.on ? 'Skipped' : 'On'} />
         </Row>
-        <Row
-          label="Show the live take card"
-          description="A small card shows each step as the agent performs it, with Pause and Take over."
-        >
-          <Switch bind:checked={showLiveCard} label="Show the live take card" />
-        </Row>
+        {#each [{ label: 'Never type into password fields', description: 'Agents hand those steps to you.' }, { label: 'Show the live take card', description: 'Each step as the agent performs it, with Pause, Take over and Stop.' }] as rule (rule.label)}
+          <Row label={rule.label} description={rule.description}>
+            <span class="flex items-center gap-1.5 text-footnote text-fg-muted"
+              ><Icon icon={Lock} size={13} aria-hidden="true" /> Always on</span
+            >
+          </Row>
+        {/each}
+        <AllowEverything />
       </Group>
 
       <Group

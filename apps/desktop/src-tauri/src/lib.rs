@@ -7,6 +7,7 @@
 mod agents;
 mod captions;
 mod commands;
+mod edge;
 mod export;
 mod packs;
 mod platform;
@@ -48,6 +49,7 @@ pub fn run() {
         .manage(tray::IconArea::default())
         .manage(export::Exports::default())
         .manage(takes::Takes::default())
+        .manage(takes::Trust::default())
         .manage(voice_over::VoiceOvers::default())
         .manage(captions::Captioning::default())
         .setup(|app| {
@@ -115,6 +117,8 @@ pub fn run() {
             system::launch_at_login,
             system::set_launch_at_login,
             takes::take_card,
+            takes::agent_trust,
+            takes::set_agent_trust,
             takes::answer_take,
             takes::stop_take,
             takes::pause_take,

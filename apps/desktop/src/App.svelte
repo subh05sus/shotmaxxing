@@ -29,6 +29,7 @@
   import { allCommands, registerCommands, ui } from './lib/commands.svelte';
   import { focusHomeSearch } from './lib/search.svelte';
   import { playIris } from './lib/iris.svelte';
+  import { watchTrust } from './lib/trust.svelte';
   import IrisOverlay from './components/IrisOverlay.svelte';
   import { isTauri, openWindow, platform, powerStatus, setAppTheme, setMenuBarIcon } from './lib/native';
   import WindowChrome from './routes/WindowChrome.svelte';
@@ -59,6 +60,8 @@
       });
     }
     env.material = isTauri;
+    // Allow everything lives in the app; every window shows it as it is.
+    watchTrust();
     // The menu bar icon starts shown; hide it if Settings says so.
     if (isTauri && !settings.menuBarIcon) void setMenuBarIcon(false).catch(() => undefined);
     if (params.get('motion') === 'fades') env.lowPower = true;

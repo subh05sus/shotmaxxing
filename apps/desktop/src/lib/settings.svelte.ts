@@ -40,6 +40,8 @@ interface Settings {
   checkUpdates: boolean;
   updatesCheckedAt: number;
   completedGuides: string[];
+  /** The person has read what Allow everything means, once; turning it on again doesn't ask. */
+  allowEverythingConfirmed: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -67,6 +69,7 @@ const DEFAULTS: Settings = {
   checkUpdates: true,
   updatesCheckedAt: 0,
   completedGuides: [],
+  allowEverythingConfirmed: false,
 };
 
 // Earlier builds stored the default folder itself.

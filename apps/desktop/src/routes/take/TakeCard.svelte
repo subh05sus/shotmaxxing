@@ -24,6 +24,7 @@
     rise,
   } from '@shotmaxxing/ui';
   import { route } from '../../lib/router.svelte';
+  import { trust, turnTrust } from '../../lib/trust.svelte';
   import {
     answerTake,
     closeThisWindow,
@@ -61,6 +62,16 @@
     'Point at Pricing',
   ];
   const HANDOFF = 3;
+  const SAMPLE_PLAN = {
+    title: 'Sign up for Northwind',
+    steps: [
+      'Open the sign-up page in Safari',
+      'Start with Get started and fill in a work email',
+      'Hand over to you for the password',
+      'Create the account and wait for the welcome',
+      'Finish on Pricing',
+    ],
+  };
 
   const initial = route.query.get('state');
   const live = isTauri && !initial;
@@ -167,6 +178,19 @@
   const app = $derived(live ? card?.app || 'the app' : 'Safari');
   const kind = $derived(live ? (card?.kind ?? 'take') : sampleKind);
   const purpose = $derived(live ? card?.purpose || 'see your screen' : 'look at Safari');
+  /** The plan the agent showed the person before filming, in plain steps. */
+  const plan = $derived(live ? (card?.plan ?? null) : SAMPLE_PLAN);
+  /** The list shows the plan while the card asks, then the take's own steps, unless the person chose. */
+  let planChoice = $state<boolean | null>(null);
+  const showPlan = $derived(!!plan && (planChoice ?? phase === 'asking'));
+  const cardId = $derived(card?.id ?? 0);
+  $effect(() => {
+    // A new take starts from what its phase shows.
+    void cardId;
+    planChoice = null;
+  });
+  let sampleTrusted = $state(route.query.get('trusted') === '1');
+  const trusted = $derived(live ? trust.on : sampleTrusted);
   const caller = $derived(live ? (card?.caller ?? null) : SAMPLE_CALLER);
 
   /** Who asked, from the system rather than the request: the agent's program, its app, and who signed that app. */
@@ -237,7 +261,7 @@
 
 <div class="flex h-full items-end justify-end p-6">
   <section
-    class="w-[360px] overflow-hidden rounded-[14px] border border-border bg-elevated text-fg shadow-[var(--elev-float)]"
+    class="flex max-h-full w-[360px] flex-col overflow-hidden rounded-[14px] border border-border bg-elevated text-fg shadow-[var(--elev-float)]"
     aria-label="Agent take"
     in:rise={{ y: 16 }}
   >
@@ -313,8 +337,31 @@
       </div>
     {/if}
 
-    {#if kind === 'take'}
-      <ol class="scroll-room max-h-60 overflow-y-auto" aria-label="Steps">
+    {#if kind === 'take' && plan}
+      <div class="flex items-center gap-2 px-4 pt-2.5">
+        <p class="min-w-0 flex-1 truncate text-footnote">
+          <span class="text-fg-muted">Plan{plan.title ? ' · ' : ''}</span><span class="font-semibold"
+            >{plan.title}</span
+          >
+        </p>
+        <button
+          type="button"
+          class="press shrink-0 rounded-[6px] px-1.5 py-1 text-footnote text-fg-muted hover:text-fg"
+          onclick={() => (planChoice = !showPlan)}>{showPlan ? 'Show steps' : 'Show plan'}</button
+        >
+      </div>
+    {/if}
+    {#if kind === 'take' && showPlan && plan}
+      <ol class="scroll-room max-h-56 overflow-y-auto" aria-label="Plan">
+        {#each plan.steps as step, i (i)}
+          <li class="flex gap-2.5 rounded-[7px] px-2 py-1.5 text-footnote">
+            <span class="tabular w-4 shrink-0 text-right text-fg-subtle">{i + 1}</span>
+            <span class="min-w-0">{step}</span>
+          </li>
+        {/each}
+      </ol>
+    {:else if kind === 'take'}
+      <ol class={['scroll-room overflow-y-auto', plan ? 'max-h-56' : 'max-h-60']} aria-label="Steps">
         {#each beats as beat, i (i)}
           {@const active = i === current && phase !== 'asking' && phase !== 'done' && phase !== 'saving'}
           <li
@@ -460,6 +507,17 @@
     {#if phase === 'running' || phase === 'paused'}
       <p class="flex items-center gap-1.5 border-t border-border px-4 py-2 text-caption text-fg-subtle">
         Press <Keycap chord="escape" /> three times to stop from anywhere.
+      </p>
+    {/if}
+    {#if trusted}
+      <p class="flex items-center gap-2 border-t border-border px-4 py-1.5 text-caption text-fg-muted">
+        <span class="size-1.5 shrink-0 rounded-full bg-danger" aria-hidden="true"></span>
+        <span class="min-w-0 flex-1">Allow everything is on</span>
+        <button
+          type="button"
+          class="press rounded-[6px] px-1.5 py-1 font-medium text-danger hover:bg-fill"
+          onclick={() => (live ? turnTrust(false) : (sampleTrusted = false))}>Turn off</button
+        >
       </p>
     {/if}
   </section>

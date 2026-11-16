@@ -54,7 +54,8 @@ You decide what an agent may do, in the app:
 
 - **Once per session**, before Shotmaxxing shows an agent your screen or records it for the first time, the take card
   asks you. The answer lasts until that agent disconnects.
-- **Every take** asks you again on the take card, listing every step.
+- **Every take** asks you again on the take card, with the agent's plan and every step.
+- **Allow everything**, in Settings › Agents or on the Agents page, skips both questions. See below.
 
 The card says who is asking as the system reports it, not as the agent describes itself: the agent's program, the
 app it runs in and who signed that app (for example "From claude in Terminal · signed by Apple"). Only signers the
@@ -63,6 +64,22 @@ signature that checks out to a root Windows trusts, on the program itself or in 
 when the request didn't come from the `shotmaxxing` command, or when no identified developer signed the app around it.
 On Windows, an app from the Store or another package whose program isn't signed itself gets neither: its package's
 signature isn't checked.
+
+### Allow everything
+
+When you trust the agents you've connected, turn on **Allow everything**. The take card then stops asking: agents see
+the screen and film takes straight away. The first time you turn it on, Shotmaxxing says what it skips and what still
+holds:
+
+- the take card still follows every take, with Pause, Take over and Stop;
+- pressing Esc three times or moving the mouse still stops a take at once;
+- takes still never type into password fields;
+- a red edge still goes round the screen while an agent moves the pointer and types.
+
+It only lets requests from the `shotmaxxing` command through; any other program that connects still asks. It lasts
+until you turn it off or quit Shotmaxxing, and it isn't saved anywhere, so no program can turn it on by changing a
+file. While it's on, the menu-bar icon (the tray icon on Windows) wears a red dot, and the take card says so, with a
+button to turn it off.
 
 ## Tools
 
@@ -81,17 +98,28 @@ signature isn't checked.
 | `style_project` | Wallpaper, canvas shape, padding, corners, shadow and cursor size |
 | `export_project` | Renders MP4 (H.264), HEVC or GIF, with progress, and can be cancelled. `png` saves one frame (`at`, in seconds into the recording) styled like the video. A screenshot project (`kind: screenshot` in `project_info`) exports only as PNG, at its own pixels unless `size` is given |
 | `prepare_take` | Opens an app, finds its window and lists its controls with ids to use as refs, plus a picture of the window |
-| `perform_take` | Films a take script: Shotmaxxing moves the pointer, clicks and types at a human pace while it records, then saves the project (and exports when the script asks). `dry_run` shows the timeline first |
+| `check_take` | Checks a take script against the app on screen now, without touching anything: each target that's missing, renamed, covered, not prepared or a password field, with something to try instead, and notes on controls that are disabled or only appear later |
+| `perform_take` | Films a take script: Shotmaxxing moves the pointer, clicks and types at a human pace while it records, then saves the project (and exports when the script asks). `dry_run` shows the timeline first. `plan` (a title and plain steps) shows the plan on the take card |
 | `validate_take` | Checks a take script and lists any problems |
 
 ## A planned take
 
-The best demos are planned. The agent writes the whole performance as a take script, and Shotmaxxing performs it
-while it records:
+The best demos are planned, the way you'd plan one yourself: learn the flow, write the steps down, check them on
+screen, then film. The agent writes the whole performance as a take script, and Shotmaxxing performs it while it
+records:
 
 - the pointer travels in gentle arcs, timed by distance and target size;
 - it settles before each click, and pauses after it so viewers see the result;
 - typing runs at a readable pace.
+
+An agent working in your app's code starts there:
+
+1. **Learn the flow from the code**: the routes or screens the demo passes through, the exact text of every button,
+   link and field it uses, and what has to be running (a dev server, test data, a signed-in user).
+2. **Write the plan** in plain words: a title and up to 12 short steps, such as "Open the sign-up page" and "Fill in a
+   work email". The agent shows it to you and films once you agree, or straight away if you asked it to just do it.
+
+Then:
 
 1. `prepare_take` with `{ "app": "Safari" }`. The reply lists the window's controls, such as `text_field.search` or
    `button.export`, with a picture of the window.
@@ -108,10 +136,19 @@ while it records:
    output: { mode: video }
    ```
 
-3. `perform_take` with `{ "script": …, "dry_run": true }` shows the timeline. Then run it without `dry_run`.
-4. The take card asks you first, listing every step. Once you allow it, the card follows the take live.
-5. The reply has the project, how far the take got and, for `mode: video`, the exported file. A finished take opens
+3. `check_take` with `{ "script": … }` looks up every target in the window as it is now and lists what would stop
+   the take, each with something to try instead (a control with a similar label, or `{ find: … }` for one that only
+   appears later). The agent fixes those and checks again.
+4. `perform_take` with `{ "script": …, "dry_run": true }` shows the timeline. Then run it without `dry_run`, with the
+   plan: `"plan": { "title": "Sign up", "steps": ["Open the sign-up page", …] }`.
+5. The take card asks you first, with the plan and every step. Once you allow it, the card follows the take live.
+6. The reply has the project, how far the take got and, for `mode: video`, the exported file. A finished take opens
    in the editor unless the script says `mode: video` or `mode: project`.
+
+The `plan-demo` prompt asks an agent to do all of this. In Claude Code it's the `/mcp__shotmaxxing__plan-demo`
+command. Claude Code keeps only one word for each of a prompt's arguments, so type the command by itself and say what
+to film when the agent asks, or give one word each (`/mcp__shotmaxxing__plan-demo signup Safari`). Agents that show
+a form for a prompt's arguments take whole phrases.
 
 Targets can be any of these:
 
@@ -138,9 +175,12 @@ Anything an agent does can be changed later in the editor: open the project from
 
 - **Asking first.** Shotmaxxing shows an agent your screen or records it only after you allow that agent's session,
   and films a take only after you allow that take, both on the take card. If nobody answers within two minutes, it
-  doesn't happen. An agent that calls a request off takes the question off the card too.
+  doesn't happen. An agent that calls a request off takes the question off the card too. Allow everything skips
+  these questions for the `shotmaxxing` command, and nothing else on this list.
 - **Stopping a take.** Press Stop on the take card, press Esc three times, or move the mouse. The take stops at once
   and leaves the rest to you.
+- **A red edge.** While a take moves the pointer and types, a thin red edge goes round every screen, so it's clear
+  whose hands are on the computer. It lets clicks through and is left out of the recording.
 - **Pausing or taking over.** Pause on the take card holds the take once the step in progress ends, until you press
   Resume. Take over hands you control the same way, until you press Hand back (or ⌥⌘Return, Ctrl+Alt+Enter on
   Windows). The time on hold is cut from the video, and the agent hears about it.
@@ -177,6 +217,7 @@ The same work is available from the terminal, where it runs with the terminal's 
 - `shotmaxxing zoom`
 - `shotmaxxing take validate` and `shotmaxxing take schema`
 - `shotmaxxing take prepare`, which lists an app's controls for a take script
+- `shotmaxxing take check`, which checks a take script against the app on screen now (`--window` picks the window)
 - `shotmaxxing take run`, which performs a take script there and then. You started it yourself, so no take card asks
   first; Esc three times, moving the mouse or Ctrl-C still stops it
 - `shotmaxxing open`, which opens a project in the app's editor (opening the app first if it isn't running)

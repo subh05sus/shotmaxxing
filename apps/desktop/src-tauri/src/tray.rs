@@ -94,10 +94,103 @@ pub fn set_recording<R: Runtime>(app: &AppHandle<R>, recording: bool) {
     }
 }
 
+/// The menu-bar icon: a template image, which follows the menu bar's light or dark appearance on macOS.
+const ICON: &[u8] = include_bytes!("../icons/tray-template.png");
+
+/// Puts a small red dot on the menu-bar icon while Allow everything is on, or takes it off, and says so in the
+/// icon's tooltip. On macOS the dot is a layer over the template image, so the glyph still follows the menu bar.
+pub fn set_trusted<R: Runtime>(app: &AppHandle<R>, on: bool) {
+    let Some(tray) = app.tray_by_id("main") else { return };
+    let tooltip = if on { "Shotmaxxing · Allow everything is on" } else { "Shotmaxxing" };
+    if let Err(error) = tray.set_tooltip(Some(tooltip)) {
+        tracing::warn!(%error, "couldn't change the menu-bar icon's tooltip");
+    }
+    #[cfg(target_os = "macos")]
+    let marked = tray.with_inner_tray_icon(move |icon| {
+        if let Some(item) = icon.ns_status_item() {
+            dot::set(&item, on);
+        }
+    });
+    #[cfg(not(target_os = "macos"))]
+    let marked = Image::from_bytes(ICON)
+        .and_then(|icon| tray.set_icon(Some(if on { dot::drawn(&icon) } else { icon })));
+    if let Err(error) = marked {
+        tracing::warn!(%error, "couldn't mark the menu-bar icon");
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod dot {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSColor, NSStatusItem};
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use objc2_foundation::NSString;
+    use objc2_quartz_core::CALayer;
+
+    /// The dot's layer, by name, so it's found again to take off.
+    const NAME: &str = "allow-everything";
+    /// Its size, in points, and the icon's: the status item draws its image 18 points high, in the middle.
+    const SIZE: f64 = 7.0;
+    const ICON: f64 = 18.0;
+
+    pub fn set(item: &NSStatusItem, on: bool) {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        let Some(button) = item.button(mtm) else { return };
+        button.setWantsLayer(true);
+        let Some(layer) = button.layer() else { return };
+        let name = NSString::from_str(NAME);
+        // SAFETY: the button's own layer's sublayers, read on the main thread.
+        if let Some(sublayers) = unsafe { layer.sublayers() } {
+            for sublayer in sublayers.iter().filter(|l| l.name().is_some_and(|n| *n == *name)) {
+                sublayer.removeFromSuperlayer();
+            }
+        }
+        if !on {
+            return;
+        }
+        let bounds = button.bounds();
+        let (w, h) = (bounds.size.width, bounds.size.height);
+        // At the icon's top right corner, a little in.
+        let x = w / 2.0 + ICON / 2.0 - SIZE + 1.0;
+        let top = (h - ICON) / 2.0 - 1.0;
+        let y = if button.isFlipped() { top } else { h - top - SIZE };
+        let dot = CALayer::new();
+        dot.setName(Some(&name));
+        dot.setBackgroundColor(Some(&NSColor::systemRedColor().CGColor()));
+        dot.setCornerRadius(SIZE / 2.0);
+        dot.setFrame(CGRect::new(CGPoint::new(x, y), CGSize::new(SIZE, SIZE)));
+        layer.addSublayer(&dot);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod dot {
+    use tauri::image::Image;
+
+    /// The icon with a red dot at its top right, a clear ring round it so it reads on any taskbar.
+    pub fn drawn(icon: &Image<'_>) -> Image<'static> {
+        let (w, h) = (icon.width(), icon.height());
+        let mut rgba = icon.rgba().to_vec();
+        let radius = w.min(h) as f64 * 0.2;
+        let (cx, cy) = (w as f64 - radius - 1.0, radius + 1.0);
+        for y in 0..h {
+            for x in 0..w {
+                let d = ((x as f64 + 0.5 - cx).powi(2) + (y as f64 + 0.5 - cy).powi(2)).sqrt();
+                let at = ((y * w + x) * 4) as usize;
+                if d <= radius {
+                    rgba[at..at + 4].copy_from_slice(&[255, 59, 48, 255]);
+                } else if d <= radius + 1.5 {
+                    rgba[at + 3] = 0;
+                }
+            }
+        }
+        Image::new_owned(rgba, w, h)
+    }
+}
+
 pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     TrayIconBuilder::with_id("main")
-        .icon(Image::from_bytes(include_bytes!("../icons/tray-template.png"))?)
-        // A template image follows the menu bar's light or dark appearance on macOS.
+        .icon(Image::from_bytes(ICON)?)
         .icon_as_template(true)
         .tooltip("Shotmaxxing")
         .menu(&menu(app, false)?)

@@ -5,7 +5,12 @@
 //! The person decides first, on the take card: once per agent session before an agent may see or record the screen,
 //! and before every take. The card names who asked as the system reports it (the connecting process, the agent that
 //! started it, the app that runs in and who signed that app), never as the request claims. A take then plays out on
-//! the card, where Stop and Hand back reach it straight away.
+//! the card, where Stop and Hand back reach it straight away, under the plan the agent showed the person, and a red
+//! edge goes round the screen while the agent drives.
+//!
+//! With Allow everything on ([`Trust`]), the card doesn't ask: the shotmaxxing command's requests go through, and
+//! the card still follows each take with its buttons. Everything else stays: Esc three times or moving the mouse
+//! stops a take, password fields are never typed into, and the red edge shows.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -16,12 +21,13 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use shotmaxxing_capture::{Target, Thumbnail};
 use shotmaxxing_control::{
-    Caller, FromApp, PROTOCOL, Peer, Performed, Picture, Sender, Server, TakeRequest, TakeResult, ToApp,
+    Caller, FromApp, PROTOCOL, Peer, Performed, Picture, Sender, Server, TakePlan, TakeRequest, TakeResult,
+    ToApp,
 };
 use shotmaxxing_core::take::OutputMode;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
-use crate::{recording, windows};
+use crate::{edge, recording, tray, windows};
 
 /// How long the card waits for an answer before saying no for the person.
 const ASK_SECONDS: u64 = 120;
@@ -87,11 +93,63 @@ pub struct Card {
     /// The hold the person asked for, from the moment they ask until it's lifted.
     pub hold: Option<Hold>,
     pub result: Option<TakeResult>,
+    /// What the take is for, as the agent showed the person before filming.
+    pub plan: Option<Plan>,
+    /// Allow everything let it through without asking.
+    pub trusted: bool,
 }
 
 impl Card {
     fn live(&self) -> bool {
         matches!(self.phase, Phase::Asking | Phase::Running | Phase::Paused | Phase::Waiting)
+    }
+
+    /// Whether the agent has the pointer and keyboard right now: a take playing, not on hold or being saved.
+    fn driving(&self) -> bool {
+        self.kind == Kind::Take && self.phase == Phase::Running && self.beat < self.beats.len()
+    }
+}
+
+/// A take's plan on the card, tidied: a title and plain steps, each one short line.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Plan {
+    pub title: String,
+    pub steps: Vec<String>,
+}
+
+/// The most steps a card shows, and how long a step and the title may be.
+const PLAN_STEPS: usize = 12;
+const STEP_CHARS: usize = 140;
+const TITLE_CHARS: usize = 60;
+
+impl Plan {
+    /// The plan an agent sent, made safe to show; `None` when it has no steps.
+    fn tidy(plan: &TakePlan) -> Option<Self> {
+        let steps: Vec<String> = plan
+            .steps
+            .iter()
+            .map(|step| one_line(step, STEP_CHARS))
+            .filter(|step| !step.is_empty())
+            .take(PLAN_STEPS)
+            .collect();
+        (!steps.is_empty()).then(|| Self { title: one_line(&plan.title, TITLE_CHARS), steps })
+    }
+}
+
+/// Allow everything, from Settings: agents' requests go through without the card asking, until it's turned off or
+/// Shotmaxxing quits. It's kept in memory only, so no program can switch it on by changing a file.
+#[derive(Default)]
+pub struct Trust(AtomicBool);
+
+impl Trust {
+    pub fn on(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    /// Whether `who` goes through without asking: Allow everything is on, and the system says the shotmaxxing
+    /// command connected, so a program speaking the protocol by itself still asks.
+    fn lets(&self, who: &Who) -> bool {
+        self.on() && who.caller.as_ref().is_some_and(Caller::is_command)
     }
 }
 
@@ -172,18 +230,26 @@ impl Who {
             waiting: None,
             hold: None,
             result: None,
+            plan: None,
+            trusted: false,
         }
     }
 }
 
 /// An agent's name as it gave it, made safe to show: one line, at most 40 characters.
 fn tidy_name(name: &str) -> String {
-    let flat: String = name.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let name = one_line(name, 40);
+    if name.is_empty() { "An agent".into() } else { name }
+}
+
+/// Text an agent sent, made safe to show: one line, its spaces collapsed, at most `most` characters.
+fn one_line(text: &str, most: usize) -> String {
+    let flat: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
     let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
-    match flat.chars().count() {
-        0 => "An agent".into(),
-        n if n > 40 => format!("{}…", flat.chars().take(39).collect::<String>()),
-        _ => flat,
+    if flat.chars().count() > most {
+        format!("{}…", flat.chars().take(most - 1).collect::<String>())
+    } else {
+        flat
     }
 }
 
@@ -325,13 +391,22 @@ fn film<R: Runtime>(app: &AppHandle<R>, conn: &mut Conn, take: TakeRequest) {
     card.app = take.script.app.clone().unwrap_or_default();
     card.beats = take.beats.clone();
     card.seconds = take.seconds;
-    let id = match takes.ask(app, conn, card) {
-        Ok((id, true)) => id,
-        Ok((id, false)) => {
-            takes.forget(app, id);
-            return refuse(conn, "The person said no to this take in Shotmaxxing.".into());
+    card.plan = take.plan.as_ref().and_then(Plan::tidy);
+    let id = if app.state::<Trust>().lets(&conn.who) {
+        card.trusted = true;
+        match takes.put_up(app, conn, card, Phase::Running) {
+            Ok(id) => id,
+            Err(reason) => return refuse(conn, reason),
         }
-        Err(reason) => return refuse(conn, reason),
+    } else {
+        match takes.ask(app, conn, card) {
+            Ok((id, true)) => id,
+            Ok((id, false)) => {
+                takes.forget(app, id);
+                return refuse(conn, "The person said no to this take in Shotmaxxing.".into());
+            }
+            Err(reason) => return refuse(conn, reason),
+        }
     };
     // The person may have started recording while the card asked.
     if app.state::<recording::Recordings>().is_recording() {
@@ -490,7 +565,8 @@ impl Takes {
     /// Lets the session see and record the screen, asking the person the first time. `Err` says why not.
     fn allow<R: Runtime>(&self, app: &AppHandle<R>, conn: &Conn, purpose: &str) -> Result<(), String> {
         let key = conn.who.key();
-        if self.0.lock().map_err(|_| busy())?.allowed.contains(&key) {
+        // Not remembered for the session: turning Allow everything off asks again from the next request.
+        if app.state::<Trust>().lets(&conn.who) || self.0.lock().map_err(|_| busy())?.allowed.contains(&key) {
             return Ok(());
         }
         let mut card = conn.who.card(Kind::Access);
@@ -509,28 +585,8 @@ impl Takes {
 
     /// Puts `card` up and waits for the person's answer: the card's id, and whether they allowed it. The card goes
     /// away by itself when the agent calls the request off or goes away, or after two minutes.
-    fn ask<R: Runtime>(
-        &self,
-        app: &AppHandle<R>,
-        conn: &Conn,
-        mut card: Card,
-    ) -> Result<(u64, bool), String> {
-        let id = {
-            let mut inner = self.0.lock().map_err(|_| busy())?;
-            if inner.card.as_ref().is_some_and(Card::live) {
-                return Err(
-                    "Shotmaxxing is busy with another agent request. Try again when it's done.".into()
-                );
-            }
-            inner.next += 1;
-            card.id = inner.next;
-            card.phase = Phase::Asking;
-            let id = card.id;
-            inner.card = Some(card);
-            inner.answer = Some(conn.events.clone());
-            id
-        };
-        self.show(app);
+    fn ask<R: Runtime>(&self, app: &AppHandle<R>, conn: &Conn, card: Card) -> Result<(u64, bool), String> {
+        let id = self.put_up(app, conn, card, Phase::Asking)?;
         let deadline = Instant::now() + Duration::from_secs(ASK_SECONDS);
         loop {
             match conn.rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
@@ -546,6 +602,34 @@ impl Takes {
                 }
             }
         }
+    }
+
+    /// Puts `card` up in `phase`, and returns its id: asking, with the person's answer going to `conn`, or already
+    /// running when Allow everything let it through.
+    fn put_up<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        conn: &Conn,
+        mut card: Card,
+        phase: Phase,
+    ) -> Result<u64, String> {
+        let id = {
+            let mut inner = self.0.lock().map_err(|_| busy())?;
+            if inner.card.as_ref().is_some_and(Card::live) {
+                return Err(
+                    "Shotmaxxing is busy with another agent request. Try again when it's done.".into()
+                );
+            }
+            inner.next += 1;
+            card.id = inner.next;
+            card.phase = phase;
+            let id = card.id;
+            inner.card = Some(card);
+            inner.answer = (phase == Phase::Asking).then(|| conn.events.clone());
+            id
+        };
+        self.show(app);
+        Ok(id)
     }
 
     /// The take on card `id` starts.
@@ -648,6 +732,7 @@ impl Takes {
             change(card);
             card.clone()
         };
+        edge::set(app, card.driving());
         let _ = app.emit_to("take", "take-card", &card);
     }
 
@@ -690,8 +775,11 @@ impl Takes {
             }
             _ => false,
         };
-        if forgotten && let Some(window) = app.get_webview_window("take") {
-            let _ = window.close();
+        if forgotten {
+            edge::set(app, false);
+            if let Some(window) = app.get_webview_window("take") {
+                let _ = window.close();
+            }
         }
     }
 
@@ -707,6 +795,23 @@ impl Takes {
 
 fn busy() -> String {
     "Shotmaxxing couldn't reach the take card.".into()
+}
+
+/// Whether Allow everything is on.
+#[tauri::command]
+pub fn agent_trust(trust: State<'_, Trust>) -> bool {
+    trust.on()
+}
+
+/// Turns Allow everything on or off, from Settings, the Agents page or the take card. It lasts until it's turned
+/// off or Shotmaxxing quits; the menu-bar icon wears a red dot while it's on, and every window hears of the change.
+#[tauri::command]
+pub fn set_agent_trust<R: Runtime>(app: AppHandle<R>, trust: State<'_, Trust>, on: bool) {
+    if trust.0.swap(on, Ordering::SeqCst) != on {
+        tracing::info!(on, "Allow everything");
+    }
+    tray::set_trusted(&app, on);
+    let _ = app.emit("agent-trust", on);
 }
 
 /// What the take card shows now, if anything.
@@ -771,7 +876,67 @@ pub fn dismiss_take(takes: State<'_, Takes>, id: u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::tidy_name;
+    use super::*;
+
+    fn caller(program: &str) -> Caller {
+        Caller {
+            pid: 42,
+            program: program.into(),
+            path: format!("/Applications/Shotmaxxing.app/Contents/MacOS/{program}"),
+            agent: Some("claude".into()),
+            app: Some("Terminal".into()),
+            signer: Some("Apple".into()),
+            checked: true,
+        }
+    }
+
+    #[test]
+    fn allow_everything_lets_only_the_command_through() {
+        let trust = Trust::default();
+        let who = |caller: Option<Caller>| Who { client: "Claude Code".into(), session: "s".into(), caller };
+        assert!(!trust.lets(&who(Some(caller("shotmaxxing")))), "off by default");
+        trust.0.store(true, Ordering::SeqCst);
+        assert!(trust.lets(&who(Some(caller("shotmaxxing")))));
+        assert!(trust.lets(&who(Some(caller("shotmaxxing.exe")))));
+        // Another program speaking the protocol, or one the system can't name, still asks.
+        assert!(!trust.lets(&who(Some(caller("python3")))));
+        assert!(!trust.lets(&who(None)));
+    }
+
+    #[test]
+    fn plans_are_tidied_for_the_card() {
+        let plan = TakePlan {
+            title: "  Sign-up\nflow ".into(),
+            steps: vec!["Click  Get started".into(), "\t".into(), "x".repeat(300)],
+        };
+        let tidy = Plan::tidy(&plan).unwrap();
+        assert_eq!(tidy.title, "Sign-up flow");
+        assert_eq!(tidy.steps.len(), 2, "the blank step goes");
+        assert_eq!(tidy.steps[0], "Click Get started");
+        assert_eq!(tidy.steps[1].chars().count(), STEP_CHARS);
+        let many = TakePlan { title: String::new(), steps: (0..30).map(|n| format!("Step {n}")).collect() };
+        assert_eq!(Plan::tidy(&many).unwrap().steps.len(), PLAN_STEPS);
+        assert_eq!(Plan::tidy(&TakePlan { title: "Empty".into(), steps: vec![" ".into()] }), None);
+    }
+
+    #[test]
+    fn the_agent_drives_only_while_a_take_plays() {
+        let mut card = Who { client: "A".into(), session: "s".into(), caller: None }.card(Kind::Take);
+        card.beats = vec!["Click".into(), "Type".into()];
+        assert!(!card.driving(), "asking");
+        card.phase = Phase::Running;
+        assert!(card.driving());
+        card.beat = 2;
+        assert!(!card.driving(), "being saved");
+        card.beat = 1;
+        for phase in [Phase::Paused, Phase::Waiting, Phase::Done, Phase::Stopped] {
+            card.phase = phase;
+            assert!(!card.driving(), "{phase:?}");
+        }
+        card.phase = Phase::Running;
+        card.kind = Kind::Access;
+        assert!(!card.driving(), "access doesn't move anything");
+    }
 
     #[test]
     fn agents_names_are_one_short_line() {
