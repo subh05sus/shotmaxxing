@@ -3,18 +3,23 @@ import { ArrowRightIcon } from '@pikaicons/core-free';
 import type { Release } from '@/lib/release';
 import { Icon } from '@/components/site/icon';
 import { SplitHeading } from '@/components/site/split-heading';
+import { HeroLight } from './hero-light';
 import { HeroVideo } from './hero-video';
 import { HeroInstall, PlatformLinks } from './platforms';
 
 export function Hero({ release }: { release: Release }) {
   return (
-    <section className="relative -mt-[4.25rem]" aria-labelledby="hero-title">
-      <div className="on-lime pt-[4.25rem]">
+    <section className="relative -mt-14" aria-labelledby="hero-title">
+      <div className="frame relative isolate mt-(--frame-gap) overflow-hidden bg-stage pt-14">
+        {/* The light. Its dark horizon rises behind the buttons and the video. */}
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[92%]">
+          <HeroLight />
+        </div>
         <div className="shell pt-14 pb-[clamp(9rem,22vw,19rem)] sm:pt-20">
           <p className="flex justify-center" data-rise>
             <a
               href={release.notes}
-              className="press group inline-flex h-9 items-center gap-2 rounded-full bg-lime-ink px-1.5 pr-3.5 text-[13px] font-medium text-lime"
+              className="press group inline-flex h-9 items-center gap-2 rounded-full bg-graphite-2 px-1.5 pr-3.5 text-[13px] font-medium text-paper shadow-lift ring-1 ring-line-strong ring-inset hover:bg-graphite-3"
             >
               <span className="rounded-full bg-lime px-2 py-0.5 font-mono text-[11px] font-semibold text-lime-ink">
                 v{release.version}
@@ -26,12 +31,12 @@ export function Hero({ release }: { release: Release }) {
           <SplitHeading
             as="h1"
             onLoad
-            className="display mx-auto mt-6 max-w-[14ch] text-center text-[clamp(3rem,8vw,7rem)]"
+            className="display mx-auto mt-6 max-w-[14ch] text-center text-[clamp(3rem,8vw,7rem)] text-lime-ink"
           >
             <span id="hero-title">Demos that edit themselves.</span>
           </SplitHeading>
           <p
-            className="mx-auto mt-6 max-w-[52ch] text-center text-[clamp(1.05rem,1.5vw,1.25rem)] leading-[1.5] text-lime-ink-muted"
+            className="mx-auto mt-6 max-w-[52ch] text-center text-[clamp(1.05rem,1.5vw,1.25rem)] leading-[1.5] font-medium text-lime-ink/85"
             data-rise
           >
             Record your screen, or let an AI agent film it. Shotmaxxing adds the zooms, smooths the cursor and
@@ -41,7 +46,7 @@ export function Hero({ release }: { release: Release }) {
             <HeroInstall />
             <Link
               href="/docs"
-              className="press group inline-flex h-13 items-center gap-2 rounded-full px-6 text-[16px] font-semibold ring-2 ring-lime-ink/80 ring-inset hover:bg-lime-ink-subtle"
+              className="press group inline-flex h-13 items-center gap-2 rounded-full bg-graphite-2 px-6 text-[16px] font-semibold text-paper ring-1 ring-line-strong ring-inset hover:bg-graphite-3"
             >
               Read the guides
               <Icon icon={ArrowRightIcon} size={18} act="nudge" />
@@ -52,7 +57,7 @@ export function Hero({ release }: { release: Release }) {
           </div>
         </div>
       </div>
-      {/* The video sits across the edge between the lime and the graphite below. */}
+      {/* The video sits across the frame's bottom edge. */}
       <div className="shell relative -mt-[clamp(7rem,19vw,16.5rem)]" data-rise>
         <HeroVideo />
       </div>

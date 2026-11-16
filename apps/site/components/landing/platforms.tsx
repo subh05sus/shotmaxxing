@@ -28,7 +28,7 @@ export function HeroInstall() {
         e.preventDefault();
         chooseOs(os);
       }}
-      className="press group inline-flex h-13 items-center gap-2.5 rounded-full bg-lime-ink px-7 text-[16px] font-semibold text-lime shadow-[0_14px_30px_-12px_var(--shadow)] hover:bg-stage"
+      className="press group inline-flex h-13 items-center gap-2.5 rounded-full bg-lime px-7 text-[16px] font-semibold text-lime-ink shadow-[0_14px_30px_-12px_var(--lime-glow)] hover:bg-lime-hover"
     >
       <Icon icon={DownloadDownIcon} size={19} act="drop" />
       {os === 'mac' ? 'Download for Mac' : os === 'windows' ? 'Download for Windows' : 'Install free'}
@@ -53,8 +53,8 @@ export function PlatformLinks() {
             className={cn(
               'press hit grid size-11 place-items-center rounded-full transition-colors',
               os === o
-                ? 'bg-lime-ink text-lime'
-                : 'bg-lime-ink-subtle text-lime-ink hover:bg-lime-ink hover:text-lime',
+                ? 'bg-paper text-stage shadow-lift'
+                : 'bg-graphite-2 text-paper-muted ring-1 ring-line-strong ring-inset hover:bg-graphite-3 hover:text-paper',
             )}
           >
             <Logo size={19} />

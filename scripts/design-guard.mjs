@@ -30,6 +30,8 @@ const COLOUR_FILES = [
   'apps/desktop/src/lib/wallpapers.ts',
   'apps/desktop/src/lib/scenes.css',
   'apps/site/app/globals.css',
+  // React Bits' GradientASCII, used as is: its default colours are part of the component.
+  'apps/site/components/site/gradient-ascii.tsx',
 ];
 
 const RULES = [

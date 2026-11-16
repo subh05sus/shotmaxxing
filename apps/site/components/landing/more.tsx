@@ -36,12 +36,16 @@ const SAFETY: { icon: IconData; title: string; text: string }[] = [
 
 export function Agents() {
   return (
-    <section className="on-lime relative overflow-hidden py-24 sm:py-28" aria-labelledby="agents-title">
+    <section
+      className="frame on-lime relative overflow-hidden pt-28 pb-24 sm:pt-32 sm:pb-28"
+      aria-labelledby="agents-title"
+    >
+      <p className="notch eyebrow flex h-11 items-center gap-2 px-6 text-lime">
+        <span aria-hidden className="size-1.5 rounded-full bg-lime" />
+        Agents
+      </p>
       <div className="shell">
-        <p className="eyebrow text-lime-ink-muted" data-rise>
-          Agents
-        </p>
-        <SplitHeading className="display mt-4 max-w-[15ch] text-[clamp(2.8rem,7vw,6.2rem)]">
+        <SplitHeading className="display max-w-[15ch] text-[clamp(2.8rem,7vw,6.2rem)]">
           <span id="agents-title">Or ask an agent to film it.</span>
         </SplitHeading>
         <p className="measure mt-6 text-[17px] leading-relaxed text-lime-ink-muted" data-rise>
@@ -156,7 +160,13 @@ export function Faq() {
 
 export function FinalCta({ release }: { release: Release }) {
   return (
-    <section className="on-lime relative overflow-hidden py-24 sm:py-32" aria-labelledby="final-title">
+    <section
+      className="frame on-lime relative mb-3 overflow-hidden pt-28 pb-24 sm:mb-4 sm:pt-36 sm:pb-32"
+      aria-labelledby="final-title"
+    >
+      <p className="notch eyebrow flex h-11 items-center gap-2 px-6 text-paper-muted">
+        Free and open source · v{release.version}
+      </p>
       <div className="shell text-center">
         <SplitHeading className="display mx-auto max-w-[12ch] text-[clamp(3.2rem,10vw,9rem)]">
           <span id="final-title">Film your next demo.</span>

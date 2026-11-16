@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { Icon } from './icon';
 import { AppIcon } from './mark';
 import { MobileMenu } from './mobile-menu';
+import { NavShell } from './nav-shell';
 
 const LINKS = [
   { href: '/docs', label: 'Guides' },
@@ -15,13 +16,13 @@ const LINKS = [
 ];
 
 /** The top bar: a floating capsule, solid (no blur), that stays at the top as you scroll. */
-export async function Nav({ download = '/#install' }: { download?: string }) {
+export async function Nav({ download = '/#install', dock = false }: { download?: string; dock?: boolean }) {
   const sections = await getNav();
   return (
-    <header className="sticky top-0 z-40 px-3 pt-3 sm:px-4">
+    <NavShell dock={dock}>
       <nav
         aria-label="Main"
-        className="mx-auto flex h-14 max-w-[76rem] items-center gap-2 rounded-full border border-line-strong bg-graphite-2 pr-2 pl-2 shadow-lift"
+        className="nav-bar mx-auto flex h-14 max-w-[76rem] items-center gap-2 border border-line-strong bg-graphite-2 pr-2 pl-2 shadow-lift"
       >
         <Link
           href="/"
@@ -56,6 +57,6 @@ export async function Nav({ download = '/#install' }: { download?: string }) {
           <MobileMenu links={LINKS} sections={sections} download={download} />
         </div>
       </nav>
-    </header>
+    </NavShell>
   );
 }

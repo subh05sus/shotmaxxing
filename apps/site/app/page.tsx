@@ -10,7 +10,7 @@ export default function Home() {
   const r = release();
   return (
     <>
-      <Nav />
+      <Nav dock />
       <main>
         <Hero release={r} />
         <Tour />

@@ -398,6 +398,14 @@ svg[data-act='lift'] {
   }
 }
 
+/* The hero's light (components/landing/hero-light.tsx), from the shadow's edge to the brightest point. */
+:root {
+  --hero-light-1: #1ed849;
+  --hero-light-2: #f6f8ff;
+  --hero-light-3: #a7ffa5;
+  --hero-light-4: #38f85c;
+}
+
 /* Code colours: Shiki writes var(--shiki-…) instead of colours, so code takes the site's palette. */
 :root {
   --shiki-foreground: var(--paper);
@@ -560,4 +568,127 @@ svg[data-act='lift'] {
   .doc .line {
     display: inline;
   }
+}
+
+/* Frames and notches: a section drawn as a rounded card inset from the page, with a tab of page colour cut into its
+   edge. The tab's inner corners curve into the card (the fillets), so the two read as one soft shape. */
+:root {
+  --frame-r: 26px;
+  --frame-gap: 12px;
+  --nav-fillet: 16px;
+  @media (width >= 40rem) {
+    --frame-r: 32px;
+    --frame-gap: 16px;
+    --nav-fillet: 24px;
+  }
+}
+@utility frame {
+  margin-inline: var(--frame-gap);
+  border-radius: var(--frame-r);
+}
+
+/* A tab hanging from the top edge of a frame, in the page's colour. */
+.notch {
+  --notch-r: 22px;
+  --notch-bg: var(--graphite);
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 1;
+  background: var(--notch-bg);
+  border-radius: 0 0 var(--notch-r) var(--notch-r);
+}
+.notch::before,
+.notch::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  /* A pixel wider, overlapping the tab, so no hairline shows where they meet. */
+  width: calc(var(--notch-r) + 1px);
+  height: var(--notch-r);
+  pointer-events: none;
+}
+.notch::before {
+  right: calc(100% - 1px);
+  background: radial-gradient(
+    circle at 0 100%,
+    transparent calc(var(--notch-r) - 0.5px),
+    var(--notch-bg) var(--notch-r)
+  );
+}
+.notch::after {
+  left: calc(100% - 1px);
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(var(--notch-r) - 0.5px),
+    var(--notch-bg) var(--notch-r)
+  );
+}
+
+/* The top bar. Docked (the home page, scrolled to the top) it's a notch cut into the hero's frame, flush with the top
+   of the page. Scrolled, its connecting arcs shrink into it as its corners round, and it glides down into a floating
+   pill. The arcs' size is a registered property so it can transition, which makes them melt away rather than fade. */
+@property --fillet {
+  syntax: '<length>';
+  /* The arcs are the bar's ::before and ::after, so they must inherit it. */
+  inherits: true;
+  initial-value: 0px;
+}
+.nav-bar {
+  --fillet: 0px;
+  position: relative;
+  border-radius: 28px;
+  translate: 0 12px;
+  transition:
+    --fillet 520ms var(--ease-out),
+    border-radius 560ms var(--ease-spring),
+    translate 560ms var(--ease-spring),
+    background-color 260ms var(--ease-out),
+    border-color 260ms var(--ease-out),
+    box-shadow 360ms var(--ease-out);
+}
+.nav-bar::before,
+.nav-bar::after {
+  content: '';
+  position: absolute;
+  /* They sit on the frame's top edge, a gap below the top of the page, and a pixel larger each way so they overlap
+     the bar's border and the page margin without a seam. */
+  top: calc(var(--frame-gap) - 2px);
+  width: calc(var(--fillet) + min(var(--fillet), 1px));
+  height: calc(var(--fillet) + min(var(--fillet), 1px));
+  pointer-events: none;
+}
+.nav-bar::before {
+  right: 100%;
+  background: radial-gradient(
+    circle at 0 100%,
+    transparent calc(var(--fillet) - 0.5px),
+    var(--graphite) var(--fillet)
+  );
+}
+.nav-bar::after {
+  left: 100%;
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent calc(var(--fillet) - 0.5px),
+    var(--graphite) var(--fillet)
+  );
+}
+[data-docked] .nav-bar {
+  --fillet: var(--nav-fillet);
+  border-radius: 0 0 24px 24px;
+  translate: 0 0;
+  background-color: var(--graphite);
+  border-color: transparent;
+  box-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-bar {
+    transition-duration: 0ms;
+  }
+}
+/* The bar stays clear of the frame's rounded corners plus its arcs, so the notch has a flat edge to curve into. */
+.nav-shell {
+  padding-inline: calc(var(--frame-gap) + var(--frame-r) + var(--nav-fillet));
 }
