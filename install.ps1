@@ -57,7 +57,10 @@
 
     Write-Host 'Installing...'
     $run = Start-Process -FilePath $setup -ArgumentList '/S' -Wait -PassThru
-    if ($run.ExitCode -ne 0) { throw "the setup program stopped with code $($run.ExitCode)." }
+    # Windows PowerShell can leave ExitCode empty for a program that has ended; the check below then tells.
+    if ($null -ne $run.ExitCode -and $run.ExitCode -ne 0) {
+      throw "the setup program stopped with code $($run.ExitCode)."
+    }
 
     # Where the setup program says it put the app.
     $entry = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Shotmaxxing' -ErrorAction SilentlyContinue

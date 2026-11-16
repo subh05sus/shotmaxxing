@@ -47,7 +47,8 @@ jobs:
           winget="packaging/winget/manifests/s/subh05sus/Shotmaxxing/$v/subh05sus.Shotmaxxing.installer.yaml"
           check "Shotmaxxing_${v}_aarch64.app.tar.gz" "$(sed -n 's/^SHA256_AARCH64="\(.*\)"$/\1/p' install.sh)" install.sh
           check "Shotmaxxing_${v}_x64.app.tar.gz" "$(sed -n 's/^SHA256_X64="\(.*\)"$/\1/p' install.sh)" install.sh
-          check "Shotmaxxing_${v}_x64-setup.exe" "$(sed -n "s/^  \$Sha256 = '\(.*\)'$/\1/p" install.ps1 | tr 'A-F' 'a-f')" install.ps1
+          # install.ps1 is checked out with Windows line endings.
+          check "Shotmaxxing_${v}_x64-setup.exe" "$(tr -d '\r' < install.ps1 | sed -n "s/^  \$Sha256 = '\(.*\)'$/\1/p" | tr 'A-F' 'a-f')" install.ps1
           check "Shotmaxxing_${v}_aarch64.dmg" "$(sed -n 's/.*arm: *"\([0-9a-f]*\)".*/\1/p' Casks/shotmaxxing.rb)" "the cask"
           check "Shotmaxxing_${v}_x64.dmg" "$(sed -n 's/.*intel: *"\([0-9a-f]*\)".*/\1/p' Casks/shotmaxxing.rb)" "the cask"
           check "Shotmaxxing_${v}_x64-setup.exe" "$(sed -n 's/^ *InstallerSha256: *\([0-9A-Fa-f]*\).*/\1/p' "$winget" | tr 'A-F' 'a-f')" "the winget manifest"
@@ -76,7 +77,8 @@ jobs:
           fi
       - name: It opens, while a copy with a browser download's mark is stopped
         run: |
-          spctl --status || true
+          gatekeeper="$(spctl --status 2>&1 || true)"
+          echo "Gatekeeper: $gatekeeper"
           started() {
             for _ in $(seq 1 30); do
               if pgrep -f "$1/Contents/MacOS/shotmaxxing-desktop" >/dev/null; then return 0; fi
@@ -92,18 +94,25 @@ jobs:
           fi
           echo "The installed app opened."
           pkill -f "$app/Contents/MacOS/shotmaxxing-desktop" || true
-          # The control: the same app, marked the way a browser marks a download.
+          # The control: the same app, marked the way a browser marks a download. Gatekeeper answers it with the
+          # "Not Opened" dialog, which nobody clicks here, and open waits on it: so open runs in the background.
           copy="$RUNNER_TEMP/Marked/Shotmaxxing.app"
           mkdir -p "$RUNNER_TEMP/Marked"
           ditto "$app" "$copy"
           xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");Chrome;$(uuidgen)" "$copy"
-          open "$copy" || true
+          open "$copy" >/dev/null 2>&1 &
+          opener=$!
           if started "$copy"; then
-            echo "::notice::Gatekeeper let the marked copy open on this runner too, so the control can't tell them apart here"
             pkill -f "$copy/Contents/MacOS/shotmaxxing-desktop" || true
+            if [ "$gatekeeper" = "assessments enabled" ]; then
+              echo "::warning::the marked copy opened too, although Gatekeeper is on: the mark isn't what decides here"
+            else
+              echo "::notice::Gatekeeper is off on this runner ($gatekeeper), so the marked copy opened too"
+            fi
           else
-            echo "::notice::Gatekeeper stopped the marked copy and let the installed app open"
+            echo "Gatekeeper stopped the marked copy, as it stops the app from a .dmg downloaded in a browser."
           fi
+          kill "$opener" 2>/dev/null || true
 
   cask:
     name: Homebrew cask on macOS

@@ -26,10 +26,10 @@ cask "shotmaxxing" do
   # The builds aren't notarized yet, and macOS stops an app like that the first time it opens when it carries the
   # quarantine mark Homebrew puts on every cask download. The download was checked against the sha256 above, so the
   # mark comes off and the app opens on the first click.
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args:         ["-dr", "com.apple.quarantine", "#{appdir}/Shotmaxxing.app"],
-                   print_stderr: false
+  postflight_steps do
+    run "/usr/bin/xattr",
+        args:         ["-dr", "com.apple.quarantine", "{{appdir}}/Shotmaxxing.app"],
+        must_succeed: false
   end
 
   zap trash: [

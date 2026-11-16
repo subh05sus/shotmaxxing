@@ -43,7 +43,8 @@ jobs:
           v="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' install.sh)"
           test -n "$v"
           fail() { echo "::error::$1 doesn't name release $v, as install.sh does"; exit 1; }
-          grep -qx "  \$Version = '$v'" install.ps1 || fail install.ps1
+          # install.ps1 is checked out with Windows line endings.
+          tr -d '\r' < install.ps1 | grep -qx "  \$Version = '$v'" || fail install.ps1
           grep -qx "  version \"$v\"" Casks/shotmaxxing.rb || fail "The cask"
           test -d "packaging/winget/manifests/s/subh05sus/Shotmaxxing/$v" || fail "packaging/winget"
           if grep -o 'releases/download/v[^/]*' README.md | grep -vx "releases/download/v$v"; then fail README.md; fi
