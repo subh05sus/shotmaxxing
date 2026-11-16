@@ -293,8 +293,14 @@ pub fn bring_forward(id: u32) {
     if !stage_manager && !away {
         return;
     }
+    // One on another Space comes by itself: its app's front window may be another (Chrome with two full-screen
+    // windows), and the app coming forward would go to that one's Space.
+    if away && super::spaces::go_to_window(before.pid, id) {
+        settle(id, before, true);
+        return;
+    }
     let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(before.pid) else { return };
-    if app.isActive() {
+    if app.isActive() && !away {
         return;
     }
     let parked = before.on_screen && parked(id, before.bounds, before.pid, &displays());
@@ -375,10 +381,26 @@ pub fn stand_in(id: u32) -> u32 {
     if chosen.on_screen {
         return id;
     }
+    let spaces = super::spaces::spaces_of(id);
     showing()
         .into_iter()
-        .find(|&(_, layer, w)| layer == 0 && w.pid == chosen.pid && near(w.bounds, chosen.bounds))
+        .find(|&(number, layer, w)| {
+            layer == 0
+                && w.pid == chosen.pid
+                && near(w.bounds, chosen.bounds)
+                && same_window(spaces.as_deref(), super::spaces::spaces_of(number).as_deref())
+        })
         .map_or(id, |(number, ..)| number)
+}
+
+/// Whether a window on `spaces` and one showing on `showing` can be tabs of one window: a tab behind is on no
+/// Space, and the tab in front is on the window's. Two windows on different Spaces are two windows, as two
+/// full-screen windows of one app are. When the window server doesn't say, they're taken as tabs.
+fn same_window(spaces: Option<&[i64]>, showing: Option<&[i64]>) -> bool {
+    match (spaces, showing) {
+        (Some(spaces), Some(showing)) => spaces.is_empty() || spaces.iter().any(|s| showing.contains(s)),
+        _ => true,
+    }
 }
 
 /// Within a point either way: frames read from different calls round differently.
@@ -437,8 +459,8 @@ pub enum Space {
     Here,
     /// On a desktop that isn't showing.
     OtherDesktop,
-    /// On a full-screen app's Space that isn't showing.
-    OtherFullScreen,
+    /// On a full-screen app's Space that isn't showing: which one. Each full-screen window has a Space of its own.
+    OtherFullScreen(i64),
 }
 
 /// A window as the picker weighs it.
@@ -452,15 +474,16 @@ pub struct Seen {
 
 /// Which of `windows` (apps' ordinary windows, front to back) the picker lists, each with whether it's in full
 /// screen. Every one showing on this Space is, but for a full-screen app's toolbars, which are recorded with its
-/// window. From other Spaces, only windows macOS will go to: those of apps with no window showing here (asked to
-/// come forward, an app goes to its Space then, and stays here otherwise). Of those, full-screen apps' are listed
-/// once per app and display: their tabs are windows of their own, all the same size, and only the one in front shows
-/// when the Space does ([`stand_in`] records that one). And windows on other desktops are, when the window server
-/// says where windows are ([`Space`]).
+/// window. From other Spaces, only windows macOS will go to: when one window can be brought forward by itself
+/// (`one_window`, [`super::spaces::go_to_window`]) that's any of them; otherwise only those of apps with no window
+/// showing here (asked to come forward, an app goes to its front window's Space then, and stays here otherwise).
+/// Windows on other desktops are listed when the window server says where windows are ([`Space`]), and full-screen
+/// apps' windows once per Space: two full-screen windows of one app are two Spaces, and listed apart.
 /// Windows on no Space (minimised, hidden, tabs behind others, helpers that never show) aren't listed. Without the
 /// window server's word, they can't be told from windows on other desktops, so then only full-screen apps are, by
-/// their shape.
-pub fn listed(windows: &[Seen], displays: &[CGRect]) -> Vec<(usize, bool)> {
+/// their shape, once per app and display: their tabs are windows of their own, all the same size, and only the one
+/// in front shows when the Space does ([`stand_in`] records that one).
+pub fn listed(windows: &[Seen], displays: &[CGRect], one_window: bool) -> Vec<(usize, bool)> {
     let fills = |frame: CGRect| displays.iter().position(|display| full_screen_shaped(frame, *display));
     // Full-screen windows showing here, with their app and display.
     let showing: Vec<(i32, usize, CGRect)> = windows
@@ -470,7 +493,8 @@ pub fn listed(windows: &[Seen], displays: &[CGRect]) -> Vec<(usize, bool)> {
         .collect();
     // Apps with a window showing here.
     let here: Vec<i32> = windows.iter().filter(|w| w.on_screen).map(|w| w.pid).collect();
-    let mut elsewhere: Vec<(i32, usize)> = Vec::new();
+    let mut shaped: Vec<(i32, usize)> = Vec::new();
+    let mut spaces: Vec<(i32, i64)> = Vec::new();
     let mut out = Vec::new();
     for (index, w) in windows.iter().enumerate() {
         let display = fills(w.frame);
@@ -484,16 +508,24 @@ pub fn listed(windows: &[Seen], displays: &[CGRect]) -> Vec<(usize, bool)> {
             }
             continue;
         }
-        if here.contains(&w.pid) {
+        let reachable = one_window && w.space != Space::Unknown;
+        if here.contains(&w.pid) && !reachable {
             continue;
         }
         match w.space {
             Space::OtherDesktop => out.push((index, false)),
-            Space::OtherFullScreen | Space::Unknown => {
+            Space::OtherFullScreen(space) => {
+                // Its toolbars and any small window on its Space go with it.
+                if display.is_some() && !spaces.contains(&(w.pid, space)) {
+                    spaces.push((w.pid, space));
+                    out.push((index, true));
+                }
+            }
+            Space::Unknown => {
                 if let Some(d) = display
-                    && !elsewhere.contains(&(w.pid, d))
+                    && !shaped.contains(&(w.pid, d))
                 {
-                    elsewhere.push((w.pid, d));
+                    shaped.push((w.pid, d));
                     out.push((index, true));
                 }
             }
@@ -701,7 +733,7 @@ mod tests {
             seen(wakatime, rect(535.0, 129.0, 400.0, 478.0), false),
             seen(wakatime, rect(0.0, 456.0, 500.0, 500.0), false),
         ];
-        assert_eq!(listed(&windows, &[LAPTOP]), [(0, false), (2, true), (3, true)]);
+        assert_eq!(listed(&windows, &[LAPTOP], true), [(0, false), (2, true), (3, true)]);
 
         // On Terminal's Space: its front tab shows, with its tab bar, and its other tabs aren't listed again.
         let windows = [
@@ -711,7 +743,7 @@ mod tests {
             seen(chrome, rect(0.0, 121.0, 1470.0, 835.0), false),
             seen(finder, rect(224.0, 175.0, 900.0, 450.0), false),
         ];
-        assert_eq!(listed(&windows, &[LAPTOP]), [(1, true), (3, true)]);
+        assert_eq!(listed(&windows, &[LAPTOP], true), [(1, true), (3, true)]);
     }
 
     #[test]
@@ -729,9 +761,9 @@ mod tests {
             // A window of Terminal's on the desktop: Terminal is here, so macOS wouldn't go to it.
             at(terminal, rect(16.0, 665.0, 108.0, 117.0), false, Space::OtherDesktop),
             // Chrome full screen on its own Space, with its toolbar and a small window there.
-            at(chrome, rect(0.0, 33.0, 1470.0, 124.0), false, Space::OtherFullScreen),
-            at(chrome, rect(0.0, 121.0, 1470.0, 835.0), false, Space::OtherFullScreen),
-            at(chrome, rect(135.0, 59.0, 858.0, 458.0), false, Space::OtherFullScreen),
+            at(chrome, rect(0.0, 33.0, 1470.0, 124.0), false, Space::OtherFullScreen(646)),
+            at(chrome, rect(0.0, 121.0, 1470.0, 835.0), false, Space::OtherFullScreen(646)),
+            at(chrome, rect(135.0, 59.0, 858.0, 458.0), false, Space::OtherFullScreen(646)),
             // Windows parked in Stage Manager's strip on the desktop.
             at(whatsapp, rect(16.0, 519.0, 137.0, 137.0), false, Space::OtherDesktop),
             at(motion, rect(16.0, 346.0, 137.0, 150.0), false, Space::OtherDesktop),
@@ -739,6 +771,58 @@ mod tests {
             // A hidden app's window.
             at(wakatime, rect(515.0, 124.0, 446.0, 673.0), false, Space::Nowhere),
         ];
-        assert_eq!(listed(&windows, &[LAPTOP]), [(1, true), (6, true), (8, false), (9, false), (10, false)]);
+        // Asking Terminal to come forward would stay here, so its window on the desktop is listed only when one
+        // window can be brought forward by itself.
+        assert_eq!(
+            listed(&windows, &[LAPTOP], false),
+            [(1, true), (6, true), (8, false), (9, false), (10, false)]
+        );
+        assert_eq!(
+            listed(&windows, &[LAPTOP], true),
+            [(1, true), (4, false), (6, true), (8, false), (9, false), (10, false)]
+        );
+    }
+
+    #[test]
+    fn two_full_screen_windows_of_one_app_are_listed_apart() {
+        let at =
+            |pid: i32, frame: CGRect, on_screen: bool, space: Space| Seen { pid, frame, on_screen, space };
+        let (chrome, terminal, finder) = (1, 2, 3);
+        let full = rect(0.0, 121.0, 1470.0, 835.0);
+        let toolbar = rect(0.0, 33.0, 1470.0, 124.0);
+        // As on the owner's Mac from the desktop: Chrome full screen on two Spaces (“Google” and “google - Google
+        // Search”), each with its toolbar, and Terminal on a third.
+        let windows = [
+            at(finder, rect(224.0, 175.0, 900.0, 450.0), true, Space::Here),
+            at(chrome, toolbar, false, Space::OtherFullScreen(646)),
+            at(chrome, full, false, Space::OtherFullScreen(646)),
+            at(chrome, toolbar, false, Space::OtherFullScreen(702)),
+            at(chrome, full, false, Space::OtherFullScreen(702)),
+            at(terminal, rect(0.0, 69.0, 1470.0, 887.0), false, Space::OtherFullScreen(523)),
+        ];
+        assert_eq!(listed(&windows, &[LAPTOP], true), [(0, false), (2, true), (4, true), (5, true)]);
+        assert_eq!(listed(&windows, &[LAPTOP], false), [(0, false), (2, true), (4, true), (5, true)]);
+
+        // From one of Chrome's Spaces, the other is listed when that one window can be brought forward by itself.
+        let windows = [
+            at(chrome, toolbar, true, Space::Here),
+            at(chrome, full, true, Space::Here),
+            at(chrome, full, false, Space::OtherFullScreen(702)),
+            at(finder, rect(224.0, 175.0, 900.0, 450.0), false, Space::OtherDesktop),
+        ];
+        assert_eq!(listed(&windows, &[LAPTOP], true), [(1, true), (2, true), (3, false)]);
+        assert_eq!(listed(&windows, &[LAPTOP], false), [(1, true), (3, false)]);
+    }
+
+    #[test]
+    fn a_stand_in_is_a_tab_of_the_same_window() {
+        // A tab behind another is on no Space; the one in front, on the window's.
+        assert!(same_window(Some(&[]), Some(&[646])));
+        assert!(same_window(Some(&[646]), Some(&[646])));
+        // Two full-screen windows of one app are on Spaces of their own.
+        assert!(!same_window(Some(&[702]), Some(&[646])));
+        // Without the window server's word, the frame decides.
+        assert!(same_window(None, Some(&[646])));
+        assert!(same_window(Some(&[702]), None));
     }
 }

@@ -59,9 +59,11 @@ pub enum CaptureError {
     /// A window Stage Manager has parked in its strip that couldn't be brought back to the stage.
     #[error("That window is parked in Stage Manager's strip. Click it to bring it back, then try again.")]
     Parked,
-    /// A window that's open but not on the Space showing (minimised, hidden or on another desktop), and didn't come.
+    /// A window that's open but not on the Space showing (minimised, hidden, or on another desktop or full-screen
+    /// Space), and didn't come.
     #[error(
-        "That window isn't on this desktop: it may be minimised or on another desktop. Show it, then try again."
+        "That window isn't showing here: it's minimised, hidden, or on another desktop or full-screen Space, and it \
+         didn't come forward. Show it, then try again."
     )]
     Away,
     #[error("The capture system reported a problem: {0}")]

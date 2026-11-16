@@ -70,8 +70,8 @@ impl Layout {
             Space::Here
         } else if spaces.iter().any(|s| self.desktops.contains(s)) {
             Space::OtherDesktop
-        } else if spaces.iter().any(|s| self.full_screen.contains(s)) {
-            Space::OtherFullScreen
+        } else if let Some(&space) = spaces.iter().find(|s| self.full_screen.contains(s)) {
+            Space::OtherFullScreen(space)
         } else {
             Space::Nowhere
         }
@@ -109,19 +109,97 @@ pub fn layout() -> Option<Layout> {
 
 /// Where window `id` is among the Spaces of `layout`.
 pub fn space_of(id: u32, layout: &Layout) -> Space {
-    let Some(skylight) = skylight() else { return Space::Unknown };
+    spaces_of(id).map_or(Space::Unknown, |spaces| layout.place(&spaces))
+}
+
+/// The Spaces window `id` is on, when the window server says: none for one that's ordered out (minimised, hidden,
+/// a tab behind another).
+pub fn spaces_of(id: u32) -> Option<Vec<i64>> {
+    let skylight = skylight()?;
     let number = CFNumber::new_i64(i64::from(id));
     let windows = CFArray::from_objects(&[&*number]);
     let windows = CFRetained::as_ptr(&windows).as_ptr() as *const c_void;
     // SAFETY: a Copy-rule call with an array of window numbers, valid for the call; what it gives is ours.
-    let Some(spaces) =
-        (unsafe { owned_array((skylight.spaces_for_windows)(skylight.connection, ALL_SPACES, windows)) })
-    else {
-        return Space::Unknown;
-    };
-    let spaces: Vec<i64> =
-        items(&spaces).filter_map(|item| item.downcast_ref::<CFNumber>()?.as_i64()).collect();
-    layout.place(&spaces)
+    let spaces =
+        unsafe { owned_array((skylight.spaces_for_windows)(skylight.connection, ALL_SPACES, windows)) }?;
+    Some(items(&spaces).filter_map(|item| item.downcast_ref::<CFNumber>()?.as_i64()).collect())
+}
+
+/// A process as the window server's older calls name it.
+#[repr(C)]
+#[derive(Default)]
+struct ProcessSerialNumber {
+    high: u32,
+    low: u32,
+}
+
+type ProcessForPid = unsafe extern "C" fn(pid: i32, psn: *mut ProcessSerialNumber) -> i32;
+type SetFrontProcess = unsafe extern "C" fn(psn: *const ProcessSerialNumber, window: u32, mode: u32) -> i32;
+type PostEventRecord = unsafe extern "C" fn(psn: *const ProcessSerialNumber, bytes: *mut u8) -> i32;
+
+/// What brings one window of an app forward, wherever it is, rather than the app's front window.
+struct Front {
+    process_for_pid: ProcessForPid,
+    set_front_process: SetFrontProcess,
+    post_event_record: PostEventRecord,
+}
+
+/// Brought forward as though the person had clicked it (`kCPSUserGenerated`).
+const USER_GENERATED: u32 = 0x200;
+
+fn front() -> Option<&'static Front> {
+    static FOUND: OnceLock<Option<Front>> = OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            let process_for_pid = symbols::find(&[c"GetProcessForPID"])?;
+            let set_front_process = symbols::find(&[c"_SLPSSetFrontProcessWithOptions"])?;
+            let post_event_record = symbols::find(&[c"SLPSPostEventRecordTo"])?;
+            // SAFETY: the signatures window switchers have long called these with: a process's serial number for
+            // its pid; making a process frontmost with one of its windows; and posting a window-server event
+            // record to a process.
+            unsafe {
+                Some(Front {
+                    process_for_pid: std::mem::transmute::<usize, ProcessForPid>(process_for_pid),
+                    set_front_process: std::mem::transmute::<usize, SetFrontProcess>(set_front_process),
+                    post_event_record: std::mem::transmute::<usize, PostEventRecord>(post_event_record),
+                })
+            }
+        })
+        .as_ref()
+}
+
+/// Whether one window of an app can be brought forward by itself ([`go_to_window`]) on this macOS.
+pub fn can_go_to_windows() -> bool {
+    front().is_some()
+}
+
+/// Brings window `id` of process `pid` forward, wherever it is: macOS goes to its Space, as when the person picks
+/// it in Mission Control. Asking its app to come forward instead goes to the app's front window, which for an app
+/// with two full-screen windows is often the other one. `false` when it can't be asked.
+pub fn go_to_window(pid: i32, id: u32) -> bool {
+    let Some(front) = front() else { return false };
+    let mut psn = ProcessSerialNumber::default();
+    // SAFETY: the signatures in `front`; the serial number is written by the first call and read by the others.
+    unsafe {
+        if (front.process_for_pid)(pid, &mut psn) != 0 {
+            return false;
+        }
+        if (front.set_front_process)(&psn, id, USER_GENERATED) != 0 {
+            return false;
+        }
+        // Then the window is made the app's key window, so the app doesn't hand the keyboard (and the Mac) to
+        // another of its windows: a press and a release, as the window server records a click on it.
+        let mut event = [0u8; 0xf8];
+        event[0x04] = 0xf8;
+        event[0x3a] = 0x10;
+        event[0x3c..0x40].copy_from_slice(&id.to_ne_bytes());
+        event[0x20..0x30].fill(0xff);
+        for phase in [0x01, 0x02] {
+            event[0x08] = phase;
+            (front.post_event_record)(&psn, event.as_mut_ptr());
+        }
+    }
+    true
 }
 
 /// An array a Copy-rule call gave, when it's one.
@@ -168,8 +246,8 @@ mod tests {
         assert_eq!(layout.place(&[523]), Space::Here);
         // WhatsApp parked on the desktop, which isn't showing.
         assert_eq!(layout.place(&[3]), Space::OtherDesktop);
-        // Chrome in full screen on its own Space.
-        assert_eq!(layout.place(&[646]), Space::OtherFullScreen);
+        // Chrome in full screen on its own Space, which it names.
+        assert_eq!(layout.place(&[646]), Space::OtherFullScreen(646));
         // A tab behind another, a minimised window, a helper: ordered out, on no Space.
         assert_eq!(layout.place(&[]), Space::Nowhere);
         // A window on every Space is here too.

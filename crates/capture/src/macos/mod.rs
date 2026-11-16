@@ -180,7 +180,9 @@ pub fn sources() -> Result<Sources, CaptureError> {
                 },
             })
             .collect();
-        let mut windows: Vec<WindowInfo> = window::listed(&seen, &display_frames(&content))
+        // Windows of apps showing here can be gone to when one window can be brought forward by itself.
+        let one_window = spaces::can_go_to_windows();
+        let mut windows: Vec<WindowInfo> = window::listed(&seen, &display_frames(&content), one_window)
             .into_iter()
             .map(|(index, full_screen)| {
                 let (w, app) = &candidates[index];

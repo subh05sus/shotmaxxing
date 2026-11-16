@@ -198,8 +198,20 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
         }
         display => display,
     };
+    match picture(target) {
+        // Just after a window comes from another Space, the first picture can fail while the switch settles.
+        Err(CaptureError::System(_)) if matches!(target, Target::Window(_)) => {
+            std::thread::sleep(Duration::from_millis(400));
+            picture(target)
+        }
+        taken => taken,
+    }
+}
+
+/// One go at [`screenshot`]'s picture, of a window that's ready.
+fn picture(target: Target) -> Result<Screenshot, CaptureError> {
     let content = shareable_content(true)?;
-    let (tx, rx) = channel::<Option<Vec<u8>>>();
+    let (tx, rx) = channel::<Result<Vec<u8>, String>>();
     // SAFETY: read-only use of `content`; the filter, configuration and handler live until the request is made,
     // and the framework keeps what it needs until it answers.
     let (scale, app_name, window_title) = unsafe {
@@ -257,8 +269,13 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
         }
         // The styled copy is drawn in sRGB, so the picture comes in it too.
         config.setColorSpaceName(kCGColorSpaceSRGB);
-        let handler = RcBlock::new(move |image: *mut CGImage, _error: *mut NSError| {
-            let png = if image.is_null() { None } else { encode(image as *const c_void, "public.png") };
+        let handler = RcBlock::new(move |image: *mut CGImage, error: *mut NSError| {
+            let png = if image.is_null() {
+                Err(super::error_text(error))
+            } else {
+                encode(image as *const c_void, "public.png")
+                    .ok_or_else(|| "it couldn't be saved as a PNG".into())
+            };
             let _ = tx.send(png);
         });
         SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(
@@ -268,9 +285,23 @@ pub fn screenshot(target: Target) -> Result<Screenshot, CaptureError> {
         );
         (scale, app_name, window_title)
     };
-    let png = rx.recv_timeout(Duration::from_secs(5)).ok().flatten().ok_or_else(|| {
-        CaptureError::System("no picture came back. The screen may be asleep or locked.".into())
-    })?;
+    let png = match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(Ok(png)) => png,
+        Ok(Err(reason)) => {
+            // A window that has left this Space says so.
+            if let Target::Window(id) = target
+                && window::placed(id).is_some_and(|w| !w.on_screen)
+            {
+                return Err(CaptureError::Away);
+            }
+            return Err(CaptureError::System(format!("no picture came back: {reason}")));
+        }
+        Err(_) => {
+            return Err(CaptureError::System(
+                "no picture came back. The screen may be asleep or locked.".into(),
+            ));
+        }
+    };
     // The size is read from the picture by the caller.
     Ok(Screenshot { png, width: 0, height: 0, scale, app_name, window_title })
 }
