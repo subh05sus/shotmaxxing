@@ -16,7 +16,10 @@
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost; media-src 'self' blob: asset: http://asset.localhost; font-src 'self' data:; connect-src ipc: http://ipc.localhost https://api.github.com",
       "dangerousDisableAssetCspModification": ["style-src"],
-      "assetProtocol": { "enable": true, "scope": ["$VIDEO/Shotmaxxing/**"] }
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$VIDEO/Shotmaxxing/**"]
+      }
     }
   },
   "bundle": {
@@ -36,11 +39,37 @@
     ],
     "macOS": {
       "minimumSystemVersion": "14.0",
-      "entitlements": "Entitlements.plist"
+      "entitlements": "Entitlements.plist",
+      "dmg": {
+        "background": "installer/dmg-background.tiff",
+        "windowSize": {
+          "width": 660,
+          "height": 428
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
+      }
     },
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" },
-      "nsis": { "installMode": "currentUser", "displayLanguageSelector": false }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "headerImage": "installer/nsis-header.bmp",
+        "sidebarImage": "installer/nsis-sidebar.bmp"
+      },
+      "wix": {
+        "bannerPath": "installer/wix-banner.bmp",
+        "dialogImagePath": "installer/wix-dialog.bmp"
+      }
     }
   }
 }
