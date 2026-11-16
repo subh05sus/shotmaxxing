@@ -12,8 +12,8 @@ updates. After updating to 0.2.1, turn Screen Recording and Accessibility on onc
   self-signed, so it costs nothing and needs no Apple account. Before, each build was signed ad-hoc and looked like a
   new app to macOS, so after an update the switches in System Settings stayed on but no longer counted. 0.2.1 is the
   first build with the identity, so macOS sees it as new one last time: in System Settings › Privacy & Security,
-  select Shotmaxxing under Screen & System Audio Recording and under Accessibility, remove it with the − button, then
-  choose Allow in Shotmaxxing.
+  select Shotmaxxing under Screen & System Audio Recording (Screen Recording on macOS 14) and under Accessibility,
+  remove it with the − button, then choose Allow in Shotmaxxing.
 - **Install in one line:** `curl -fsSL https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.sh | bash`
   on a Mac, and `irm https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.ps1 | iex` in PowerShell on
   Windows. Each downloads the release, checks its SHA-256, installs it and opens it, without the "Not Opened" dialog

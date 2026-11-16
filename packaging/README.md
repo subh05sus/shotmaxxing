@@ -6,8 +6,8 @@ GitHub release page.
 - **One-line installers:** [`install.sh`](../install.sh) (macOS, `curl -fsSL …/install.sh | bash`) and
   [`install.ps1`](../install.ps1) (Windows, `irm …/install.ps1 | iex`), at the root so their addresses stay short.
   They download with curl and PowerShell, which don't put the "downloaded from the internet" mark on what they fetch,
-  so the app opens on the first click although the builds aren't notarized or signed yet. Each checks the download
-  against the SHA-256 it pins.
+  so the app opens on the first click although the builds aren't notarized (macOS) or signed (Windows) yet. Each
+  checks the download against the SHA-256 it pins.
 - **Homebrew:** [`Casks/shotmaxxing.rb`](../Casks/shotmaxxing.rb), at the root so this repository works as its own
   tap: `brew tap subh05sus/shotmaxxing https://github.com/subh05sus/shotmaxxing`, then
   `brew install --cask subh05sus/shotmaxxing/shotmaxxing`. Homebrew marks every cask download as quarantined, so the
