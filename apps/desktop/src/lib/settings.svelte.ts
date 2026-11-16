@@ -43,8 +43,8 @@ interface Settings {
   /** The person has read what Allow everything means, once; turning it on again doesn't ask. */
   allowEverythingConfirmed: boolean;
   /** Screen Recording has worked at a launch. Should it stop (an update can make macOS forget it), the app says so,
-   *  once. */
-  screenAllowedBefore: boolean;
+   *  once. `null` when settings come from a build before 0.2.1, which didn't note it: the next launch finds out. */
+  screenAllowedBefore: boolean | null;
 }
 
 const DEFAULTS: Settings = {
@@ -87,10 +87,9 @@ function load(): Settings {
     const stored = raw ? (JSON.parse(raw) as Partial<Settings>) : null;
     const loaded: Settings = { ...DEFAULTS, ...stored };
     if (loaded.saveFolder === OLD_DEFAULT_FOLDER) loaded.saveFolder = '';
-    // Earlier builds didn't note whether Screen Recording worked. Their setup didn't go on without it, so a finished
-    // setup had it.
+    // Builds before 0.2.1 didn't note whether Screen Recording worked, and their setup could be skipped without it.
     if (stored && !('screenAllowedBefore' in stored) && loaded.onboardingDone)
-      loaded.screenAllowedBefore = true;
+      loaded.screenAllowedBefore = null;
     return loaded;
   } catch {
     return { ...DEFAULTS };

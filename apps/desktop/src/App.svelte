@@ -58,10 +58,15 @@
     const state = (await permissionStatus().catch(() => [])).find((p) => p.kind === 'screen')?.state;
     if (state === 'granted') {
       settings.screenAllowedBefore = true;
-    } else if (state === 'not_determined' && settings.screenAllowedBefore) {
+    } else if (state === 'not_determined' && settings.screenAllowedBefore !== false) {
+      // null: the first launch after an update from a build that didn't note whether it ever worked.
+      const lost = settings.screenAllowedBefore === true;
       settings.screenAllowedBefore = false;
-      toast('macOS no longer lets Shotmaxxing record the screen. That can happen after an update.', {
-        tone: 'danger',
+      const message = lost
+        ? 'macOS no longer lets Shotmaxxing record the screen. That can happen after an update.'
+        : 'Screen Recording is off for this version: macOS sees it as a new app. Allow it once, and updates keep it.';
+      toast(message, {
+        tone: lost ? 'danger' : 'neutral',
         timeout: 15_000,
         action: {
           label: 'Fix',

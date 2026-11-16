@@ -28,7 +28,8 @@ updates. After updating to 0.2.1, turn Screen Recording and Accessibility on onc
   to turn it on. The record dialog offers Reopen too, and its Screen Recording message says to reopen Shotmaxxing
   rather than to try again.
 - **A notice when macOS forgets:** when Screen Recording worked at an earlier launch and doesn't now, Shotmaxxing says
-  so once at launch, and Fix opens setup's Permissions step.
+  so once at launch, and Fix opens setup's Permissions step. The first launch after updating from 0.2.0 or earlier,
+  which didn't note whether it worked, says once that Screen Recording is off for this version, when it is.
 
 ## 0.2.0 (2026-11-16)
 
