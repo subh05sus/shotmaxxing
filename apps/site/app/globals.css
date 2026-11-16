@@ -23,7 +23,7 @@
   --graphite-4: oklch(0.3 0.006 264);
   --paper: oklch(0.97 0 0 / 0.94);
   --paper-muted: oklch(0.97 0 0 / 0.64);
-  --paper-subtle: oklch(0.97 0 0 / 0.42);
+  --paper-subtle: oklch(0.97 0 0 / 0.52);
   --line: oklch(1 0 0 / 0.08);
   --line-strong: oklch(1 0 0 / 0.15);
   --fill: oklch(1 0 0 / 0.05);

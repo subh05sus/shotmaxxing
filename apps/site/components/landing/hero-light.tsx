@@ -10,23 +10,34 @@ import GradientASCII from '@/components/site/gradient-ascii';
 export function HeroLight() {
   const [colors, setColors] = useState<string[] | null>(null);
   useEffect(() => {
-    const css = getComputedStyle(document.documentElement);
-    setColors([1, 2, 3, 4].map((i) => css.getPropertyValue(`--hero-light-${i}`).trim()));
+    // Started once the browser is idle, so compiling its WebGL shader doesn't hold up the first screen.
+    const start = () => {
+      const css = getComputedStyle(document.documentElement);
+      setColors([1, 2, 3, 4].map((i) => css.getPropertyValue(`--hero-light-${i}`).trim()));
+    };
+    if (!('requestIdleCallback' in window)) {
+      const t = setTimeout(start, 200);
+      return () => clearTimeout(t);
+    }
+    const id = requestIdleCallback(start, { timeout: 1500 });
+    return () => cancelIdleCallback(id);
   }, []);
   if (!colors) return null;
   return (
-    <GradientASCII
-      colors={colors}
-      shape="horizon"
-      characters=" .·•●"
-      cellSize={18}
-      density={1}
-      softness={0.51}
-      flow={1.3}
-      speed={0.7}
-      gradientOpacity={0.86}
-      variation={14}
-      dpr={1.5}
-    />
+    <div className="size-full animate-in fade-in-0 duration-300">
+      <GradientASCII
+        colors={colors}
+        shape="horizon"
+        characters=" .·•●"
+        cellSize={18}
+        density={1}
+        softness={0.51}
+        flow={1.3}
+        speed={0.7}
+        gradientOpacity={0.86}
+        variation={14}
+        dpr={1.5}
+      />
+    </div>
   );
 }
