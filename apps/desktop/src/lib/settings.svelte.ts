@@ -42,6 +42,9 @@ interface Settings {
   completedGuides: string[];
   /** The person has read what Allow everything means, once; turning it on again doesn't ask. */
   allowEverythingConfirmed: boolean;
+  /** Screen Recording has worked at a launch. Should it stop (an update can make macOS forget it), the app says so,
+   *  once. */
+  screenAllowedBefore: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -70,6 +73,7 @@ const DEFAULTS: Settings = {
   updatesCheckedAt: 0,
   completedGuides: [],
   allowEverythingConfirmed: false,
+  screenAllowedBefore: false,
 };
 
 // Earlier builds stored the default folder itself.

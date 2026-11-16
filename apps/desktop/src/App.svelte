@@ -21,6 +21,7 @@
     env,
     matchesChord,
     setThemeSetting,
+    toast,
     watchSystem,
     type ShortcutGroup,
   } from '@shotmaxxing/ui';
@@ -31,7 +32,15 @@
   import { playIris } from './lib/iris.svelte';
   import { watchTrust } from './lib/trust.svelte';
   import IrisOverlay from './components/IrisOverlay.svelte';
-  import { isTauri, openWindow, platform, powerStatus, setAppTheme, setMenuBarIcon } from './lib/native';
+  import {
+    isTauri,
+    openWindow,
+    permissionStatus,
+    platform,
+    powerStatus,
+    setAppTheme,
+    setMenuBarIcon,
+  } from './lib/native';
   import WindowChrome from './routes/WindowChrome.svelte';
   import Onboarding from './routes/onboarding/Onboarding.svelte';
   import Home from './routes/home/Home.svelte';
@@ -41,6 +50,29 @@
   import TakeCard from './routes/take/TakeCard.svelte';
 
   const screen = $derived(route.path[0] ?? '');
+
+  // macOS ties Screen Recording to the exact build of a preview, so after an update it can stop working, which would
+  // only show when a recording fails. When it worked at an earlier launch and doesn't now, this says so, once, with
+  // the way to fix it (setup's Permissions step).
+  async function checkScreenRecording() {
+    const state = (await permissionStatus().catch(() => [])).find((p) => p.kind === 'screen')?.state;
+    if (state === 'granted') {
+      settings.screenAllowedBefore = true;
+    } else if (state === 'not_determined' && settings.screenAllowedBefore) {
+      settings.screenAllowedBefore = false;
+      toast('macOS no longer lets Shotmaxxing record the screen. That can happen after an update.', {
+        tone: 'danger',
+        timeout: 15_000,
+        action: {
+          label: 'Fix',
+          run: () => {
+            settings.onboardingStep = 1;
+            go('onboarding');
+          },
+        },
+      });
+    }
+  }
 
   onMount(() => {
     const stopRouter = startRouter();
@@ -85,6 +117,7 @@
       const setup = !settings.onboardingDone || new URLSearchParams(launch[1]).get('to') === 'onboarding';
       if (!setup || settings.onboardingStep > 0) playIris('launch');
       go(setup ? 'onboarding' : 'home/library');
+      if (isTauri && !setup) void checkScreenRecording();
     } else if (!location.hash || location.hash === '#/' || location.hash === '#') {
       go(settings.onboardingDone ? 'home/library' : 'onboarding');
     }

@@ -184,6 +184,7 @@
         for (const p of list) states[p.kind] = p.state;
         if (waiting && settled(states[waiting])) waiting = null;
         if (missed && settled(states[missed])) missed = null;
+        if (states.screen === 'granted' && !settings.screenAllowedBefore) settings.screenAllowedBefore = true;
       })
       .finally(() => (checking = null));
     return checking;
