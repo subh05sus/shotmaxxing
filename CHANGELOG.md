@@ -3,6 +3,16 @@
 What changed in each release. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version
 can change how things work.
 
+## Unreleased
+
+- **Install in one line:** `curl -fsSL https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.sh | bash`
+  on a Mac, and `irm https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.ps1 | iex` in PowerShell on
+  Windows. Each downloads the release, checks its SHA-256, installs it and opens it, without the "Not Opened" dialog
+  on the Mac or the SmartScreen warning on Windows. The same line updates it. The [README](README.md#install) leads
+  with them.
+- **Homebrew:** the app the cask installs opens on the first click too, and the cask no longer makes Homebrew warn
+  about its `depends_on macos:` line.
+
 ## 0.2.0 (2026-11-16)
 
 The second preview: agents plan their takes from your app's code, a red switch lets them film without asking, the

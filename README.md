@@ -16,6 +16,72 @@
   <a href="docs/roadmap.md">Roadmap</a>
 </p>
 
+## Install
+
+**macOS 14 or later.** Paste this into Terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.sh | bash
+```
+
+**Windows 10 (version 2004) or later, 64-bit.** Paste this into PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.ps1 | iex
+```
+
+Each line downloads the current release from GitHub, checks it against its SHA-256, installs it and opens it, with
+no "Not Opened" dialog on the Mac and no SmartScreen warning on Windows. On a Mac it goes in Applications, and the
+`shotmaxxing` command is linked into a folder on your PATH when one is yours to change. On Windows it installs for
+your user, without administrator rights. Run the same line again to update. Both scripts are short, so you can read
+[install.sh](install.sh) or [install.ps1](install.ps1) before you run them.
+
+**With Homebrew** on a Mac, which also puts the `shotmaxxing` command on your PATH, and `brew upgrade` updates it:
+
+```sh
+brew tap subh05sus/shotmaxxing https://github.com/subh05sus/shotmaxxing
+brew install --cask subh05sus/shotmaxxing/shotmaxxing
+```
+
+<details>
+<summary><b>Or download the installer yourself</b></summary>
+
+| Computer | File |
+| --- | --- |
+| Mac with Apple silicon | [Shotmaxxing_0.2.0_aarch64.dmg](https://github.com/subh05sus/shotmaxxing/releases/download/v0.2.0/Shotmaxxing_0.2.0_aarch64.dmg) |
+| Mac with Intel | [Shotmaxxing_0.2.0_x64.dmg](https://github.com/subh05sus/shotmaxxing/releases/download/v0.2.0/Shotmaxxing_0.2.0_x64.dmg) |
+| Windows, setup program | [Shotmaxxing_0.2.0_x64-setup.exe](https://github.com/subh05sus/shotmaxxing/releases/download/v0.2.0/Shotmaxxing_0.2.0_x64-setup.exe) |
+| Windows, MSI | [Shotmaxxing_0.2.0_x64_en-US.msi](https://github.com/subh05sus/shotmaxxing/releases/download/v0.2.0/Shotmaxxing_0.2.0_x64_en-US.msi) |
+
+The builds aren't notarized (macOS) or signed (Windows) yet, so a file downloaded in a browser gets one warning the
+first time it opens:
+
+- **macOS:** drag Shotmaxxing to Applications and open it. When "Shotmaxxing.app Not Opened" appears, choose
+  **Done**, not Move to Trash. Then open **System Settings → Privacy & Security**, scroll down and choose **Open
+  Anyway**. Or clear the download mark in Terminal instead: `xattr -dr com.apple.quarantine /Applications/Shotmaxxing.app`
+- **Windows:** when SmartScreen says "Windows protected your PC", choose **More info → Run anyway**.
+
+Every version is on the [Releases](https://github.com/subh05sus/shotmaxxing/releases) page.
+
+</details>
+
+<details>
+<summary><b>Uninstall</b></summary>
+
+- **macOS:** quit Shotmaxxing and drag it from Applications to the Trash. If the install line linked the
+  `shotmaxxing` command, remove the link it named, such as `rm /usr/local/bin/shotmaxxing`. With Homebrew:
+  `brew uninstall --cask shotmaxxing`.
+- **Windows:** Settings → Apps → Installed apps → Shotmaxxing → Uninstall.
+
+Your recordings and projects stay where they are.
+
+</details>
+
+On macOS, Shotmaxxing needs Screen Recording to record. The microphone and the camera are asked for when you turn
+them on, and Accessibility lets auto zoom notice clicks and typing and lets agents press buttons. The onboarding
+walks you through each one. Recording, export and agent takes on Windows are written but haven't been tested on a
+Windows computer yet, so expect rough edges there. Linux isn't supported yet; it's on the [roadmap](docs/roadmap.md).
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/editor-light.png">
   <img src="docs/images/editor.png" alt="The Shotmaxxing editor with the sample project: the Background tool on the left, the recording in the middle on a green wallpaper, and the timeline with its zooms and effects below.">
@@ -89,27 +155,6 @@ Agents talk to Shotmaxxing through MCP (`shotmaxxing mcp`) and the same command 
 Shotmaxxing was built not to heat up your computer. Nothing animates or redraws while the app sits idle, the video
 is encoded by the computer's media engine, and Low power mode turns the rest of the work down on battery or when the
 computer runs warm. The recording itself is never slowed down.
-
-## Install
-
-Download the latest build from [Releases](https://github.com/subh05sus/shotmaxxing/releases), or on a Mac use
-Homebrew, which also puts the `shotmaxxing` command on your PATH:
-
-```sh
-brew tap subh05sus/shotmaxxing https://github.com/subh05sus/shotmaxxing
-brew install --cask subh05sus/shotmaxxing/shotmaxxing
-```
-
-- **macOS 14 or later:** the `.dmg` for Apple silicon (`aarch64`) or Intel (`x64`). The builds aren't notarized yet, so
-  macOS blocks the app the first time it opens: open **System Settings → Privacy & Security** and choose **Open
-  Anyway**.
-- **Windows 10 (version 2004) or later, 64-bit:** the `-setup.exe` installer, or the `.msi`. It isn't signed yet, so
-  SmartScreen may warn about it: choose **More info → Run anyway**. Recording, export and agent takes on Windows are written but
-  haven't been tested on a Windows computer yet, so expect rough edges.
-
-On macOS, Shotmaxxing needs Screen Recording to record. The microphone and the camera are asked for when you turn
-them on, and Accessibility lets auto zoom notice clicks and typing and lets agents press buttons. The onboarding
-walks you through each one.
 
 ## Build from source
 
