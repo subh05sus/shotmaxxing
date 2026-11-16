@@ -135,13 +135,11 @@ struct ProcessSerialNumber {
 
 type ProcessForPid = unsafe extern "C" fn(pid: i32, psn: *mut ProcessSerialNumber) -> i32;
 type SetFrontProcess = unsafe extern "C" fn(psn: *const ProcessSerialNumber, window: u32, mode: u32) -> i32;
-type PostEventRecord = unsafe extern "C" fn(psn: *const ProcessSerialNumber, bytes: *mut u8) -> i32;
 
 /// What brings one window of an app forward, wherever it is, rather than the app's front window.
 struct Front {
     process_for_pid: ProcessForPid,
     set_front_process: SetFrontProcess,
-    post_event_record: PostEventRecord,
 }
 
 /// Brought forward as though the person had clicked it (`kCPSUserGenerated`).
@@ -153,15 +151,12 @@ fn front() -> Option<&'static Front> {
         .get_or_init(|| {
             let process_for_pid = symbols::find(&[c"GetProcessForPID"])?;
             let set_front_process = symbols::find(&[c"_SLPSSetFrontProcessWithOptions"])?;
-            let post_event_record = symbols::find(&[c"SLPSPostEventRecordTo"])?;
             // SAFETY: the signatures window switchers have long called these with: a process's serial number for
-            // its pid; making a process frontmost with one of its windows; and posting a window-server event
-            // record to a process.
+            // its pid, and making a process frontmost with one of its windows.
             unsafe {
                 Some(Front {
                     process_for_pid: std::mem::transmute::<usize, ProcessForPid>(process_for_pid),
                     set_front_process: std::mem::transmute::<usize, SetFrontProcess>(set_front_process),
-                    post_event_record: std::mem::transmute::<usize, PostEventRecord>(post_event_record),
                 })
             }
         })
@@ -173,33 +168,20 @@ pub fn can_go_to_windows() -> bool {
     front().is_some()
 }
 
-/// Brings window `id` of process `pid` forward, wherever it is: macOS goes to its Space, as when the person picks
-/// it in Mission Control. Asking its app to come forward instead goes to the app's front window, which for an app
-/// with two full-screen windows is often the other one. `false` when it can't be asked.
+/// Asks the window server to bring window `id` of process `pid` forward, wherever it is: its app comes to the front
+/// with that window, and macOS starts going to the window's Space, an animation that ends after this returns.
+/// Asking its app to come forward instead goes to the app's front window, which for an app with two full-screen
+/// windows is often the other one. Window switchers follow this with a click on the window, to give it the
+/// keyboard; none is sent here. A picture or a recording doesn't need the keyboard, the click comes before the switch
+/// and is dropped, and some apps take it at the window's top left corner, where a web app made with Chrome has its
+/// close button. `false` when it can't be asked.
 pub fn go_to_window(pid: i32, id: u32) -> bool {
     let Some(front) = front() else { return false };
     let mut psn = ProcessSerialNumber::default();
-    // SAFETY: the signatures in `front`; the serial number is written by the first call and read by the others.
+    // SAFETY: the signatures in `front`; the serial number is written by the first call and read by the second.
     unsafe {
-        if (front.process_for_pid)(pid, &mut psn) != 0 {
-            return false;
-        }
-        if (front.set_front_process)(&psn, id, USER_GENERATED) != 0 {
-            return false;
-        }
-        // Then the window is made the app's key window, so the app doesn't hand the keyboard (and the Mac) to
-        // another of its windows: a press and a release, as the window server records a click on it.
-        let mut event = [0u8; 0xf8];
-        event[0x04] = 0xf8;
-        event[0x3a] = 0x10;
-        event[0x3c..0x40].copy_from_slice(&id.to_ne_bytes());
-        event[0x20..0x30].fill(0xff);
-        for phase in [0x01, 0x02] {
-            event[0x08] = phase;
-            (front.post_event_record)(&psn, event.as_mut_ptr());
-        }
+        (front.process_for_pid)(pid, &mut psn) == 0 && (front.set_front_process)(&psn, id, USER_GENERATED) == 0
     }
-    true
 }
 
 /// An array a Copy-rule call gave, when it's one.

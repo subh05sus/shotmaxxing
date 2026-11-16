@@ -15,9 +15,10 @@
 //! ([`in_strip`]).
 //!
 //! A full-screen app has a Space of its own, and ScreenCaptureKit only pictures the Space that's showing (it can't
-//! start on a window elsewhere), so asking that app forward also takes the Mac to its Space, as clicking it in the
-//! Dock does. Its window is as wide as the screen and reaches the bottom ([`full_screen_shaped`]); its toolbars can be
-//! windows of their own above it ([`toolbar_of`]), which a take records with it ([`reach`]).
+//! start on a window elsewhere), so a window there, or on another desktop, is asked for by itself, which takes the
+//! Mac to its Space as picking it in Mission Control does ([`come_by_itself`]). A full-screen window is as wide as the
+//! screen and reaches the bottom ([`full_screen_shaped`]); its toolbars can be windows of their own above it
+//! ([`toolbar_of`]), which a take records with it ([`reach`]).
 
 use std::time::{Duration, Instant};
 
@@ -279,13 +280,17 @@ const START_MOVING: Duration = Duration::from_millis(400);
 const ASK_AGAIN: Duration = Duration::from_millis(200);
 /// How long a window that has come from another Space is given for the switch to finish sliding in.
 const SPACE_SWITCH: Duration = Duration::from_millis(350);
+/// How long each go at bringing a window from another Space has for it to start showing: the switch is animated,
+/// and takes about half a second.
+const GO: Duration = Duration::from_millis(1000);
 
-/// Gets a window ready to be recorded or pictured, and waits (at most three seconds) until it is: one Stage Manager
-/// parked, or shrank while its app is behind, comes back to the stage at its own size, and one on another Space (a
-/// full-screen app's) comes to this one. Its app is asked to come forward, which macOS allows while Shotmaxxing is
-/// the active app, as it is when someone has just clicked Record or picked a window, and which also takes the Mac to
-/// that app's Space. Does nothing for a window that's showing with Stage Manager off, or whose app is already in
-/// front, so nothing moves without need.
+/// Gets a window ready to be recorded or pictured, and waits until it is: one Stage Manager parked, or shrank while
+/// its app is behind, comes back to the stage at its own size, and one on another Space (a full-screen app's) comes
+/// to this one. One on another Space is asked for by itself ([`come_by_itself`]); otherwise, or when that doesn't
+/// bring it, its app is asked to come forward, which macOS allows while Shotmaxxing is the active app, as it is when
+/// someone has just clicked Record or picked a window, and which also takes the Mac to that app's Space. Does nothing
+/// for a window that's showing with Stage Manager off, or whose app is already in front, so nothing moves without
+/// need.
 pub fn bring_forward(id: u32) {
     let Some(before) = placed(id) else { return };
     let stage_manager = stage_manager_on();
@@ -295,8 +300,7 @@ pub fn bring_forward(id: u32) {
     }
     // One on another Space comes by itself: its app's front window may be another (Chrome with two full-screen
     // windows), and the app coming forward would go to that one's Space.
-    if away && super::spaces::go_to_window(before.pid, id) {
-        settle(id, before, true);
+    if away && come_by_itself(id, before) {
         return;
     }
     let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(before.pid) else { return };
@@ -309,6 +313,51 @@ pub fn bring_forward(id: u32) {
         return;
     }
     settle(id, before, parked || away);
+}
+
+/// Brings window `id`, away on another Space, forward by itself, and waits until it's ready; `false` when it can't be
+/// asked, or didn't come. The window server is asked for it, which brings its app to the front with that window and
+/// starts the switch to its Space, and its app is asked, through Accessibility when that's allowed, to raise it above
+/// its other windows. Asked for only by the window server, a window of Chrome with full-screen windows on two Spaces
+/// didn't come. The switch is animated and can end on another of the app's Spaces, its front window's, so a window
+/// that hasn't started showing after a moment ([`GO`]) is asked for again, from there.
+fn come_by_itself(id: u32, before: Placed) -> bool {
+    if !super::spaces::can_go_to_windows() {
+        return false;
+    }
+    let start = Instant::now();
+    // Found first, as it can take a moment, so the raise comes straight after the ask, as a click would.
+    let window = ax::window(id, before.pid);
+    for go in 1..=2u32 {
+        if !super::spaces::go_to_window(before.pid, id) {
+            return false;
+        }
+        let raised = window.as_ref().is_some_and(ax::Window::raise);
+        if shows_within(id, GO) {
+            settle(id, before, true);
+            let ms = start.elapsed().as_millis() as u64;
+            tracing::info!(id, go, raised, ms, "a window on another Space came forward");
+            return true;
+        }
+    }
+    tracing::warn!(id, found = window.is_some(), "a window on another Space didn't come forward by itself");
+    false
+}
+
+/// Whether window `id`, or the tab in front in its place ([`stand_in`]), starts showing within `wait`.
+fn shows_within(id: u32, wait: Duration) -> bool {
+    let start = Instant::now();
+    for tick in 0u32.. {
+        // The tabs in front are looked for less often: that means reading every window that's showing.
+        if placed(id).is_some_and(|w| w.on_screen) || (tick % 5 == 4 && stand_in(id) != id) {
+            return true;
+        }
+        if start.elapsed() >= wait {
+            break;
+        }
+        std::thread::sleep(TICK);
+    }
+    false
 }
 
 /// Waits for a window to come to rest where it'll be recorded: showing on this Space, and still for a moment at

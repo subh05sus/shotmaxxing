@@ -28,15 +28,17 @@ can change how things work.
   walks an agent through the whole routine.
 - **Allow everything:** a red switch in Settings › Agents and on the Agents page lets agents film without the take
   card asking, until you turn it off or quit. It covers requests that come through the `shotmaxxing` command, as
-  agents' do; stopping a take, password fields and the take card work as before. The menu-bar icon and the take card show a red dot while it's on.
+  agents' do; stopping a take, password fields and the take card work as before. The menu-bar icon and the take card
+  show a red dot while it's on.
 - **A red edge** goes round every screen while an agent's take moves the pointer and types. It lets clicks through and
   stays out of the recording.
 - **Fixed:** with the Light theme on a Mac in Dark Mode, the sidebar stayed dark and its labels were unreadable. The
   window material, menus and dialogs now follow the theme chosen in Settings, from the first frame of the next launch.
 - **Fixed:** an app with two full-screen windows (Chrome on two Spaces, say) showed only one of them in the picker,
-  and picking a window on another Space could fail with "no picture came back". Every full-screen window is listed,
-  the Mac goes to the Space of the window you picked rather than to its app's front window, and a picture that still
-  fails says why.
+  and picking a window on another Space could fail with "no picture came back". Every full-screen window is listed.
+  Picking one asks macOS for that window rather than its app's front window and, when Shotmaxxing may use
+  Accessibility, raises it above the app's other windows, asking again if the Mac lands on the app's other Space. A
+  picture that still fails says why.
 - **Fixed:** the editor tour's outline sometimes didn't show: it was measured before the editor had laid out, and
   against the window's edge it was cut off. It now finds its target as it appears, follows it, stays inside the
   window, and uses the focus colour, so it reads in the Light theme too.
