@@ -19,7 +19,10 @@ let watching = false;
 export function watchTrust(): void {
   if (watching) return;
   watching = true;
-  void agentTrust().then((on) => (trust.on = on));
+  // An app too old to know the switch has it off.
+  agentTrust()
+    .then((on) => (trust.on = on))
+    .catch(() => (trust.on = false));
   void onAgentTrust((on) => {
     trust.on = on;
     if (!on) trust.confirming = false;
