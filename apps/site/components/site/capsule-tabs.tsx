@@ -102,7 +102,7 @@ export function CapsuleTabs({
           ink ? (tone === 'dark' ? 'text-lime-ink' : 'text-lime') : '',
         )}
       >
-        {item.icon && <Icon icon={item.icon} size={size === 'sm' ? 15 : 17} act="lift" />}
+        {item.icon && <Icon icon={item.icon} size={size === 'sm' ? 15 : 17} />}
         {item.label}
       </span>
     ));

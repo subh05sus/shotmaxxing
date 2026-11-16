@@ -272,73 +272,6 @@ html.js:not(.reduce-motion) [data-rise] {
   transition-property: transform, background-color, color, box-shadow, opacity;
   transition-duration: 160ms;
   transition-timing-function: var(--ease-out);
-  &:active:not(:disabled) {
-    transform: scale(0.96);
-    transition-duration: 80ms;
-  }
-}
-
-/* Icons that act: the copy icon pops, a download drops, an arrow nudges on, the search glass tilts. */
-@media (prefers-reduced-motion: no-preference) {
-  :is(a, button, [role='button'], [role='tab']):hover svg[data-act] {
-    animation: var(--icon-act);
-  }
-}
-svg[data-act='pop'] {
-  --icon-act: icon-pop 300ms var(--spring);
-}
-svg[data-act='drop'] {
-  --icon-act: icon-drop 420ms var(--ease-out);
-}
-svg[data-act='nudge'] {
-  --icon-act: icon-nudge 360ms var(--spring);
-}
-svg[data-act='tilt'] {
-  --icon-act: icon-tilt 300ms var(--ease-out);
-}
-svg[data-act='spin'] {
-  --icon-act: icon-spin 300ms var(--ease-out);
-}
-svg[data-act='lift'] {
-  --icon-act: icon-lift 360ms var(--spring);
-}
-@keyframes icon-pop {
-  40% {
-    scale: 1.22;
-  }
-}
-@keyframes icon-drop {
-  45% {
-    translate: 0 3px;
-    opacity: 0.4;
-  }
-  46% {
-    translate: 0 -4px;
-  }
-}
-@keyframes icon-nudge {
-  45% {
-    translate: 4px 0;
-  }
-}
-@keyframes icon-tilt {
-  35% {
-    rotate: -14deg;
-  }
-  70% {
-    rotate: 6deg;
-  }
-}
-@keyframes icon-spin {
-  to {
-    rotate: 90deg;
-  }
-}
-@keyframes icon-lift {
-  45% {
-    translate: 0 -3px;
-    scale: 1.08;
-  }
 }
 
 /* A check that draws itself (copy buttons, finished steps). */
@@ -400,10 +333,10 @@ svg[data-act='lift'] {
 
 /* The hero's light (components/landing/hero-light.tsx), from the shadow's edge to the brightest point. */
 :root {
-  --hero-light-1: #1ed849;
-  --hero-light-2: #f6f8ff;
-  --hero-light-3: #a7ffa5;
-  --hero-light-4: #38f85c;
+  --hero-light-1: #84cc16;
+  --hero-light-2: #f4ffd6;
+  --hero-light-3: #e2ff8a;
+  --hero-light-4: #c6ff00;
 }
 
 /* Code colours: Shiki writes var(--shiki-…) instead of colours, so code takes the site's palette. */

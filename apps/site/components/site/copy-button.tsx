@@ -40,7 +40,7 @@ export function CopyButton({
       )}
       aria-label={copied ? 'Copied' : `${label} to the clipboard`}
     >
-      {copied ? <CheckDraw size={14} /> : <Icon icon={CopyIcon} size={14} act="pop" />}
+      {copied ? <CheckDraw size={14} /> : <Icon icon={CopyIcon} size={14} />}
       <span aria-live="polite">{copied ? 'Copied' : label}</span>
     </button>
   );

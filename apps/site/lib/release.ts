@@ -54,3 +54,9 @@ export function release() {
 }
 
 export type Release = ReturnType<typeof release>;
+
+/**
+ * The launch's Product Hunt page, once there is one (PRODUCT_HUNT_URL). The badge on the press page and in the footer
+ * shows only then.
+ */
+export const PRODUCT_HUNT = process.env.PRODUCT_HUNT_URL?.trim() || null;

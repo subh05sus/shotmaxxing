@@ -7,9 +7,12 @@ easier to follow after you've recorded. Press <kbd>2</kbd> for the Cursor tool.
 
 | Setting | What it does |
 | --- | --- |
+| Show cursor | Turn it off to hide the cursor from the whole video |
+| Style | Eight cursors, picked from tiles: **macOS**, **macOS white**, **Windows**, **Outline**, **Dot**, **Ring**, **Bold** and **Hand** |
 | Size | 1× to 3× the normal size |
 | Smoothing | Irons out shaky movement, so the cursor glides between clicks |
-| Style | **macOS**, **Windows** or **Dot** |
+| Motion blur | How much of a trail fast moves leave, the way a camera would see them |
+| Sway | Leans the cursor into fast sideways moves, like a pen on paper |
 | Snap to clicks | Near misses land on the button you meant |
 | Hide when still | Fades the cursor out while it isn't moving |
 
@@ -18,13 +21,14 @@ easier to follow after you've recorded. Press <kbd>2</kbd> for the Cursor tool.
 | Setting | What it does |
 | --- | --- |
 | Click effect | **Ripple**, **Press**, or **None** |
+| Click bounce | With **Press**: how far the cursor shrinks on a click |
+| Bounce speed | With **Press**: how quickly it springs back |
 | Click sounds | A soft click on every click |
 
 ## Extras
 
 | Setting | What it does |
 | --- | --- |
-| Motion blur | A trail on fast moves, the way a camera would see them |
 | Spotlight | A soft light around the cursor, for busy screens |
 | Loop to start | Ends where it began, so GIFs loop without a jump |
 

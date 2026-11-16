@@ -1,18 +1,16 @@
 import Link from 'next/link';
 import { DownloadDownIcon } from '@pikaicons/core-free';
 import { getNav } from '@/lib/docs';
-import { GITHUB } from '@/lib/release';
 import { cn } from '@/lib/utils';
 import { Icon } from './icon';
 import { AppIcon } from './mark';
 import { MobileMenu } from './mobile-menu';
 import { NavShell } from './nav-shell';
 
+// Two links and the download: the command line, the changelog and the rest live in the footer and the guides.
 const LINKS = [
+  { href: '/#features', label: 'Features' },
   { href: '/docs', label: 'Guides' },
-  { href: '/docs/agents', label: 'Agents' },
-  { href: '/docs/command-line', label: 'Command line' },
-  { href: `${GITHUB}/blob/main/CHANGELOG.md`, label: 'Changelog' },
 ];
 
 /** The top bar: a floating capsule, solid (no blur), that stays at the top as you scroll. */
@@ -29,7 +27,7 @@ export async function Nav({ download = '/#install', dock = false }: { download?:
           className="press group flex h-11 items-center gap-2.5 rounded-full pr-3 pl-1.5 outline-none focus-visible:ring-2 focus-visible:ring-lime focus-visible:ring-inset"
           aria-label="Shotmaxxing home"
         >
-          <AppIcon className="size-8 transition-transform duration-300 ease-[var(--spring)] group-hover:-rotate-12" />
+          <AppIcon className="size-8" />
           <span className="font-display text-[17px] font-bold tracking-[-0.03em]">Shotmaxxing</span>
         </Link>
         <ul className="ml-2 hidden items-center lg:flex">
@@ -51,7 +49,7 @@ export async function Nav({ download = '/#install', dock = false }: { download?:
               'press group hidden h-10 items-center gap-2 rounded-full bg-lime px-4 text-sm font-semibold text-lime-ink outline-none hover:bg-lime-hover focus-visible:ring-2 focus-visible:ring-paper focus-visible:ring-offset-2 focus-visible:ring-offset-graphite-2 sm:inline-flex',
             )}
           >
-            <Icon icon={DownloadDownIcon} size={16} act="drop" />
+            <Icon icon={DownloadDownIcon} size={16} />
             Download
           </Link>
           <MobileMenu links={LINKS} sections={sections} download={download} />

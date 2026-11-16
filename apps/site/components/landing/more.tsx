@@ -15,6 +15,8 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { AgentTake } from './agent-take';
 import { InstallLine } from './platforms';
 import { cn } from '@/lib/utils';
+import { ProductHuntBadge } from '@/components/site/product-hunt';
+import { COMPARISONS, USE_CASES } from '@/lib/marketing';
 
 const SAFETY: { icon: IconData; title: string; text: string }[] = [
   {
@@ -75,14 +77,15 @@ export function Agents() {
           data-rise
         >
           Connect an agent
-          <Icon icon={ArrowRightIcon} size={17} act="nudge" />
+          <Icon icon={ArrowRightIcon} size={17} />
         </Link>
       </div>
     </section>
   );
 }
 
-const FAQ: [string, React.ReactNode][] = [
+// Each answer, and its plain text when it has links: the text goes out as FAQPage data for search and answer engines.
+const FAQ: [question: string, answer: React.ReactNode, text?: string][] = [
   [
     'Is it really free?',
     'Yes. Shotmaxxing is free and open source under the AGPL 3.0. There is no account, no trial and no watermark.',
@@ -100,6 +103,7 @@ const FAQ: [string, React.ReactNode][] = [
       </Link>{' '}
       shows the one-time Open Anyway.
     </>,
+    'The builds aren’t notarized by Apple yet, which needs a paid Apple account. The install line and Homebrew don’t get the warning. For a downloaded disk image, the install guide shows the one-time Open Anyway.',
   ],
   [
     'Setup still asks for Screen Recording, but it’s on in System Settings.',
@@ -110,6 +114,22 @@ const FAQ: [string, React.ReactNode][] = [
         Permissions guide
       </Link>
     </>,
+    'macOS is matching the switch to an earlier copy of the app. Select Shotmaxxing in that list, remove it with the − button, and choose Allow again. From 0.2.1 on, updates keep the permissions.',
+  ],
+  [
+    'How is it different from Screen Studio?',
+    <>
+      It does the same polished job, automatic zooms, a smooth cursor and a framed background, but it’s free
+      and open source, and AI agents can film demos with it.{' '}
+      <Link href="/alternatives/screen-studio" className="font-semibold underline underline-offset-4">
+        See the comparison
+      </Link>
+    </>,
+    'It does the same polished job, automatic zooms, a smooth cursor and a framed background, but it’s free and open source, and AI agents can film demos with it.',
+  ],
+  [
+    'What can I export?',
+    'MP4 at 1080p or 4K, shaped for YouTube, X, LinkedIn, Shorts, Reels and TikTok, and GIFs for docs and READMEs. Framed screenshots too.',
   ],
   [
     'Does it work on Windows and Linux?',
@@ -124,6 +144,12 @@ const FAQ: [string, React.ReactNode][] = [
     'No. Recordings, projects and captions stay on your computer. The app only asks GitHub once a day whether a newer release is out (you can turn that off), and downloads the caption model the first time you make captions.',
   ],
 ];
+
+/** The questions and their plain answers, for FAQPage data on the home page. */
+export const FAQ_TEXT: [string, string][] = FAQ.map(([q, a, text]) => [
+  q,
+  text ?? (typeof a === 'string' ? a : ''),
+]);
 
 export function Faq() {
   return (
@@ -182,11 +208,20 @@ export function Footer({ version }: { version: string }) {
     [
       'Product',
       [
+        ['Features', '/#features'],
         ['Install', '/docs/install'],
         ['Guides', '/docs'],
         ['Agents', '/docs/agents'],
         ['Command line', '/docs/command-line'],
       ],
+    ],
+    [
+      'Use cases',
+      [...USE_CASES.map((u) => [u.name, u.path] as [string, string]), ['All use cases', '/use-cases']],
+    ],
+    [
+      'Compare',
+      [...COMPARISONS.map((c) => [c.eyebrow, c.path] as [string, string]), ['All comparisons', '/compare']],
     ],
     [
       'Project',
@@ -195,6 +230,7 @@ export function Footer({ version }: { version: string }) {
         ['Changelog', `${GITHUB}/blob/main/CHANGELOG.md`],
         ['Roadmap', `${GITHUB}/blob/main/docs/roadmap.md`],
         ['Releases', `${GITHUB}/releases`],
+        ['Press kit', '/press'],
       ],
     ],
     [
@@ -210,12 +246,13 @@ export function Footer({ version }: { version: string }) {
   return (
     <footer className="bg-stage pt-20 pb-[max(2.5rem,env(safe-area-inset-bottom))]">
       <div className="shell">
-        <div className="grid gap-12 md:grid-cols-[1.3fr_repeat(3,1fr)]">
+        <div className="grid gap-x-8 gap-y-12 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-[1.4fr_repeat(5,1fr)]">
           <div>
             <p className="font-display text-[26px] font-bold tracking-[-0.03em]">Shotmaxxing</p>
             <p className="mt-2 max-w-[32ch] text-[14.5px] leading-relaxed text-paper-muted">
               Open-source screen recorder and studio editor for demos, drivable by people and AI agents.
             </p>
+            <ProductHuntBadge className="mt-6" />
           </div>
           {cols.map(([title, links]) => (
             <div key={title}>
@@ -248,7 +285,7 @@ export function Footer({ version }: { version: string }) {
             aria-label="Shotmaxxing on GitHub"
             className="press group hit grid size-8 place-items-center rounded-full text-paper-subtle hover:bg-fill hover:text-paper"
           >
-            <Icon icon={GithubIcon} size={16} act="pop" />
+            <Icon icon={GithubIcon} size={16} />
           </a>
         </div>
       </div>

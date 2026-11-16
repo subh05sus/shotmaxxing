@@ -150,7 +150,7 @@ export function Install({ release }: { release: Release }) {
                         className="press group flex items-center gap-4 rounded-2xl border border-line bg-graphite-2 p-4 hover:border-line-strong hover:bg-graphite-3"
                       >
                         <span className="grid size-11 place-items-center rounded-xl bg-lime text-lime-ink">
-                          <Icon icon={DownloadDownIcon} size={19} act="drop" />
+                          <Icon icon={DownloadDownIcon} size={19} />
                         </span>
                         <span className="min-w-0">
                           <span className="block font-semibold">{label}</span>

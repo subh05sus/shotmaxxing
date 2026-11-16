@@ -30,7 +30,7 @@ export function HeroInstall() {
       }}
       className="press group inline-flex h-13 items-center gap-2.5 rounded-full bg-lime px-7 text-[16px] font-semibold text-lime-ink shadow-[0_14px_30px_-12px_var(--lime-glow)] hover:bg-lime-hover"
     >
-      <Icon icon={DownloadDownIcon} size={19} act="drop" />
+      <Icon icon={DownloadDownIcon} size={19} />
       {os === 'mac' ? 'Download for Mac' : os === 'windows' ? 'Download for Windows' : 'Install free'}
     </a>
   );

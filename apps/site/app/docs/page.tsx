@@ -16,6 +16,7 @@ export const metadata: Metadata = {
   title: 'Guides',
   description:
     'Install Shotmaxxing, record your first take, edit it, and let an AI agent film for you, step by step.',
+  alternates: { canonical: '/docs' },
 };
 
 const ICONS: Record<string, IconData> = {
@@ -56,7 +57,7 @@ export default async function GuidesIndex() {
               </span>
               <span className="mt-auto flex items-center gap-1.5 pt-4 text-[13px] font-semibold text-lime">
                 Start
-                <Icon icon={ArrowRightIcon} size={14} act="nudge" />
+                <Icon icon={ArrowRightIcon} size={14} />
               </span>
             </Link>
           </li>
@@ -86,7 +87,6 @@ export default async function GuidesIndex() {
                     <Icon
                       icon={ArrowRightIcon}
                       size={16}
-                      act="nudge"
                       className="mt-1 shrink-0 text-paper-subtle group-hover:text-lime"
                     />
                   </span>

@@ -105,7 +105,11 @@ const STOPS: Stop[] = [
 
 export function Tour() {
   return (
-    <section className="relative bg-graphite pt-24 pb-24 sm:pt-32 sm:pb-28" aria-labelledby="tour-title">
+    <section
+      id="features"
+      className="relative scroll-mt-20 bg-graphite pt-24 pb-24 sm:pt-32 sm:pb-28"
+      aria-labelledby="tour-title"
+    >
       <div className="shell">
         <div className="flex flex-col items-center text-center">
           <p className="eyebrow text-lime" data-rise>
@@ -144,7 +148,7 @@ export function Tour() {
                         className="press group mt-7 inline-flex h-11 items-center gap-2 rounded-full bg-fill px-5 text-[14.5px] font-semibold text-paper ring-1 ring-line ring-inset hover:bg-fill-hover"
                       >
                         {s.guide[1]}
-                        <Icon icon={ArrowRightIcon} size={16} act="nudge" />
+                        <Icon icon={ArrowRightIcon} size={16} />
                       </Link>
                     </div>
                     <div className="overflow-hidden rounded-[22px] bg-stage shadow-float ring-1 ring-line-strong">

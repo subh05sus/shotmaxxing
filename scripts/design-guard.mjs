@@ -33,6 +33,8 @@ const COLOUR_FILES = [
   'apps/site/app/globals.css',
   // React Bits' GradientASCII, used as is: its default colours are part of the component.
   'apps/site/components/site/gradient-ascii.tsx',
+  // Share images are drawn by next/og, which can't read CSS variables.
+  'apps/site/lib/og.tsx',
 ];
 
 const RULES = [

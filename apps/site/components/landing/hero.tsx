@@ -26,23 +26,23 @@ export function Hero({ release }: { release: Release }) {
               <span className="rounded-full bg-lime px-2 py-0.5 font-mono text-[11px] font-semibold text-lime-ink">
                 v{release.version}
               </span>
-              Permissions now carry over between updates
-              <Icon icon={ArrowRightIcon} size={14} act="nudge" />
+              New cursors, backgrounds and blur
+              <Icon icon={ArrowRightIcon} size={14} />
             </a>
           </p>
           <SplitHeading
             as="h1"
             onLoad
-            className="display mx-auto mt-6 max-w-[14ch] text-center text-[clamp(3rem,8vw,7rem)] text-paper"
+            className="display mx-auto mt-6 max-w-[17ch] text-center text-[clamp(2.75rem,7vw,6.25rem)] text-paper"
           >
-            <span id="hero-title">Demos that edit themselves.</span>
+            <span id="hero-title">Beautiful screen recordings, by you or your AI.</span>
           </SplitHeading>
           <p
             className="mx-auto mt-6 max-w-[52ch] text-center text-[clamp(1.05rem,1.5vw,1.25rem)] leading-[1.5] text-paper-muted"
             data-rise
           >
-            Record your screen, or let an AI agent film it. Shotmaxxing adds the zooms, smooths the cursor and
-            keeps your computer cool.
+            Record your screen yourself, or ask an AI agent to film the demo for you. Either way, Shotmaxxing
+            adds the zooms, smooths the cursor and frames it on a beautiful background. Free and open source.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3" data-rise>
             <HeroInstall />
@@ -51,7 +51,7 @@ export function Hero({ release }: { release: Release }) {
               className="press group inline-flex h-13 items-center gap-2 rounded-full bg-graphite-2 px-6 text-[16px] font-semibold text-paper ring-1 ring-line-strong ring-inset hover:bg-graphite-3"
             >
               Read the guides
-              <Icon icon={ArrowRightIcon} size={18} act="nudge" />
+              <Icon icon={ArrowRightIcon} size={18} />
             </Link>
           </div>
           <div className="mt-6" data-rise>
