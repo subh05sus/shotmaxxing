@@ -23,7 +23,11 @@ unsafe extern "C" {
         attribute: *const c_void,
         value: *mut *const c_void,
     ) -> i32;
-    fn AXUIElementSetAttributeValue(element: *const c_void, attribute: *const c_void, value: *const c_void) -> i32;
+    fn AXUIElementSetAttributeValue(
+        element: *const c_void,
+        attribute: *const c_void,
+        value: *const c_void,
+    ) -> i32;
     fn AXUIElementPerformAction(element: *const c_void, action: *const c_void) -> i32;
     pub(super) fn AXUIElementSetMessagingTimeout(element: *const c_void, seconds: f32) -> i32;
     fn AXValueGetValue(value: *const c_void, kind: u32, out: *mut c_void) -> bool;

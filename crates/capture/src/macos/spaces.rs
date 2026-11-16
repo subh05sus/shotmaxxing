@@ -180,7 +180,8 @@ pub fn go_to_window(pid: i32, id: u32) -> bool {
     let mut psn = ProcessSerialNumber::default();
     // SAFETY: the signatures in `front`; the serial number is written by the first call and read by the second.
     unsafe {
-        (front.process_for_pid)(pid, &mut psn) == 0 && (front.set_front_process)(&psn, id, USER_GENERATED) == 0
+        (front.process_for_pid)(pid, &mut psn) == 0
+            && (front.set_front_process)(&psn, id, USER_GENERATED) == 0
     }
 }
 
