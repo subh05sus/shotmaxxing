@@ -13,7 +13,6 @@
     'Pressing Esc three times, or moving the mouse, stops a take at once.',
     'Takes never type into password fields: those steps come to you.',
     'A red edge goes round the screen while an agent moves the pointer and types.',
-    'Only the shotmaxxing command goes through. Any other program still asks.',
   ];
 </script>
 
@@ -39,6 +38,10 @@
       </li>
     {/each}
   </ul>
+  <p class="mt-4 text-footnote leading-[1.45] text-fg-muted">
+    Agents get through by way of the shotmaxxing command, and so would anything else on this computer that
+    runs it. Turn it on only while you trust what’s running.
+  </p>
   {#snippet footer()}
     <Button variant="ghost" onclick={() => (trust.confirming = false)}>Cancel</Button>
     <Button variant="danger" onclick={confirmTrust}>Allow everything</Button>

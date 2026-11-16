@@ -76,9 +76,10 @@ holds:
 - takes still never type into password fields;
 - a red edge still goes round the screen while an agent moves the pointer and types.
 
-It only lets requests from the `shotmaxxing` command through; any other program that connects still asks. It lasts
-until you turn it off or quit Shotmaxxing, and it isn't saved anywhere, so no program can turn it on by changing a
-file. While it's on, the menu-bar icon (the tray icon on Windows) wears a red dot, and the take card says so, with a
+It lets through requests that come by way of the `shotmaxxing` command, which is how agents connect; a program that
+talks to Shotmaxxing any other way still asks. Anything on your computer can run the command, though, so turn it on
+only while you trust what's running. It lasts until you turn it off or quit Shotmaxxing, and it isn't saved
+anywhere, so no program can turn it on by changing a file. While it's on, the menu-bar icon (the tray icon on Windows) wears a red dot, and the take card says so, with a
 button to turn it off.
 
 ## Tools

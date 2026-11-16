@@ -27,8 +27,8 @@ can change how things work.
   try instead of any that would stop it, and the `plan-demo` prompt (`/mcp__shotmaxxing__plan-demo` in Claude Code)
   walks an agent through the whole routine.
 - **Allow everything:** a red switch in Settings › Agents and on the Agents page lets agents film without the take
-  card asking, until you turn it off or quit. Only the `shotmaxxing` command gets through; stopping a take, password
-  fields and the take card work as before. The menu-bar icon and the take card show a red dot while it's on.
+  card asking, until you turn it off or quit. It covers requests that come through the `shotmaxxing` command, as
+  agents' do; stopping a take, password fields and the take card work as before. The menu-bar icon and the take card show a red dot while it's on.
 - **A red edge** goes round every screen while an agent's take moves the pointer and types. It lets clicks through and
   stays out of the recording.
 - **Fixed:** with the Light theme on a Mac in Dark Mode, the sidebar stayed dark and its labels were unreadable. The
