@@ -3,6 +3,37 @@
 What changed in each release. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version
 can change how things work.
 
+## 0.3.0 (2026-11-17)
+
+Cursors and backgrounds, made to look the way you want: eight cursor styles with sway and a click bounce, and photos,
+colours, gradients and a blur behind the recording, all exported exactly as the editor shows them. Agents get along
+better too.
+
+- **Eight cursors, picked from tiles:** macOS, macOS white, Windows, Outline, Dot, Ring, Bold and Hand. The editor and
+  the export draw them from one shared shape file, so what you pick is what you get. A **Show cursor** switch hides
+  it from the whole video.
+- **Cursor sliders:** Size, Smoothing, **Motion blur** (now an amount rather than on or off), **Sway** (the cursor
+  leans into fast sideways moves), and with the Press click effect, **Click bounce** and **Bounce speed**. Sliders are
+  new too: one bar that fills to the value, with the label and value inside it; click the value to type one.
+- **Backgrounds as Image · Color · Gradient:** 24 photos and abstract wallpapers that ship with the app, **Upload
+  custom** for your own PNG, JPEG or WebP (copied into the project), any solid colour from a picker, a hex code or
+  swatches, the gradient wallpapers, and **Make your own** gradient from two colours and an angle. Picking a tab puts
+  its background on at once, and it remembers what you chose there last.
+- **Background blur:** softens whatever is behind the recording, up to 40 px at 1080p, the same Gaussian in the
+  editor and the export. It sits right under the tabs.
+- **Choosing Windows on a Mac exports the Windows cursor:** projects used to save that choice as "native", which drew
+  the Mac arrow.
+- **Panel controls keep their height:** in a long panel, the tabs, buttons and sliders were squeezed thinner than they
+  should be, and sliders could vanish below the photos.
+- **Agents take turns:** a take requested while another agent's is on the card now waits up to two minutes for its
+  turn instead of failing with "busy". A request the app hangs up on at once, because it was starting or quitting, is
+  asked once more.
+- **`plan_zooms` works in Claude Code:** its reply was a bare list, which Claude Code rejects as malformed. Every tool
+  now replies with a JSON object.
+- **Website:** a new hero, "Beautiful screen recordings, by you or your AI.", with a video for recording yourself and
+  one of Claude Code filming a demo; comparison pages (Screen Studio, Recordly, Loom, Cap), use-case pages and a press
+  kit; share images, a sitemap, llms.txt and structured data for search and answer engines.
+
 ## 0.2.1 (2026-11-16)
 
 Permissions that stay: Shotmaxxing sees each one as it is, and from this release on macOS keeps them when Shotmaxxing
