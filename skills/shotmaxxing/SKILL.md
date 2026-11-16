@@ -16,21 +16,32 @@ The person can open any project in the Shotmaxxing editor afterwards and change 
 
 ## Planned takes (the best results)
 
-When you can see the app's controls, plan the whole performance and let Shotmaxxing perform it:
+Plan a demo the way a person would: learn the flow, write the steps down, check them on screen, then film.
 
-1. Call `prepare_take` with the app. Read the controls it lists and look at the picture of the window.
-2. Write a take script. Name controls by their ids (`click: button.export`). Use `{ find: "Label" }` for controls
-   that only appear later, and `wait: { for: idle }` after anything that loads.
-3. Add `say:` beats for short captions. Use a `user_step:` beat for anything only the person may do, such as
+1. **Learn the flow from the code** when the app is in your working folder: the routes or screens the demo passes
+   through, the exact text of every button, link and field it uses (from the source; never guess a label), and what
+   has to be running (a dev server and its address, test data, a signed-in user).
+2. **Write the plan** as a short title and up to 12 plain steps a viewer would follow ("Open the sign-up page",
+   "Fill in a work email"). Show it to the person and film once they agree, or straight away if they asked you to
+   just do it.
+3. Call `prepare_take` with the app. Read the controls it lists and look at the picture of the window.
+4. Write a take script from the plan. Name controls by their ids (`click: button.export`). Use
+   `{ find: "Label" }`, with the label from the code, for controls that only appear later, and `wait: { for: idle }`
+   after anything that loads.
+5. Add `say:` beats for short captions. Use a `user_step:` beat for anything only the person may do, such as
    signing in.
-4. Call `perform_take` with `"dry_run": true`, check the timeline, then call it again for real. Use
+6. Call `check_take` with the script. It lists every target it can't use on screen now (missing, renamed, covered,
+   not prepared, or a password field), each with something to try instead. Fix them and check again.
+7. Call `perform_take` with `"dry_run": true`, check the timeline, then call it again for real with the plan:
+   `"plan": { "title": "…", "steps": ["…"] }`, which the take card shows the person. Use
    `output: { mode: video }` to get a file straight away; otherwise the finished take opens in the editor for the
-   person (`mode: project` only saves it). The person allows every take in the Shotmaxxing app
-   first, so the call can wait a minute or two for them. If they say no, don't try again: ask them what they'd like
-   instead.
-5. If the reply says the take stopped:
-   - a control was gone or disabled, or Esc was pressed: tell the person, fix the script, and ask before trying
-     again;
+   person (`mode: project` only saves it). The person allows every take in the Shotmaxxing app first, unless they
+   turned on Allow everything, so the call can wait a minute or two for them. If they say no, don't try again: ask
+   them what they'd like instead.
+8. If the reply says the take stopped:
+   - a control was gone or disabled: find a way round it (what `check_take` suggests, a label to find, a keyboard
+     shortcut, a menu, a URL), check the script again, and try once more before asking the person;
+   - Esc was pressed: tell the person, and ask before trying again;
    - the person moved the mouse or pressed Stop: they took over, so leave the rest to them.
 
    A take the person paused or took over for a while carries on afterwards; that time is cut from the video and
@@ -78,15 +89,15 @@ When you can see the app's controls, plan the whole performance and let Shotmaxx
 
 - **Permissions.** The Shotmaxxing app records and drives the take with its own permissions, and opens if it isn't
   running; your terminal needs none. The first call that needs the screen (`list_sources`, `prepare_take`,
-  `start_recording`) waits while the person allows your session in the app. If they say no, stop and ask what
-  they'd like. If the app says a permission is missing, ask the person to turn it on for Shotmaxxing in System
+  `start_recording`) waits while the person allows your session in the app, unless they turned on Allow everything
+  (never ask them to). If they say no, stop and ask what they'd like. If the app says a permission is missing, ask the person to turn it on for Shotmaxxing in System
   Settings → Privacy & Security.
 - **One take at a time.** If `start_recording` says a take is already recording, call `recording_status`, and
   stop that take first if it's yours.
 - **Undo.** `plan_zooms` and `cut_silences` keep the previous edits in the project's history. Everything can also
   be changed by hand in the editor.
-- **Checking scripts.** `validate_take` lists a script's problems. `perform_take` with `dry_run` also shows when
-  each beat would happen.
+- **Checking scripts.** `validate_take` lists a script's problems, and `check_take` checks it against the app on
+  screen. `perform_take` with `dry_run` also shows when each beat would happen.
 - **Stopping.** The person can stop any take by pressing Esc three times or moving the mouse. Takes never type into
   password fields.
 - **Where things go.** Projects go to `~/Movies/Shotmaxxing` unless you pass `folder`. Exports go next to the project

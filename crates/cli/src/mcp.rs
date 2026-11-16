@@ -19,13 +19,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use shotmaxxing_control::{Client, FromApp, RecordRequest, TakeRequest, TakeResult, ToApp};
+use shotmaxxing_control::{Client, FromApp, RecordRequest, TakePlan, TakeRequest, TakeResult, ToApp};
 use shotmaxxing_core::bundle::{ProjectBundle, sanitize_file_name};
 use shotmaxxing_core::project::ExportPreset;
 use shotmaxxing_core::project::{
     AspectRatio, Background, MediaTrack, Project, TimeRange, TrackKind, ZoomDepth,
 };
-use shotmaxxing_core::take::{OutputMode, TakeScript};
+use shotmaxxing_core::take::{OutputMode, Severity, TakeScript};
 use shotmaxxing_render::{
     ExportOptions, Format, RenderProject, default_bitrate, output_size, png_size, unique_path,
 };
@@ -35,14 +35,24 @@ const PROTOCOLS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS: &str = "Shotmaxxing records the screen into editable projects (.smx folders) and exports \
 polished videos: a wallpaper behind the window, smooth automatic zooms on clicks and typing, a clean cursor, and \
-the voice and camera when recorded. The best demos are planned takes: prepare_take lists an app's controls and \
-shows its window, then perform_take films a script while Shotmaxxing moves the pointer and types at a human \
-pace (try dry_run first). The Shotmaxxing app does the looking, recording and filming with its own permissions, \
-so this server needs none, and it opens the app when it isn't running. The person allows it there: once per \
-session before Shotmaxxing shows you the screen or records it, and before every planned take, which then plays \
-live on the app's take card. To film something else doing the work: list_sources, start_recording, the demo, \
-stop_recording. Then export_project. project_info shows what a project holds; cut_silences, clean_voice, \
-plan_zooms, style_project and set_music (only with a music file the person chose) tidy it up before exporting.";
+the voice and camera when recorded. The best demos are planned takes, and planning starts from the code. When the \
+app to film is in your working folder, read it before filming: the routes or screens the demo passes through, the \
+exact labels of the buttons and fields it uses, and what has to be running (a dev server and its address, test \
+data, a signed-in user). Write the plan as a short title and plain numbered steps (\"Click Get started\", \"Fill \
+in name and email\"), show it to the person, and film once they agree, or straight away if they asked you to just \
+do it. The plan-demo prompt walks through all of it. Then: prepare_take lists the app's controls and shows its \
+window; write the take script from the plan, with refs for what's on screen now and { find: \"label\" } (labels \
+from the code) for what appears later; check_take compares the script with the app on screen and lists anything \
+missing, renamed or out of reach; perform_take films it at a human pace (try dry_run first) and shows your plan on \
+the take card. When something is missing or a take stops, find a way round it (the control check_take suggests, a \
+label to find, a keyboard shortcut, a menu, a URL) and try again before asking the person. The Shotmaxxing app \
+does the looking, recording and filming with its own permissions, so this server needs none, and it opens the app \
+when it isn't running. The person allows it there: once per session before Shotmaxxing shows you the screen or \
+records it, and before every planned take, unless they turned on Allow everything in its Settings (never ask them \
+to). Either way a take plays live on the take card, and pressing Esc three times or moving the mouse stops it. To \
+film something else doing the work: list_sources, start_recording, the demo, stop_recording. Then export_project. \
+project_info shows what a project holds; cut_silences, clean_voice, plan_zooms, style_project and set_music (only \
+with a music file the person chose) tidy it up before exporting.";
 
 type Reply = Result<Value, String>;
 
@@ -143,7 +153,7 @@ fn handle(out: &Outbox, state: &State, message: Value) {
                 &id,
                 json!({
                     "protocolVersion": version,
-                    "capabilities": { "tools": { "listChanged": false } },
+                    "capabilities": { "tools": { "listChanged": false }, "prompts": { "listChanged": false } },
                     "serverInfo": { "name": "shotmaxxing", "title": "Shotmaxxing", "version": env!("CARGO_PKG_VERSION") },
                     "instructions": INSTRUCTIONS,
                 }),
@@ -151,6 +161,15 @@ fn handle(out: &Outbox, state: &State, message: Value) {
         }
         "ping" => out.result(&id, json!({})),
         "tools/list" => out.result(&id, json!({ "tools": tools() })),
+        "prompts/list" => out.result(&id, json!({ "prompts": prompts() })),
+        "prompts/get" => {
+            let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
+            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            match prompt(name, &args) {
+                Ok(prompt) => out.result(&id, prompt),
+                Err(message) => out.error(&id, -32602, &message),
+            }
+        }
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -198,6 +217,78 @@ fn handle(out: &Outbox, state: &State, message: Value) {
         }
         _ => out.error(&id, -32601, &format!("there's no method called {method}")),
     }
+}
+
+/// The prompts an agent can offer as commands (in Claude Code, `/mcp__shotmaxxing__plan-demo`).
+fn prompts() -> Value {
+    json!([{
+        "name": "plan-demo",
+        "title": "Plan and film a demo",
+        "description": "Reads the app's code to learn the flow, writes a plan in plain steps for you to check, then films it with Shotmaxxing.",
+        "arguments": [
+            { "name": "what", "description": "What to film, e.g. \"the sign-up flow\". Claude Code keeps only one word per argument: there, leave it out and say it when asked.", "required": false },
+            { "name": "app", "description": "The app it runs in, e.g. Safari. Leave out to work it out from the code.", "required": false },
+        ],
+    }])
+}
+
+fn prompt(name: &str, args: &Value) -> Result<Value, String> {
+    if name != "plan-demo" {
+        return Err(format!("there's no prompt called {name}"));
+    }
+    let what = text(args, "what");
+    let app = text(args, "app");
+    Ok(json!({
+        "description": "Plan and film a demo",
+        "messages": [{ "role": "user", "content": { "type": "text", "text": plan_demo(what, app) } }],
+    }))
+}
+
+/// The plan-demo routine: learn the flow from the code, plan it in plain steps, check it, then film it.
+fn plan_demo(what: Option<&str>, app: Option<&str>) -> String {
+    let mut text = match (what, app) {
+        (Some(what), Some(app)) => format!("Plan and film a demo of {what} in {app} with Shotmaxxing."),
+        (Some(what), None) => format!("Plan and film a demo of {what} with Shotmaxxing."),
+        (None, Some(app)) => {
+            format!("Plan and film a demo in {app} with Shotmaxxing. Ask me what to film if I haven't said.")
+        }
+        (None, None) => {
+            "Plan and film a demo with Shotmaxxing. Ask me what to film if I haven't said.".to_string()
+        }
+    };
+    if what.is_some() || app.is_some() {
+        // Claude Code splits a prompt's arguments at spaces and drops the words past the last one.
+        text.push_str(
+            " If those words look cut short (some agents keep only the first word of each), ask me what I meant \
+before you plan.",
+        );
+    }
+    let flow = what.unwrap_or("the flow");
+    text.push_str(&format!(
+        "\n\n\
+1. Learn the flow from the code before touching the screen. You're in the project's folder: find where {flow} \
+lives, and read the routes or screens it passes through, the components on each, and the exact text of every \
+button, link and field the demo uses (from the source and its strings; never guess a label). Note what has to be \
+running (the dev server's command and address) and what the demo needs (test data, a signed-in user, a feature \
+flag).\n\
+2. Write the plan: a short title and 3 to 8 numbered steps in plain words, the way a person would say them (\"Click \
+Get started\", \"Fill in name and email\"). Under it, say what has to be running first.\n\
+3. Show me the plan and wait for my OK, unless I've already said to go ahead. Change it if I ask.\n\
+4. Get the app ready: start what the plan needs, open the first screen, then call prepare_take to see the window \
+and its controls.\n\
+5. Write the take script from the plan: refs from prepare_take for what's on screen now, {{ find: \"label\" }} with \
+the labels from the code for what appears later, and a user_step for any password or sign-in (Shotmaxxing never \
+types into password fields).\n\
+6. Call check_take and fix every problem it lists. When a control is missing or renamed, find another way before \
+asking me: the control it suggests, a find with the label from the code, a keyboard shortcut, a menu item or a URL. \
+Call prepare_take again whenever the screen has changed.\n\
+7. Call perform_take with dry_run: true, and check the steps and the timing.\n\
+8. Film it: perform_take with the script and the plan ({{ \"title\": \"…\", \"steps\": [\"…\"] }}), so I see the plan \
+on the take card.\n\
+9. If the take stops, read why (performance.stopped), fix that step, and film it again once. Then tell me what you \
+made and where it is."
+    ));
+    text
 }
 
 /// Every tool, with what it does and what it takes.
@@ -363,7 +454,7 @@ fn tools() -> Value {
         {
             "name": "prepare_take",
             "title": "Prepare a take",
-            "description": "Opens an app (or brings it forward), finds its window and lists the controls in it, with ids to use as refs in a take script, plus a picture of the window. Plan the whole take from this, then call perform_take. The Shotmaxxing app does this with its own permissions; the first time a session uses the screen, the person allows it there.",
+            "description": "Opens an app (or brings it forward), finds its window and lists the controls in it, with ids to use as refs in a take script, plus a picture of the window. Plan the take from the app's code first (its screens and the labels it uses), then use this for refs to what's on screen now, check the script with check_take, and film it with perform_take. The Shotmaxxing app does this with its own permissions; the first time a session uses the screen, the person allows it there.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -373,6 +464,20 @@ fn tools() -> Value {
                 },
             },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "openWorldHint": false },
+        },
+        {
+            "name": "check_take",
+            "title": "Check a take against the screen",
+            "description": "Before filming: compares a take script with the app on screen now, looking up every control it names the way the take will, and lists what would stop the take halfway (a control that's missing, renamed, covered or wasn't prepared, typing into a password field, no window to film), each with something to try instead, plus notes on what can only be known later (a label that appears after a click, a control disabled until a form is filled in). Run it after prepare_take and fix what it lists before perform_take. The Shotmaxxing app looks with its own permissions, bringing the app forward; the first time a session uses the screen, the person allows it there.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "script": { "type": ["object", "string"], "description": "The take script, as JSON or YAML." },
+                    "window": { "type": "string", "description": "Part of the window's title, when the app has several. Defaults to the window prepare_take found." },
+                },
+                "required": ["script"],
+            },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false },
         },
         perform_take_tool(),
         {
@@ -440,6 +545,7 @@ fn call(
         "style_project" => style(args),
         "validate_take" => validate(args),
         "prepare_take" => prepare_take(state, args, cancel),
+        "check_take" => check_take(state, args, cancel),
         "perform_take" => perform_take(state, args, progress, cancel),
         _ => Err(format!("there's no tool called {name}")),
     }
@@ -825,7 +931,7 @@ fn perform_take_tool() -> Value {
     json!({
         "name": "perform_take",
         "title": "Perform and film a take",
-        "description": "Films a take script. Shotmaxxing records the app's window while it moves the pointer, clicks and types at a human pace, then saves an editable project, and exports a video when the script's output mode is video. Targets are refs from prepare_take (checked again just before each click), screen points, or { find: label } for controls that appear later. The Shotmaxxing app films it with its own permissions, opening first if it isn't running: the person allows every take on its take card (the call waits up to two minutes for their answer), then watches it live there. The person can stop the take at any time with the card's Stop button, by pressing Esc three times, or by moving the mouse, and can pause it or take over from the card between steps (that time is cut from the video, and counts in performance.handed_over). user_step beats hand control to them until they press ⌥⌘Return or Hand back on the card, and that stretch is cut from the video. It never types into password fields. Use dry_run to see the timeline first.",
+        "description": "Films a take script. Shotmaxxing records the app's window while it moves the pointer, clicks and types at a human pace, then saves an editable project, and exports a video when the script's output mode is video. Plan it from the app's code first, check it with check_take, and pass the plan you showed the person as plan, so they see it on the take card. Targets are refs from prepare_take (checked again just before each click), screen points, or { find: label } for controls that appear later. The Shotmaxxing app films it with its own permissions, opening first if it isn't running: the person allows every take on its take card (the call waits up to two minutes for their answer) unless they turned on Allow everything, and watches it live there. The person can stop the take at any time with the card's Stop button, by pressing Esc three times, or by moving the mouse, and can pause it or take over from the card between steps (that time is cut from the video, and counts in performance.handed_over). user_step beats hand control to them until they press ⌥⌘Return or Hand back on the card, and that stretch is cut from the video. It never types into password fields. Use dry_run to see the timeline first.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -834,6 +940,15 @@ fn perform_take_tool() -> Value {
                 "folder": { "type": "string", "description": "Where the project goes. Defaults to Movies/Shotmaxxing." },
                 "microphone": { "type": "string", "description": "A microphone id from list_devices, or \"default\", to record narration." },
                 "system_audio": { "type": "boolean", "default": false, "description": "Record what the computer plays." },
+                "plan": {
+                    "type": "object",
+                    "description": "The plan you showed the person, in plain words: a short title and the steps, shown on the take card above the beats. E.g. { \"title\": \"Sign-up flow\", \"steps\": [\"Click Get started\", \"Fill in name and email\", \"Create the account\"] }.",
+                    "properties": {
+                        "title": { "type": "string" },
+                        "steps": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": PLAN_STEPS },
+                    },
+                    "required": ["steps"],
+                },
             },
             "required": ["script"],
             "$defs": defs,
@@ -1067,6 +1182,96 @@ fn unexpected(reply: &FromApp) -> String {
     format!("the Shotmaxxing app gave an answer this command doesn't expect ({})", kind.unwrap_or_default())
 }
 
+/// What the last prepare_take found, when it was of the app `script` films.
+fn prepared_for(state: &State, script: &TakeScript) -> Option<shotmaxxing_agent::Prepared> {
+    state.prepared.lock().ok().and_then(|p| p.clone()).filter(|p| {
+        script.app.as_deref().is_none_or(|app| {
+            let (app, seen) = (app.to_lowercase(), p.app.to_lowercase());
+            seen.contains(&app) || p.window.as_ref().is_some_and(|w| w.bundle_id.to_lowercase() == app)
+        })
+    })
+}
+
+/// The plan check: the script against the app on screen now, looked up the way the take will look it up.
+fn check_take(state: &State, args: &Value, cancel: &AtomicBool) -> Reply {
+    let script = parse_script(args)?;
+    let errors: Vec<String> = script
+        .validate()
+        .into_iter()
+        .filter(|issue| issue.severity == Severity::Error)
+        .map(|issue| match issue.beat {
+            Some(beat) => format!("beat {}: {}", beat + 1, issue.message),
+            None => issue.message,
+        })
+        .collect();
+    if !errors.is_empty() {
+        return Err(format!("fix the script first: {}", errors.join("; ")));
+    }
+    let planned = prepared_for(state, &script);
+    let window = text(args, "window")
+        .map(str::to_string)
+        .or_else(|| planned.as_ref().and_then(|p| p.window.as_ref()).map(|w| w.title.clone()))
+        .filter(|title| !title.is_empty());
+    let request = ToApp::Prepare { app: script.app.clone(), window, picture: false };
+    let live = match ask_app(state, request, cancel, Launch::Yes)? {
+        FromApp::Prepared { prepared, .. } => prepared,
+        other => return Err(unexpected(&other)),
+    };
+    let live: shotmaxxing_agent::Prepared = serde_json::from_value(live)
+        .map_err(|e| format!("the Shotmaxxing app's answer didn't make sense: {e}"))?;
+    let planned = planned.map(|p| p.controls).unwrap_or_default();
+    let check = shotmaxxing_agent::check(&script, &planned, &live.controls, live.window.as_ref());
+    let ready = check.ready;
+    let mut value = serde_json::to_value(check).map_err(|e| e.to_string())?;
+    value["app"] = json!(live.app);
+    value["window"] = json!(live.window.as_ref().map(|w| &w.title));
+    if live.truncated {
+        value["more_controls"] = json!(true);
+    }
+    value["next"] = json!(if ready {
+        "Nothing on screen now would stop this take. Show the person the plan if you haven't, dry-run it, then film it with perform_take and the plan."
+    } else {
+        "Fix these before filming: each problem says what to try instead. Run prepare_take again if the screen has changed, then check again."
+    });
+    Ok(value)
+}
+
+/// The most steps a plan shows on the take card.
+const PLAN_STEPS: usize = 12;
+
+/// The plan the agent showed the person, as a title and plain steps, for the take card.
+fn take_plan(args: &Value) -> Result<Option<TakePlan>, String> {
+    let Some(plan) = args.get("plan").filter(|p| !p.is_null()) else { return Ok(None) };
+    let title = plan.get("title").and_then(Value::as_str).map(str::trim).unwrap_or_default().to_string();
+    let steps: Vec<String> = plan
+        .get("steps")
+        .and_then(Value::as_array)
+        .map(|steps| {
+            steps
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    if steps.is_empty() {
+        return Err(
+            "the plan needs its steps in plain words, e.g. { \"title\": \"Sign-up flow\", \"steps\": [\"Click Get \
+             started\", \"Fill in name and email\"] }"
+                .into(),
+        );
+    }
+    if steps.len() > PLAN_STEPS {
+        return Err(format!(
+            "the plan has {} steps; keep it to {PLAN_STEPS} or fewer, each a short plain sentence",
+            steps.len()
+        ));
+    }
+    Ok(Some(TakePlan { title, steps }))
+}
+
 fn perform_take(
     state: &State,
     args: &Value,
@@ -1074,19 +1279,9 @@ fn perform_take(
     cancel: &Arc<AtomicBool>,
 ) -> Reply {
     let script = parse_script(args)?;
-    let planned = state
-        .prepared
-        .lock()
-        .ok()
-        .and_then(|p| p.clone())
-        .filter(|p| {
-            script.app.as_deref().is_none_or(|app| {
-                let (app, seen) = (app.to_lowercase(), p.app.to_lowercase());
-                seen.contains(&app) || p.window.as_ref().is_some_and(|w| w.bundle_id.to_lowercase() == app)
-            })
-        })
-        .map(|p| p.controls)
-        .unwrap_or_default();
+    let planned = prepared_for(state, &script).map(|p| p.controls).unwrap_or_default();
+    // A plan that can't go on the take card is said in the dry run already.
+    let plan = take_plan(args)?;
     if args.get("dry_run").and_then(Value::as_bool).unwrap_or(false) {
         return serde_json::to_value(shotmaxxing_agent::plan(&script, &planned)).map_err(|e| e.to_string());
     }
@@ -1095,15 +1290,16 @@ fn perform_take(
     }
     let _taking = Taking(state.taking.clone());
 
-    let plan = shotmaxxing_agent::plan(&script, &planned);
+    let timeline = shotmaxxing_agent::plan(&script, &planned);
     let take = TakeRequest {
         script: script.clone(),
         planned,
-        beats: plan.beats.iter().map(|b| b.what.clone()).collect(),
-        seconds: plan.seconds,
+        beats: timeline.beats.iter().map(|b| b.what.clone()).collect(),
+        seconds: timeline.seconds,
         folder: text(args, "folder").map(expand).unwrap_or_else(crate::default_folder),
         microphone: text(args, "microphone").map(str::to_string),
         system_audio: args.get("system_audio").and_then(Value::as_bool).unwrap_or(false),
+        plan,
     };
     progress(0.0, "Asking in Shotmaxxing");
     let mut client = reach_app(state, Launch::Yes)?;

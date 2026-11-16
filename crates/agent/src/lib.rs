@@ -36,7 +36,10 @@ use shotmaxxing_core::take::{
 };
 use shotmaxxing_core::telemetry::MouseButton;
 
+mod check;
 mod controls;
+
+pub use check::{Check, Finding, FindingKind, check};
 
 #[cfg(target_os = "macos")]
 mod macos;

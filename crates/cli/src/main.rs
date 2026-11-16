@@ -158,6 +158,13 @@ enum TakeCommand {
     Validate { file: PathBuf },
     /// Print the JSON Schema for take scripts.
     Schema,
+    /// Check a take script against the app on screen now: what would stop the take, with something to try instead.
+    Check {
+        file: PathBuf,
+        /// Part of the window's title, when the app has several.
+        #[arg(long)]
+        window: Option<String>,
+    },
     /// Open an app and list the controls a take script can name by ref.
     Prepare {
         /// The app, e.g. "Safari", or its bundle id. Without it, the app in front.
@@ -235,6 +242,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Open { project } => open_in_editor(&project, cli.json),
         Command::Zoom { project, depth } => zoom(&project, depth.into(), cli.json),
         Command::Take(TakeCommand::Validate { file }) => validate(&file, cli.json),
+        Command::Take(TakeCommand::Check { file, window }) => check_take(&file, window.as_deref(), cli.json),
         Command::Take(TakeCommand::Prepare { app, window }) => {
             prepare(app.as_deref(), window.as_deref(), cli.json)
         }
@@ -702,6 +710,42 @@ fn list_packs(json: bool) -> Result<()> {
                 if ids.is_empty() { "looks only".into() } else { ids.join(", ") }
             );
         }
+    }
+    Ok(())
+}
+
+/// The plan check from the command line: the script against the app on screen now, with this terminal's
+/// permissions. Refs are looked up on screen, since there's no earlier `take prepare` to compare with.
+fn check_take(file: &Path, window: Option<&str>, json: bool) -> Result<()> {
+    let text = std::fs::read_to_string(file).with_context(|| format!("couldn't read {}", file.display()))?;
+    let script = TakeScript::parse(&text).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    if !script.is_valid() {
+        anyhow::bail!("{} has problems: run `shotmaxxing take validate` on it first", file.display());
+    }
+    let prepared = shotmaxxing_agent::prepare(script.app.as_deref(), window)?;
+    let check = shotmaxxing_agent::check(&script, &[], &prepared.controls, prepared.window.as_ref());
+    if json {
+        println!("{}", serde_json::to_string_pretty(&check)?);
+    } else {
+        let line = |what: &str, finding: &shotmaxxing_agent::Finding| {
+            let beat = if finding.beat == 0 { "take".to_string() } else { format!("beat {}", finding.beat) };
+            println!("{}: {beat}: {what}: {}", file.display(), finding.message);
+            if let Some(instead) = &finding.instead {
+                println!("  try: {instead}");
+            }
+        };
+        check.problems.iter().for_each(|f| line("problem", f));
+        check.notes.iter().for_each(|f| line("note", f));
+        if check.ready {
+            println!(
+                "{}: ready: nothing on screen in {} would stop this take.",
+                file.display(),
+                prepared.app
+            );
+        }
+    }
+    if !check.ready {
+        std::process::exit(1);
     }
     Ok(())
 }

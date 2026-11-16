@@ -211,6 +211,74 @@ fn the_app_looks_for_the_agent() {
     assert_eq!(result["structuredContent"]["beats"].as_array().map(Vec::len), Some(1), "{result}");
 }
 
+/// A take is checked against what the app sees on screen before filming, and the plan the agent showed the
+/// person goes to the app with the take, for the take card.
+#[test]
+fn a_take_is_checked_against_the_screen_and_its_plan_goes_to_the_card() {
+    use shotmaxxing_control::{FromApp, TakePlan, ToApp};
+    let dir = tempfile::tempdir().unwrap();
+    let socket = shotmaxxing_control::scratch_address(dir.path());
+    let requests = fake_app(&socket, |request| match request {
+        ToApp::Prepare { .. } => FromApp::Prepared {
+            prepared: json!({
+                "app": "Notes",
+                "window": { "id": 7, "title": "Notes", "app": "Notes", "bundle_id": "com.apple.Notes",
+                            "x": 100.0, "y": 50.0, "width": 1280.0, "height": 800.0 },
+                "controls": [{ "id": "button.new", "role": "button", "label": "New Note", "enabled": true,
+                               "bounds": { "x": 120.0, "y": 60.0, "width": 30.0, "height": 24.0 } }],
+                "truncated": false,
+            }),
+            picture: None,
+        },
+        _ => FromApp::Answer { allowed: false, reason: Some("Not now.".into()) },
+    });
+    let mut server = Server::start_with(&socket);
+    initialize(&mut server);
+    server.tool("prepare_take", json!({ "app": "Notes", "picture": false }));
+    assert!(matches!(requests.recv().unwrap().2, ToApp::Prepare { .. }));
+
+    // One control is there, one was never prepared, and one only appears later.
+    let script = json!({ "app": "Notes", "beats": [
+        { "click": "button.new" },
+        { "click": "button.delete" },
+        { "click": { "find": "Share note" } },
+    ] });
+    let result = server.tool("check_take", json!({ "script": script }));
+    let check = &result["structuredContent"];
+    assert_eq!(check["ready"], false, "{result}");
+    assert_eq!(check["problems"].as_array().map(Vec::len), Some(1), "{result}");
+    assert_eq!(
+        (check["problems"][0]["beat"].as_u64(), check["problems"][0]["kind"].as_str()),
+        (Some(2), Some("not_prepared"))
+    );
+    assert_eq!(check["notes"][0]["kind"], "not_yet", "{result}");
+    assert_eq!(check["window"], "Notes");
+    // It looked again, in the window prepare_take found, without a picture.
+    let (_, _, request) = requests.recv().unwrap();
+    assert_eq!(
+        request,
+        ToApp::Prepare { app: Some("Notes".into()), window: Some("Notes".into()), picture: false }
+    );
+
+    // A plan with nothing in it is turned away before anything is asked.
+    let script = json!({ "app": "Notes", "beats": [{ "click": "button.new" }] });
+    let result = server.tool("perform_take", json!({ "script": script, "plan": { "title": "New note" } }));
+    assert_eq!(result["isError"], true, "{result}");
+    assert!(result["content"][0]["text"].as_str().unwrap().contains("needs its steps"), "{result}");
+
+    let plan = json!({ "title": "  A new note ", "steps": ["Click New Note", " ", "Type a title"] });
+    let result = server.tool("perform_take", json!({ "script": script, "plan": plan }));
+    assert!(result["content"][0]["text"].as_str().is_some_and(|t| t.contains("Not now.")), "{result}");
+    let ToApp::Take { take } = requests.recv().unwrap().2 else { panic!("expected a take") };
+    assert_eq!(
+        take.plan,
+        Some(TakePlan {
+            title: "A new note".into(),
+            steps: vec!["Click New Note".into(), "Type a title".into()]
+        })
+    );
+}
+
 /// With the socket pointed at a scratch address, the command never opens the app: tools that need it say so.
 #[test]
 fn without_the_app_the_tools_that_need_it_say_so() {
@@ -264,6 +332,11 @@ fn speaks_mcp() {
     assert_eq!(result["protocolVersion"], "2025-03-26", "answers in the client's version");
     assert_eq!(result["serverInfo"]["name"], "shotmaxxing");
     assert!(result["capabilities"]["tools"].is_object());
+    assert!(result["capabilities"]["prompts"].is_object());
+    assert!(
+        result["instructions"].as_str().is_some_and(|i| i.contains("read it before filming")),
+        "{result}"
+    );
     server.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
 
     let (reply, _) = server.request("ping", json!({}));
@@ -279,6 +352,7 @@ fn speaks_mcp() {
         "cut_silences",
         "validate_take",
         "prepare_take",
+        "check_take",
         "perform_take",
     ] {
         assert!(names.contains(&expected), "{expected} is missing from {names:?}");
@@ -291,6 +365,28 @@ fn speaks_mcp() {
 
     let (reply, _) = server.request("no/such/method", json!({}));
     assert_eq!(reply["error"]["code"], -32601);
+
+    // The plan-demo prompt: offered, and it walks the agent from the code to the film.
+    let (reply, _) = server.request("prompts/list", json!({}));
+    let prompts = reply["result"]["prompts"].as_array().unwrap();
+    assert_eq!(prompts.iter().filter_map(|p| p["name"].as_str()).collect::<Vec<_>>(), ["plan-demo"]);
+    let (reply, _) = server.request(
+        "prompts/get",
+        json!({ "name": "plan-demo", "arguments": { "what": "the sign-up flow", "app": "Safari" } }),
+    );
+    let message = &reply["result"]["messages"][0];
+    assert_eq!(message["role"], "user", "{reply}");
+    let routine = message["content"]["text"].as_str().unwrap();
+    assert!(routine.starts_with("Plan and film a demo of the sign-up flow in Safari"), "{routine}");
+    assert!(routine.contains("look cut short"), "{routine}");
+    for step in ["Learn the flow from the code", "check_take", "dry_run: true", "\"steps\""] {
+        assert!(routine.contains(step), "{step} is missing from {routine}");
+    }
+    let (reply, _) = server.request("prompts/get", json!({ "name": "plan-demo" }));
+    let routine = reply["result"]["messages"][0]["content"]["text"].as_str().unwrap();
+    assert!(routine.contains("Ask me what to film") && !routine.contains("cut short"), "{routine}");
+    let (reply, _) = server.request("prompts/get", json!({ "name": "no-such-prompt" }));
+    assert_eq!(reply["error"]["code"], -32602);
 
     // A take script, checked.
     let script = json!({ "app": "Notes", "beats": [{ "click": { "point": { "x": 10, "y": 20 } } }, { "key": "cmd+s" }] });

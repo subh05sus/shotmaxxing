@@ -60,6 +60,18 @@ pub struct TakeRequest {
     /// Record what the computer plays.
     #[serde(default)]
     pub system_audio: bool,
+    /// The plan in plain steps, as the agent showed it to the person, for the take card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<TakePlan>,
+}
+
+/// What a take is for, in the agent's words: a title and plain steps, the way it showed the person before filming.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TakePlan {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub steps: Vec<String>,
 }
 
 /// How a take went, once the app has saved it.
@@ -1121,6 +1133,7 @@ mod tests {
                 folder: PathBuf::from("/tmp/takes"),
                 microphone: None,
                 system_audio: false,
+                plan: Some(TakePlan { title: "Say hi".into(), steps: vec!["Type a greeting".into()] }),
             }),
         };
         let mut line = Vec::new();
@@ -1201,6 +1214,7 @@ mod tests {
             folder: PathBuf::from("/tmp/takes"),
             microphone: None,
             system_audio: false,
+            plan: None,
         };
         client.send(&ToApp::Take { take: Box::new(take) }).unwrap();
         let never = AtomicBool::new(false);
