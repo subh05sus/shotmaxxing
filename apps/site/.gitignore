@@ -1,0 +1,5 @@
+.next/
+next-env.d.ts
+*.tsbuildinfo
+# Copied from docs/images and assets/brand by scripts/sync-assets.mjs
+public/media/

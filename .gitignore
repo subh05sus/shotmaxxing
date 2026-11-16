@@ -36,6 +36,9 @@ DerivedData/
 *.webm
 *.gif
 !docs/**/*.gif
+# The site's hero, filmed from the sample project by apps/site/scripts/record-hero.mjs
+!apps/site/public/hero/hero.mp4
+!apps/site/public/hero/hero.webm
 
 # Environment and secrets
 .env

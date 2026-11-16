@@ -8,3 +8,6 @@ apps/desktop/src-tauri/icons/
 notes/
 LICENSE
 *.md
+apps/site/.next/
+apps/site/public/
+apps/site/next-env.d.ts

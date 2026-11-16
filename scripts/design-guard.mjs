@@ -10,7 +10,7 @@ import { join, relative, sep } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SCAN = ['apps', 'packages'];
-const EXTENSIONS = /\.(svelte|ts|css|html)$/;
+const EXTENSIONS = /\.(svelte|ts|tsx|css|html)$/;
 const SKIP_DIRS = new Set([
   'node_modules',
   'dist',
@@ -18,6 +18,8 @@ const SKIP_DIRS = new Set([
   'gen',
   'build',
   '.svelte-kit',
+  '.next',
+  'public',
   'src-tauri',
   'icons',
 ]);
@@ -27,6 +29,7 @@ const COLOUR_FILES = [
   'packages/ui/src/styles/tokens.css',
   'apps/desktop/src/lib/wallpapers.ts',
   'apps/desktop/src/lib/scenes.css',
+  'apps/site/app/globals.css',
 ];
 
 const RULES = [
