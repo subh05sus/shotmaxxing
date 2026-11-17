@@ -353,6 +353,13 @@ pub fn reveal_in_folder<R: Runtime>(app: AppHandle<R>, path: String) -> Result<(
     app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
 }
 
+/// Shows the log file in Explorer or the Finder, for sending along when something went wrong.
+#[tauri::command]
+pub fn show_logs<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    let file = crate::logs::file().ok_or("Shotmaxxing has no log file on this computer.")?;
+    app.opener().reveal_item_in_dir(file).map_err(|e| e.to_string())
+}
+
 /// Opens a web page in the default browser. Only `https` links, so the UI can't be made to open anything else.
 #[tauri::command]
 pub fn open_link<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {

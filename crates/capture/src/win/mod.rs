@@ -373,4 +373,88 @@ mod tests {
         let bytes = std::fs::metadata(&output).unwrap().len();
         assert!(bytes > 1000, "the file has {bytes} bytes");
     }
+
+    /// Clicks the left button at `(x, y)`, in pixels on the virtual screen, as a person would.
+    fn click_at(x: i32, y: i32) {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, SendInput,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+        let press = |flags| INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 { mi: MOUSEINPUT { dwFlags: flags, ..Default::default() } },
+        };
+        // SAFETY: moves the pointer and sends two complete mouse inputs.
+        unsafe {
+            let _ = SetCursorPos(x, y);
+            SendInput(&[press(MOUSEEVENTF_LEFTDOWN), press(MOUSEEVENTF_LEFTUP)], size_of::<INPUT>() as i32);
+        }
+    }
+
+    /// Films Notepad the way the app records a window by default: with the input hooks, the computer's sound and the
+    /// microphone, into a project, while clicking in it. A runner without sound devices or a microphone still runs
+    /// the capture, the hooks and Windows 11's process loopback, which records without a default output device.
+    #[test]
+    #[ignore = "records a window and clicks in it"]
+    fn records_a_window_as_the_app_does() {
+        record_notepad(true);
+    }
+
+    /// The same without any sound, to tell the picture's part from the sound's.
+    #[test]
+    #[ignore = "records a window and clicks in it"]
+    fn records_a_window_with_clicks_and_no_sound() {
+        record_notepad(false);
+    }
+
+    fn record_notepad(sound: bool) {
+        let _ = std::process::Command::new("notepad.exe").spawn();
+        let mut found = None;
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            found = sources().unwrap().windows.into_iter().find(|w| w.bundle_id == "notepad.exe");
+            if found.is_some() {
+                break;
+            }
+        }
+        let quit_notepad = || {
+            let _ = std::process::Command::new("taskkill").args(["/IM", "notepad.exe", "/F"]).status();
+        };
+        let Some(window) = found else {
+            quit_notepad();
+            eprintln!("skipped: Notepad's window didn't show");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut options = crate::ProjectOptions::new(Target::Window(window.id));
+        if sound {
+            options.system_audio = true;
+            options.microphone = crate::DeviceChoice::Default;
+        }
+        let recording = crate::ProjectRecording::start(dir.path(), "Notepad", options);
+        let recording = match recording {
+            Ok(recording) => recording,
+            Err(error) => {
+                quit_notepad();
+                panic!("the recording didn't start: {error}");
+            }
+        };
+        let bounds = window_bounds(HWND(window.id as usize as *mut c_void)).unwrap();
+        let (x, y) = ((bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2);
+        for _ in 0..3 {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            click_at(x, y);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let finished = recording.stop();
+        quit_notepad();
+        let finished = finished.unwrap();
+        let tracks: Vec<_> = finished.project.tracks.iter().map(|t| (t.kind, t.duration_us)).collect();
+        eprintln!("{} frames, tracks {tracks:?}, warnings {:?}", finished.frames, finished.warnings);
+        let events = std::fs::read_to_string(finished.root.join(crate::EVENTS_FILE)).unwrap();
+        let clicks = events.lines().filter(|line| line.contains("mouse_down")).count();
+        eprintln!("{clicks} clicks in the telemetry");
+        assert!(finished.frames >= 1, "no frames arrived");
+        assert!(clicks >= 3, "the input hooks saw {clicks} of 3 clicks:\n{events}");
+    }
 }

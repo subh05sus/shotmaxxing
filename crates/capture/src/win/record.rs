@@ -378,6 +378,7 @@ impl Recorder {
             std::fs::create_dir_all(parent)?;
         }
         let encoder = Encoder::new(&device, &options.output, width, height, fps).map_err(system)?;
+        tracing::info!(width, height, fps, "screen encoder ready");
 
         let mut warnings = Vec::new();
         // The sound starts first, so the first words of a take are kept. Without it, the screen still records.
@@ -452,6 +453,13 @@ impl Recorder {
         let started = clock::now();
         session.StartCapture().map_err(system)?;
         let input = options.telemetry.then(|| input::Telemetry::start(origin, scale));
+        tracing::info!(
+            system_audio = system_audio.is_some(),
+            microphone = microphone.is_some(),
+            camera = camera.is_some(),
+            ?warnings,
+            "screen capture started"
+        );
         Ok(Self {
             session,
             pool,

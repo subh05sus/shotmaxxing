@@ -9,6 +9,7 @@ mod captions;
 mod commands;
 mod edge;
 mod export;
+mod logs;
 mod packs;
 mod platform;
 mod projects;
@@ -32,12 +33,7 @@ pub fn answer_permission_probe() -> bool {
 
 /// Starts the app and blocks until it quits.
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    logs::start();
 
     let app = tauri::Builder::default()
         // A second launch focuses the running app instead of starting another copy.
@@ -87,6 +83,7 @@ pub fn run() {
             commands::list_devices,
             agents::detect_agents,
             commands::open_window,
+            commands::show_logs,
             commands::reveal_in_folder,
             commands::show_error,
             windows::set_app_theme,

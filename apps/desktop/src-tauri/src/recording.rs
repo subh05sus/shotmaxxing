@@ -263,10 +263,21 @@ pub async fn start_recording<R: Runtime>(
     let name =
         name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| "Recording".into());
     let left_out = tray::area(&app);
-    let (session, root) =
+    tracing::info!(
+        %source,
+        system_audio = options.system_audio,
+        microphone = options.microphone.is_some(),
+        camera = options.camera.is_some(),
+        "starting a recording"
+    );
+    let started =
         tauri::async_runtime::spawn_blocking(move || start_session(folder, source, name, options, left_out))
             .await
-            .map_err(|e| e.to_string())??;
+            .map_err(|e| e.to_string())
+            .and_then(|started| started);
+    let (session, root) =
+        started.inspect_err(|error| tracing::warn!(%error, "the recording didn't start"))?;
+    tracing::info!(project = %root.display(), "recording");
     let mut slot = state.0.lock().map_err(|_| "The recorder is busy.".to_string())?;
     *slot = Some(session);
     tray::set_recording(&app, true);

@@ -1000,6 +1000,11 @@ export function revealInFolder(path: string): Promise<void> {
   return call('reveal_in_folder', { path }, () => undefined);
 }
 
+/** Shows the log file in Explorer or the Finder. */
+export function showLogs(): Promise<void> {
+  return call('show_logs', {}, () => undefined);
+}
+
 /** Says what went wrong in a native alert, for a window too small for a toast (the recording pill). */
 export function showError(text: string): Promise<void> {
   return call('show_error', { text }, () => undefined);

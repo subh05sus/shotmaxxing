@@ -24,6 +24,7 @@
     launchAtLogin,
     openLink,
     removePack,
+    showLogs,
     restorePack,
     setLaunchAtLogin,
     setMenuBarIcon,
@@ -375,6 +376,14 @@
           >
         {/if}
       </Row>
+      {#if isTauri}
+        <Row
+          label="Log file"
+          description="What Shotmaxxing noted as it ran, including any crash. Send it along when you report a problem."
+        >
+          <Button size="sm" variant="ghost" onclick={() => void showLogs()}>Show log file</Button>
+        </Row>
+      {/if}
     </Group>
   </div>
 </div>

@@ -170,7 +170,11 @@ fn process_loopback() -> Result<IAudioClient, String> {
             },
         },
     });
-    let blob = Box::new(PROPVARIANT {
+    // Never cleared: the windows crate's PROPVARIANT clears itself when dropped, and clearing a VT_BLOB frees the
+    // data it points at with CoTaskMemFree. That's `params`, which its Box frees, so dropping this normally freed
+    // the same block twice, corrupted the heap and ended the app as soon as a recording with the computer's sound
+    // started. Only the PROPVARIANT's own memory is freed now.
+    let blob = Box::new(std::mem::ManuallyDrop::new(PROPVARIANT {
         Anonymous: PROPVARIANT_0 {
             Anonymous: std::mem::ManuallyDrop::new(PROPVARIANT_0_0 {
                 vt: VT_BLOB,
@@ -185,7 +189,8 @@ fn process_loopback() -> Result<IAudioClient, String> {
                 },
             }),
         },
-    });
+    }));
+    let activation: *const PROPVARIANT = &**blob;
     let (done, finished) = sync_channel(1);
     let handler: IActivateAudioInterfaceCompletionHandler = Activated(done).into();
     // SAFETY: the parameters and the PROPVARIANT pointing at them stay alive until Windows is done with them.
@@ -193,7 +198,7 @@ fn process_loopback() -> Result<IAudioClient, String> {
         let operation = ActivateAudioInterfaceAsync(
             VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
             &IAudioClient::IID,
-            Some(&raw const *blob),
+            Some(activation),
             &handler,
         )
         .map_err(|e| message(&e))?;
@@ -227,14 +232,17 @@ fn prepare(source: &Source, path: &Path) -> Result<Prepared, String> {
     unsafe {
         let devices: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None::<&IUnknown>, CLSCTX_ALL).map_err(|e| message(&e))?;
-        let device = match source {
-            Source::System => devices.GetDefaultAudioEndpoint(eRender, eConsole).map_err(missing)?,
-            Source::Microphone(None) => {
-                devices.GetDefaultAudioEndpoint(eCapture, eConsole).map_err(missing)?
+        // The device itself, looked up only where it's needed: the process loopback needs none.
+        let device = || -> Result<IMMDevice, String> {
+            match source {
+                Source::System => devices.GetDefaultAudioEndpoint(eRender, eConsole).map_err(missing),
+                Source::Microphone(None) => {
+                    devices.GetDefaultAudioEndpoint(eCapture, eConsole).map_err(missing)
+                }
+                Source::Microphone(Some(id)) => devices
+                    .GetDevice(&HSTRING::from(id.as_str()))
+                    .map_err(|_| "that microphone isn't connected".to_string()),
             }
-            Source::Microphone(Some(id)) => devices
-                .GetDevice(&HSTRING::from(id.as_str()))
-                .map_err(|_| "that microphone isn't connected".to_string())?,
         };
         let channels: u16 = if microphone { 1 } else { 2 };
         let format = WAVEFORMATEX {
@@ -283,7 +291,7 @@ fn prepare(source: &Source, path: &Path) -> Result<Prepared, String> {
         let (client, event) = match leaving_out {
             Some((client, event)) => (client, Some(event)),
             None => {
-                let client: IAudioClient = device.Activate(CLSCTX_ALL, None).map_err(|e| message(&e))?;
+                let client: IAudioClient = device()?.Activate(CLSCTX_ALL, None).map_err(|e| message(&e))?;
                 // A second of buffer: far more than the 10 ms between reads.
                 client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 10_000_000, 0, &format, None).map_err(|e| {
                     if e.code() == E_ACCESSDENIED && microphone {
@@ -557,4 +565,29 @@ pub fn microphones() -> Vec<Device> {
     let mut found = listed.unwrap_or_default();
     found.sort_by_key(|d| !d.is_default);
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Records what the computer plays for a moment: through Windows 11's process loopback where there is one, which
+    /// needs no output device, otherwise the default output's loopback.
+    #[test]
+    #[ignore = "records the computer's sound"]
+    fn records_the_computers_sound() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("system.m4a");
+        let recorder = match AudioRecorder::start(Source::System, &path) {
+            Ok(recorder) => recorder,
+            Err(error) => {
+                eprintln!("skipped: {error}");
+                return;
+            }
+        };
+        std::thread::sleep(Duration::from_millis(1500));
+        let heard = recorder.stop();
+        eprintln!("stopped: {heard:?}");
+        heard.unwrap();
+    }
 }

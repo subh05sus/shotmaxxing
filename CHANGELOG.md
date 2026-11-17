@@ -3,6 +3,19 @@
 What changed in each release. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version
 can change how things work.
 
+## 0.3.2 (2026-11-18)
+
+A fix for Windows, where Shotmaxxing closed as soon as a recording started.
+
+- **Recording works on Windows:** with **System audio** on (as it is unless you turn it off), starting a recording
+  ended the app straight away on Windows 10 (version 2004) and later. Setting up the recording of the computer's sound
+  freed the same memory twice. It's freed once now, and the computer's sound is recorded, still leaving out
+  Shotmaxxing's own sounds. Found and checked on a Windows machine that records a window, its sound and clicks the
+  way the app does.
+- **A log file:** Shotmaxxing now notes what it does as it runs, including any crash and where it happened, in
+  `%LOCALAPPDATA%\Shotmaxxing\logs` on Windows and `~/Library/Logs/Shotmaxxing` on a Mac. **Settings → About → Show
+  log file** opens it, to send along when you report a problem.
+
 ## 0.3.1 (2026-11-17)
 
 A fix for Windows, where the New screenshot and New recording windows froze, and Shotmaxxing now updates itself.
