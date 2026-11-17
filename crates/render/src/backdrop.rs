@@ -40,16 +40,13 @@ macro_rules! photo_bytes {
 
 /// Each photo's JPEG, 2560 × 1440. The list matches `assets/photos.json` (a test checks).
 const PHOTO_BYTES: &[(&str, &[u8])] = photo_bytes![
-    "blue-ridges",
-    "teal-ridges",
-    "rose-ridges",
-    "ember-ridges",
-    "dusk-ridges",
+    "lime-haze",
+    "ocean-mist",
+    "plum-dusk",
     "coastline",
     "cobalt",
     "bloom",
     "glass-drop",
-    "bubbles",
     "lagoon",
     "emerald",
     "fern",
@@ -63,7 +60,6 @@ const PHOTO_BYTES: &[(&str, &[u8])] = photo_bytes![
     "summit",
     "starry-peak",
     "night-ribbon",
-    "glow",
 ];
 
 /// Every built-in photo, in the order the editor shows them.

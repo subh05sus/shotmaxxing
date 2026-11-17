@@ -45,6 +45,9 @@ interface Settings {
   /** Screen Recording has worked at a launch. Should it stop (an update can make macOS forget it), the app says so,
    *  once. `null` when settings come from a build before 0.2.1, which didn't note it: the next launch finds out. */
   screenAllowedBefore: boolean | null;
+  /** Background colours and gradients made in the editor, newest first, offered again under Recent. */
+  recentColors: string[];
+  recentGradients: { from: string; to: string; angle: number }[];
 }
 
 const DEFAULTS: Settings = {
@@ -74,6 +77,8 @@ const DEFAULTS: Settings = {
   completedGuides: [],
   allowEverythingConfirmed: false,
   screenAllowedBefore: false,
+  recentColors: [],
+  recentGradients: [],
 };
 
 // Earlier builds stored the default folder itself.

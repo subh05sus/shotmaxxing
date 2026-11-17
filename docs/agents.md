@@ -96,7 +96,7 @@ button to turn it off.
 | `clean_voice` | Turns down hum, fan noise and hiss in the microphone, and evens out its level |
 | `set_music` | Puts a music file under the whole video (through cuts, fading out at the end), changes its volume or start, or takes it out |
 | `plan_zooms` | Plans the automatic zooms again, subtle, standard or bold |
-| `style_project` | Wallpaper, canvas shape, padding, corners, shadow and cursor size |
+| `style_project` | The background (a wallpaper, a built-in photo, a picture file, a colour or a gradient) and its blur; canvas shape, padding, corners and shadow; the cursor's style, size, visibility, click effect, bounce, sway and motion blur |
 | `export_project` | Renders MP4 (H.264), HEVC or GIF, with progress, and can be cancelled. `png` saves one frame (`at`, in seconds into the recording) styled like the video. A screenshot project (`kind: screenshot` in `project_info`) exports only as PNG, at its own pixels unless `size` is given |
 | `prepare_take` | Opens an app, finds its window and lists its controls with ids to use as refs, plus a picture of the window |
 | `check_take` | Checks a take script against the app on screen now, without touching anything: each target that's missing, renamed, covered, not prepared or a password field, with something to try instead, and notes on controls that are disabled or only appear later |

@@ -3,6 +3,19 @@
 What changed in each release. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version
 can change how things work.
 
+## Unreleased
+
+- **Agents can style everything the editor can:** `style_project` now sets a built-in photo, a picture file, a solid
+  colour or a gradient behind the window, the background blur, and the cursor's style, visibility, click effect, click
+  bounce, bounce speed, sway and motion blur.
+- **Drop a picture on the editor** while the Background panel is open and it becomes the background.
+- **Recent colours and gradients:** the ones you make come back under Recent in the Color and Gradient tabs.
+- **Photos you can share:** the seven bundled pictures that came from Apple and Oppo wallpapers are gone, replaced by
+  three original ones (Lime haze, Ocean mist and Plum dusk), so there are 20.
+- **A fix for starting up:** the app no longer mistakes a socket that's closing for another Shotmaxxing already
+  running.
+- **New screenshots** of the 0.3 editor in the README, the guides and the press kit, with one of the Cursor tool.
+
 ## 0.3.0 (2026-11-17)
 
 Cursors and backgrounds, made to look the way you want: eight cursor styles with sway and a click bounce, and photos,

@@ -28,6 +28,7 @@ const SHOTS = [
   { name: 'editor', route: 'editor/sample', size: [1360, 860] },
   { name: 'editor-light', route: 'editor/sample', size: [1360, 860], theme: 'light' },
   { name: 'editor-zoom', route: 'editor/sample?tool=zoom', size: [1360, 860] },
+  { name: 'editor-cursor', route: 'editor/sample?tool=cursor', size: [1360, 860] },
   { name: 'library', route: 'home/library', size: [1120, 740] },
   { name: 'agents', route: 'home/agents', size: [1120, 740] },
   { name: 'record', route: 'record', size: [840, 600] },

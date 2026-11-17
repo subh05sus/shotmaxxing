@@ -1,23 +1,15 @@
 [
   {
-    "id": "blue-ridges",
-    "name": "Blue ridges"
+    "id": "lime-haze",
+    "name": "Lime haze"
   },
   {
-    "id": "teal-ridges",
-    "name": "Teal ridges"
+    "id": "ocean-mist",
+    "name": "Ocean mist"
   },
   {
-    "id": "rose-ridges",
-    "name": "Rose ridges"
-  },
-  {
-    "id": "ember-ridges",
-    "name": "Ember ridges"
-  },
-  {
-    "id": "dusk-ridges",
-    "name": "Dusk ridges"
+    "id": "plum-dusk",
+    "name": "Plum dusk"
   },
   {
     "id": "coastline",
@@ -34,10 +26,6 @@
   {
     "id": "glass-drop",
     "name": "Glass drop"
-  },
-  {
-    "id": "bubbles",
-    "name": "Bubbles"
   },
   {
     "id": "lagoon",
@@ -90,9 +78,5 @@
   {
     "id": "night-ribbon",
     "name": "Night ribbon"
-  },
-  {
-    "id": "glow",
-    "name": "Glow"
   }
 ]

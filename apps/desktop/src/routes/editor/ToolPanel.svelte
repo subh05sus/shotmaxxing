@@ -49,7 +49,7 @@
     photoThumb,
     type Backdrop,
   } from '../../lib/backdrops';
-  import { chooseBackground, fileUrl, isTauri } from '../../lib/native';
+  import { chooseBackground, fileUrl, importBackground, isTauri, onFileDrag } from '../../lib/native';
   import CursorGlyph from './CursorGlyph.svelte';
   import { loadPacks, lookWallpaper, packWallpaperId, packs } from '../../lib/packs.svelte';
   import type { ContentPack, PackLook } from '../../lib/native';
@@ -202,6 +202,69 @@
     }
   }
 
+  // A picture dragged onto the window while this panel is open becomes the background.
+  const isPicture = (path: string) => /\.(png|jpe?g|webp)$/i.test(path);
+  let dropping = $state(false);
+  $effect(() => {
+    if (ed.tool !== 'background' || !ed.path) return;
+    const project = ed.path;
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void onFileDrag(async (drag) => {
+      if (drag.type === 'leave') return void (dropping = false);
+      const file = drag.paths.find(isPicture);
+      if (drag.type !== 'drop') return void (dropping = !!file);
+      dropping = false;
+      if (!file) {
+        if (drag.paths.length) toast('A background picture can be PNG, JPEG or WebP.', { tone: 'danger' });
+        return;
+      }
+      uploading = true;
+      try {
+        const path = await importBackground(project, file);
+        bgTab = 'image';
+        setBackdrop('Background picture', { kind: 'image', path });
+      } catch (error) {
+        toast(sentence(String(error)), { tone: 'danger' });
+      } finally {
+        uploading = false;
+      }
+    }).then((off) => (gone ? off() : (stop = off)));
+    return () => {
+      gone = true;
+      dropping = false;
+      stop?.();
+    };
+  });
+
+  // Colours and gradients made here (not the swatches and presets) come back under Recent. A pause first, so
+  // dragging through the colour picker or the angle keeps only where it stopped.
+  const RECENT_COLORS = 7;
+  const RECENT_GRADIENTS = 4;
+  const sameGradient = (a: { from: string; to: string; angle: number }, b: typeof a) =>
+    a.from === b.from && a.to === b.to && a.angle === b.angle;
+  $effect(() => {
+    const b = p.canvas.backdrop;
+    if (b?.kind !== 'solid' && b?.kind !== 'gradient') return;
+    const timer = setTimeout(() => {
+      if (b.kind === 'solid') {
+        if ((SWATCHES as readonly string[]).includes(b.color)) return;
+        settings.recentColors = [b.color, ...settings.recentColors.filter((c) => c !== b.color)].slice(
+          0,
+          RECENT_COLORS,
+        );
+      } else {
+        const g = { from: b.from, to: b.to, angle: b.angle };
+        if (GRADIENTS.some((preset) => sameGradient(preset, g))) return;
+        settings.recentGradients = [g, ...settings.recentGradients.filter((r) => !sameGradient(r, g))].slice(
+          0,
+          RECENT_GRADIENTS,
+        );
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+  });
+
   function setGradient(change: Partial<{ from: string; to: string; angle: number }>) {
     setBackdrop('Gradient', { ...custom, ...change, kind: 'gradient' });
   }
@@ -241,7 +304,7 @@
 </script>
 
 <aside
-  class="flex w-[288px] shrink-0 flex-col border-r border-border bg-surface"
+  class="relative flex w-[288px] shrink-0 flex-col border-r border-border bg-surface"
   aria-label="{info.title} settings"
 >
   <header class="flex items-start gap-2 px-4 pb-2 pt-3.5">
@@ -314,7 +377,7 @@
           class="mt-1 w-full rounded-[12px] text-callout font-medium"
           disabled={!isTauri || !ed.path || uploading}
           title={ed.path
-            ? 'A PNG, JPEG or WebP picture, kept with this project'
+            ? 'A PNG, JPEG or WebP picture, kept with this project. You can also drop one on the window.'
             : 'Open a project to add a picture'}
           onclick={uploadPicture}
         >
@@ -388,6 +451,28 @@
             }}
           />
         </div>
+        {#if settings.recentColors.length}
+          <p class="eyebrow mt-2">Recent</p>
+          <div class="grid grid-cols-7 gap-1.5 py-1" role="radiogroup" aria-label="Recent colours">
+            {#each settings.recentColors as color (color)}
+              {@const on = backdrop?.kind === 'solid' && backdrop.color === color}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={on}
+                aria-label={color}
+                title={color}
+                class={[
+                  'press-card aspect-square rounded-full shadow-[var(--elev-1)] ring-1 ring-inset ring-border',
+                  on && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+                ]}
+                style:background={color}
+                onclick={() => setBackdrop('Background colour', { kind: 'solid', color })}
+              ></button>
+            {/each}
+          </div>
+          <p class="eyebrow mt-1">Swatches</p>
+        {/if}
         <div class="grid grid-cols-7 gap-1.5 py-2" role="radiogroup" aria-label="Colour swatches">
           {#each SWATCHES as color (color)}
             {@const on = backdrop?.kind === 'solid' && backdrop.color === color}
@@ -502,6 +587,27 @@
           format={(v) => `${Math.round(v)}°`}
           onchange={(v) => setGradient({ angle: v })}
         />
+        {#if settings.recentGradients.length}
+          <p class="eyebrow mt-2">Recent</p>
+          <div class="grid grid-cols-4 gap-1.5 py-1" role="radiogroup" aria-label="Recent gradients">
+            {#each settings.recentGradients as g, i (`${g.from}${g.to}${g.angle}`)}
+              {@const on = backdrop?.kind === 'gradient' && sameGradient(backdrop, g)}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={on}
+                aria-label="Recent gradient {i + 1}"
+                class={[
+                  'press-card aspect-square rounded-[9px] shadow-[var(--elev-1)]',
+                  on && 'ring-2 ring-accent ring-offset-2 ring-offset-surface',
+                ]}
+                style:background={gradientCss(g.from, g.to, g.angle)}
+                onclick={() => setBackdrop('Gradient', { kind: 'gradient', ...g })}
+              ></button>
+            {/each}
+          </div>
+          <p class="eyebrow mt-1">Presets</p>
+        {/if}
         <div class="grid grid-cols-4 gap-1.5 py-1" role="radiogroup" aria-label="Gradient presets">
           {#each GRADIENTS as g, i (i)}
             {@const on =
@@ -1320,4 +1426,16 @@
       </button>
     {/if}
   </div>
+  {#if dropping}
+    <div
+      class="pointer-events-none absolute inset-2 z-10 grid place-items-center rounded-[14px] bg-surface/95 ring-2 ring-inset ring-accent"
+      aria-hidden="true"
+    >
+      <div class="flex flex-col items-center gap-2 text-center">
+        <Icon icon={Image} size={22} />
+        <p class="text-callout font-semibold">Drop to use it as the background</p>
+        <p class="text-footnote text-fg-muted">PNG, JPEG or WebP</p>
+      </div>
+    </div>
+  {/if}
 </aside>

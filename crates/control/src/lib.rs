@@ -578,7 +578,15 @@ mod unix {
             if let Some(folder) = path.parent() {
                 fs::create_dir_all(folder)?;
             }
-            if UnixStream::connect(path).is_ok() {
+            // A socket someone answers on is a running app. Asked twice more, a moment apart, because a process
+            // being started anywhere in this one briefly holds a copy of every open socket, a closed listener's too,
+            // until it runs its program, and a connection made in that window means nothing.
+            let answers = || UnixStream::connect(path).is_ok();
+            let still = |ms| {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+                answers()
+            };
+            if answers() && still(60) && still(240) {
                 return Err(io::Error::new(
                     io::ErrorKind::AddrInUse,
                     "another Shotmaxxing is already listening",

@@ -9,7 +9,7 @@ Pick a tab, and its background goes on at once:
 
 | Tab | What's in it |
 | --- | --- |
-| **Image** | 24 photos and abstract wallpapers that come with the app, and **Upload custom** for your own PNG, JPEG or WebP. Your picture is copied into the project, so it travels with it |
+| **Image** | 20 photos and abstract pictures that come with the app, and **Upload custom** for your own PNG, JPEG or WebP. Your picture is copied into the project, so it travels with it |
 | **Color** | Any solid colour, from the picker, a hex code or the swatches |
 | **Gradient** | The gradient wallpapers (and any from content packs), plus **Make your own** from two colours and an angle |
 

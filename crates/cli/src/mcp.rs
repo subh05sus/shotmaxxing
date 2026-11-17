@@ -23,9 +23,10 @@ use shotmaxxing_control::{Client, FromApp, RecordRequest, TakePlan, TakeRequest,
 use shotmaxxing_core::bundle::{ProjectBundle, sanitize_file_name};
 use shotmaxxing_core::project::ExportPreset;
 use shotmaxxing_core::project::{
-    AspectRatio, Background, MediaTrack, Project, TimeRange, TrackKind, ZoomDepth,
+    AspectRatio, Background, ClickEffect, CursorTheme, MediaTrack, Project, TimeRange, TrackKind, ZoomDepth,
 };
 use shotmaxxing_core::take::{OutputMode, Severity, TakeScript};
+use shotmaxxing_render::backdrop::MOST_BLUR;
 use shotmaxxing_render::{
     ExportOptions, Format, RenderProject, default_bitrate, output_size, png_size, unique_path,
 };
@@ -310,6 +311,7 @@ fn tools() -> Value {
                 pack.wallpapers.iter().map(|w| pack.wallpaper_id(&w.id)).collect::<Vec<_>>()
             }))
             .collect();
+    let photos: Vec<String> = shotmaxxing_render::backdrop::photos().into_iter().map(|p| p.id).collect();
     json!([
         {
             "name": "list_sources",
@@ -441,7 +443,7 @@ fn tools() -> Value {
         {
             "name": "style_project",
             "title": "Style the canvas",
-            "description": "Changes how the video looks: the wallpaper behind the window (the built-in ones, then those of content packs added in the app), the canvas shape, the space around the window, its corners and shadow, and the cursor's size.",
+            "description": "Changes how the video looks. Behind the window: a wallpaper (the built-in ones, then those of content packs added in the app), a photo that ships with the app, a picture file, a solid colour or a two-colour gradient; set one of them, and background_blur to soften it. Also the canvas shape, the space around the window, its corners and shadow, and the cursor: its style, size, whether it shows, the click effect, how a click squashes it, how it leans and its motion blur.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -451,7 +453,28 @@ fn tools() -> Value {
                     "padding": { "type": "number", "minimum": 0, "maximum": 0.3, "description": "Space around the window, as a fraction of the canvas's shorter side." },
                     "corner_radius": { "type": "number", "minimum": 0, "maximum": 60, "description": "In pixels at 1080p." },
                     "shadow": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "photo": { "type": "string", "enum": photos, "description": "A photo that ships with the app, behind the window." },
+                    "picture": { "type": "string", "description": "A PNG, JPEG or WebP file to put behind the window. It's copied into the project." },
+                    "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "description": "A solid colour behind the window, e.g. \"#f5f5f4\"." },
+                    "gradient": {
+                        "type": "object",
+                        "description": "A two-colour gradient behind the window, e.g. { \"from\": \"#c6ff00\", \"to\": \"#0f766e\", \"angle\": 135 }.",
+                        "properties": {
+                            "from": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+                            "to": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+                            "angle": { "type": "number", "minimum": 0, "maximum": 360, "default": 135, "description": "In degrees: 0 runs bottom to top, 90 left to right." },
+                        },
+                        "required": ["from", "to"],
+                    },
+                    "background_blur": { "type": "number", "minimum": 0, "maximum": MOST_BLUR, "description": "Softens a wallpaper, photo, picture or gradient, in pixels at 1080p. 0 keeps it sharp." },
                     "cursor_size": { "type": "number", "minimum": 0.5, "maximum": 4 },
+                    "cursor_style": { "type": "string", "enum": CURSOR_STYLES.map(|(name, _)| name), "description": "native is the recording computer's own cursor; mac and mac-white are the macOS arrow in black or white; dot and ring follow the pointer as a shape." },
+                    "show_cursor": { "type": "boolean", "description": "false hides the cursor in the video." },
+                    "click_effect": { "type": "string", "enum": ["ripple", "press", "none"], "description": "What a click looks like: a ring spreading out, the cursor squashing, or nothing." },
+                    "click_bounce": { "type": "number", "minimum": 0, "maximum": 1, "description": "How deep a click squashes the cursor." },
+                    "bounce_speed": { "type": "number", "minimum": 100, "maximum": 1000, "description": "How long the squash takes to spring back, in milliseconds." },
+                    "sway": { "type": "number", "minimum": 0, "maximum": 1, "description": "How far the arrow leans into its movement." },
+                    "motion_blur": { "type": "number", "minimum": 0, "maximum": 1, "description": "How much the cursor blurs when it moves fast." },
                 },
                 "required": ["project"],
             },
@@ -585,9 +608,28 @@ pub fn summary(root: &Path, project: &Project) -> Value {
         },
         "canvas": {
             "aspect": project.canvas.aspect,
-            "wallpaper": match &project.canvas.background { Background::Wallpaper { id, .. } => Some(id.clone()), _ => None },
+            "background": match &project.canvas.background {
+                Background::Wallpaper { id, .. } => json!({ "wallpaper": id }),
+                Background::Photo { id } => json!({ "photo": id }),
+                Background::Image { path } => json!({ "picture": path }),
+                Background::Solid { color } => json!({ "color": color }),
+                Background::Gradient { from, to, angle_deg } => json!({ "gradient": { "from": from, "to": to, "angle": angle_deg } }),
+                Background::None => json!(null),
+            },
+            "background_blur": project.canvas.background_blur,
             "padding": project.canvas.padding,
             "corner_radius": project.canvas.corner_radius,
+            "shadow": (project.canvas.shadow.opacity / 0.6 * 100.0).round() / 100.0,
+        },
+        "cursor": {
+            "style": CURSOR_STYLES.iter().find(|(_, t)| *t == project.cursor.theme).map(|(n, _)| *n),
+            "show": project.cursor.visible,
+            "size": project.cursor.size,
+            "click_effect": match project.cursor.click_effect { ClickEffect::Ripple { .. } => "ripple", ClickEffect::Press => "press", ClickEffect::None => "none" },
+            "click_bounce": project.cursor.click_bounce,
+            "bounce_speed": project.cursor.bounce_ms,
+            "sway": project.cursor.sway,
+            "motion_blur": project.cursor.motion_blur,
         },
         "camera_bubble": project.webcam.visible,
     })
@@ -883,11 +925,70 @@ fn wallpaper_css(id: &str) -> Result<Option<String>, String> {
         .ok_or_else(|| format!("there's no wallpaper called “{id}”; tools/list shows them"))
 }
 
+/// The editor's cursor styles, as agents name them, and what the project file calls them.
+const CURSOR_STYLES: [(&str, CursorTheme); 9] = [
+    ("native", CursorTheme::Native),
+    ("mac", CursorTheme::MacosClassic),
+    ("mac-white", CursorTheme::MacosWhite),
+    ("windows", CursorTheme::Windows),
+    ("outline", CursorTheme::Outline),
+    ("dot", CursorTheme::Minimal),
+    ("ring", CursorTheme::Ring),
+    ("bold", CursorTheme::Bold),
+    ("hand", CursorTheme::Hand),
+];
+
+/// `#rrggbb`, or why it isn't one.
+fn hex_color(value: &str) -> Result<String, String> {
+    let ok = value.len() == 7 && value.starts_with('#') && value[1..].chars().all(|c| c.is_ascii_hexdigit());
+    if ok {
+        Ok(value.to_ascii_lowercase())
+    } else {
+        Err(format!("“{value}” isn't a colour; use #rrggbb, e.g. #f5f5f4"))
+    }
+}
+
 fn style(args: &Value) -> Reply {
     let path = project_arg(args)?;
     let (bundle, mut project) = open(&path)?;
+    let set: Vec<&str> = ["wallpaper", "photo", "picture", "color", "gradient"]
+        .into_iter()
+        .filter(|k| args.get(*k).is_some_and(|v| !v.is_null()))
+        .collect();
+    if set.len() > 1 {
+        return Err(format!("pick one background: {} were all set", set.join(", ")));
+    }
     if let Some(id) = text(args, "wallpaper") {
         project.canvas.background = Background::Wallpaper { id: id.to_string(), css: wallpaper_css(id)? };
+    }
+    if let Some(id) = text(args, "photo") {
+        if shotmaxxing_render::backdrop::photo(id).is_none() {
+            return Err(format!("there's no photo called “{id}”; tools/list shows them"));
+        }
+        project.canvas.background = Background::Photo { id: id.to_string() };
+    }
+    if let Some(file) = text(args, "picture") {
+        let file = expand(file);
+        if !file.is_file() {
+            return Err(format!("there's no picture at {}", file.display()));
+        }
+        let path = shotmaxxing_render::import_picture(bundle.root(), &file).map_err(|e| e.to_string())?;
+        project.canvas.background = Background::Image { path };
+    }
+    if let Some(color) = text(args, "color") {
+        project.canvas.background = Background::Solid { color: hex_color(color)? };
+    }
+    if let Some(gradient) = args.get("gradient").filter(|g| !g.is_null()) {
+        let end = |key: &str| {
+            gradient
+                .get(key)
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("the gradient needs {key}, as #rrggbb"))
+                .and_then(hex_color)
+        };
+        let angle = gradient.get("angle").and_then(Value::as_f64).filter(|a| a.is_finite()).unwrap_or(135.0);
+        project.canvas.background =
+            Background::Gradient { from: end("from")?, to: end("to")?, angle_deg: angle.rem_euclid(360.0) };
     }
     if let Some(aspect) = text(args, "aspect") {
         project.canvas.aspect = serde_json::from_value::<AspectRatio>(json!(aspect))
@@ -904,11 +1005,51 @@ fn style(args: &Value) -> Reply {
         // The editor's 0–1 shadow is the stored opacity over 0.6.
         project.canvas.shadow.opacity = shadow.clamp(0.0, 1.0) * 0.6;
     }
+    if let Some(blur) = number("background_blur") {
+        project.canvas.background_blur = blur.clamp(0.0, MOST_BLUR);
+    }
+    let cursor = &mut project.cursor;
     if let Some(size) = number("cursor_size") {
-        project.cursor.size = size.clamp(0.5, 4.0);
+        cursor.size = size.clamp(0.5, 4.0);
+    }
+    if let Some(name) = text(args, "cursor_style") {
+        cursor.theme = CURSOR_STYLES.iter().find(|(n, _)| *n == name).map(|(_, t)| *t).ok_or_else(|| {
+            let names: Vec<&str> = CURSOR_STYLES.iter().map(|(n, _)| *n).collect();
+            format!("“{name}” isn't a cursor style; use {}", names.join(", "))
+        })?;
+    }
+    if let Some(show) = args.get("show_cursor").and_then(Value::as_bool) {
+        cursor.visible = show;
+    }
+    if let Some(effect) = text(args, "click_effect") {
+        cursor.click_effect = match effect {
+            "ripple" => match &cursor.click_effect {
+                ripple @ ClickEffect::Ripple { .. } => ripple.clone(),
+                _ => ClickEffect::default(),
+            },
+            "press" => ClickEffect::Press,
+            "none" => ClickEffect::None,
+            other => return Err(format!("“{other}” isn't a click effect; use ripple, press or none")),
+        };
+    }
+    if let Some(bounce) = number("click_bounce") {
+        cursor.click_bounce = bounce.clamp(0.0, 1.0);
+    }
+    if let Some(ms) = number("bounce_speed") {
+        cursor.bounce_ms = ms.clamp(100.0, 1000.0).round() as u32;
+    }
+    if let Some(sway) = number("sway") {
+        cursor.sway = sway.clamp(0.0, 1.0);
+    }
+    if let Some(blur) = number("motion_blur") {
+        cursor.motion_blur = blur.clamp(0.0, 1.0);
     }
     bundle.save(&mut project).map_err(|e| e.to_string())?;
-    Ok(summary(bundle.root(), &project)["canvas"].clone())
+    let summary = summary(bundle.root(), &project);
+    // The canvas's settings at the top, as before the cursor was added, so callers reading them keep working.
+    let mut reply = summary["canvas"].clone();
+    reply["cursor"] = summary["cursor"].clone();
+    Ok(reply)
 }
 
 fn parse_script(args: &Value) -> Result<TakeScript, String> {
@@ -1456,5 +1597,46 @@ mod tests {
             assert!(tool["description"].as_str().is_some_and(|d| d.len() > 20), "{tool}");
             assert_eq!(tool["inputSchema"]["type"], "object", "{tool}");
         }
+    }
+
+    #[test]
+    fn style_project_sets_backgrounds_blur_and_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut project = Project { name: "Styled".into(), ..Default::default() };
+        let root = ProjectBundle::create(dir.path(), &mut project).unwrap().root().to_path_buf();
+        let style_with = |extra: Value| {
+            let mut args = json!({ "project": root });
+            args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            style(&args)
+        };
+
+        let photo = shotmaxxing_render::backdrop::photos()[0].id.clone();
+        let out = style_with(
+            json!({ "photo": photo, "background_blur": 99, "cursor_style": "dot", "click_effect": "press",
+            "sway": 0.5, "bounce_speed": 50, "show_cursor": false }),
+        )
+        .unwrap();
+        assert_eq!(out["background"]["photo"], photo);
+        assert_eq!(out["background_blur"], MOST_BLUR);
+        assert_eq!(out["cursor"]["style"], "dot");
+        assert_eq!(out["cursor"]["click_effect"], "press");
+        assert_eq!(out["cursor"]["bounce_speed"], 100);
+        assert_eq!(out["cursor"]["show"], false);
+        let (_, saved) = open(&root).unwrap();
+        assert_eq!(saved.cursor.theme, CursorTheme::Minimal);
+        assert_eq!(saved.canvas.background, Background::Photo { id: photo.clone() });
+
+        let out = style_with(json!({ "gradient": { "from": "#C6FF00", "to": "#0f766e" } })).unwrap();
+        assert_eq!(
+            out["background"]["gradient"],
+            json!({ "from": "#c6ff00", "to": "#0f766e", "angle": 135.0 })
+        );
+        assert_eq!(style_with(json!({ "color": "#f5f5f4" })).unwrap()["background"]["color"], "#f5f5f4");
+
+        assert!(style_with(json!({ "color": "red" })).unwrap_err().contains("#rrggbb"));
+        assert!(style_with(json!({ "photo": "no-such-photo" })).unwrap_err().contains("no photo"));
+        assert!(style_with(json!({ "cursor_style": "arrow" })).unwrap_err().contains("mac-white"));
+        assert!(style_with(json!({ "color": "#000000", "photo": photo })).unwrap_err().contains("pick one"));
+        assert!(style_with(json!({ "picture": "/nowhere/at/all.png" })).unwrap_err().contains("no picture"));
     }
 }

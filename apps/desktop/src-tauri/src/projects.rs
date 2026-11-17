@@ -323,6 +323,18 @@ pub async fn choose_background<R: Runtime>(
     .map_err(text)
 }
 
+/// Copies a picture dropped on the editor into `project`'s media folder for its background, returning the copy's path
+/// relative to the project. Only PNG, JPEG and WebP files that read as pictures are taken.
+#[tauri::command]
+pub async fn import_background(project: String, file: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        shotmaxxing_render::import_picture(Path::new(&project), Path::new(&file))
+    })
+    .await
+    .map_err(text)?
+    .map_err(text)
+}
+
 fn scan(folder: &Path) -> Vec<ProjectSummary> {
     let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
     let mut out: Vec<ProjectSummary> = entries

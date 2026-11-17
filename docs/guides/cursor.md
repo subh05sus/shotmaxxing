@@ -3,6 +3,8 @@
 Shotmaxxing records where the cursor goes and draws it again in the editor, so you can make it bigger, smoother and
 easier to follow after you've recorded. Press <kbd>2</kbd> for the Cursor tool.
 
+![The Cursor tool: Show cursor, the eight cursor styles, sliders for size, smoothing, motion blur and sway, and the click effect: Ripple, Press or None.](../images/editor-cursor.png "The Cursor tool")
+
 ## Size and movement
 
 | Setting | What it does |

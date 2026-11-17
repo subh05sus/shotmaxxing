@@ -30,6 +30,12 @@ const ASSETS = [
 const SHOTS = [
   { src: '/media/images/editor.png', width: 2720, height: 1720, alt: 'The Shotmaxxing editor' },
   {
+    src: '/media/images/editor-cursor.png',
+    width: 2720,
+    height: 1720,
+    alt: 'The Cursor tool and its eight styles',
+  },
+  {
     src: '/media/images/agents.png',
     width: 2240,
     height: 1480,

@@ -724,6 +724,35 @@ export function chooseBackground(project: string): Promise<string | null> {
   return call('choose_background', { project }, () => null);
 }
 
+/** Copies a picture file (a dropped one) into `project` for its background; its path relative to the project. */
+export function importBackground(project: string, file: string): Promise<string> {
+  return call('import_background', { project, file }, () =>
+    Promise.reject(new Error('Pictures can be dropped in the app')),
+  );
+}
+
+/** A file dragged over the window: where it is (CSS pixels in the window) and, on enter and drop, its paths. */
+export type FileDrag =
+  | { type: 'enter' | 'over'; x: number; y: number; paths: string[] }
+  | { type: 'drop'; x: number; y: number; paths: string[] }
+  | { type: 'leave' };
+
+/** Calls `listener` while files are dragged over this window and when they're dropped. Resolves to an unsubscribe. */
+export async function onFileDrag(listener: (drag: FileDrag) => void): Promise<() => void> {
+  if (!isTauri) return () => {};
+  const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+  let paths: string[] = [];
+  return getCurrentWebview().onDragDropEvent(({ payload }) => {
+    if (payload.type === 'leave') {
+      paths = [];
+      return listener({ type: 'leave' });
+    }
+    if (payload.type === 'enter' || payload.type === 'drop') paths = payload.paths;
+    const at = payload.position.toLogical(window.devicePixelRatio);
+    listener({ type: payload.type, x: at.x, y: at.y, paths });
+  });
+}
+
 // Voice-overs ----------------------------------------------------------------------------------------------------
 
 /** A finished voice-over: its file in the project folder and how long it plays. */

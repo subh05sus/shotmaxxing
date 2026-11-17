@@ -118,6 +118,7 @@ pub fn run() {
             captions::save_captions,
             projects::choose_music,
             projects::choose_background,
+            projects::import_background,
             projects::rename_project,
             projects::duplicate_project,
             projects::trash_project,
