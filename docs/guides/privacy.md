@@ -8,7 +8,7 @@ Shotmaxxing goes online for two things, and nothing else:
 
 | What | When | Turn it off |
 | --- | --- | --- |
-| A check for a newer release, asked of GitHub | Once a day | **Settings → Privacy → Check for updates** |
+| A check for a newer release, asked of shotmaxxing.app, and its download from GitHub | At launch and every six hours | **Settings → Privacy → Check for updates automatically** |
 | The speech model for captions, about 60 MB from Hugging Face | Once, the first time you make captions. It's checked against a pinned hash | Don't make captions |
 
 ## What stays on your computer

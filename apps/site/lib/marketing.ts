@@ -190,7 +190,7 @@ export const COMPARISONS: Comparison[] = [
       ],
       [
         'Does Shotmaxxing upload my recordings?',
-        'No. Everything stays on your computer. The app only checks GitHub once a day for a newer release, which you can turn off.',
+        'No. Everything stays on your computer. The app only checks for a newer release when it opens and every six hours, which you can turn off.',
       ],
     ],
   },

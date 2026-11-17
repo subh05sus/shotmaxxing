@@ -126,7 +126,7 @@ fn is_page(to: &str) -> bool {
 }
 
 /// What's running that quitting would cut short, in words for a message.
-fn busy<R: Runtime>(app: &AppHandle<R>) -> Option<&'static str> {
+pub(crate) fn busy<R: Runtime>(app: &AppHandle<R>) -> Option<&'static str> {
     if app.state::<recording::Recordings>().is_recording() {
         Some("it's recording")
     } else if app.state::<takes::Takes>().is_live() {

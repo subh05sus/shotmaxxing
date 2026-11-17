@@ -48,6 +48,10 @@ interface Settings {
   /** Background colours and gradients made in the editor, newest first, offered again under Recent. */
   recentColors: string[];
   recentGradients: { from: string; to: string; angle: number }[];
+  /** A version the person chose to skip: it isn't offered again until a newer one comes out. */
+  skippedVersion: string;
+  /** The version that last opened, so the first launch after an update can show what's new. */
+  lastOpenedVersion: string;
 }
 
 const DEFAULTS: Settings = {
@@ -79,6 +83,8 @@ const DEFAULTS: Settings = {
   screenAllowedBefore: false,
   recentColors: [],
   recentGradients: [],
+  skippedVersion: '',
+  lastOpenedVersion: '',
 };
 
 // Earlier builds stored the default folder itself.

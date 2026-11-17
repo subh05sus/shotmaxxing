@@ -753,6 +753,61 @@ export async function onFileDrag(listener: (drag: FileDrag) => void): Promise<()
   });
 }
 
+// Updates ----------------------------------------------------------------------------------------------------------
+
+/** A newer Shotmaxxing: its version, the installed one, when it came out, and whether it's downloaded already. */
+export interface FoundUpdate {
+  version: string;
+  current: string;
+  date: string | null;
+  ready: boolean;
+}
+
+/** The browser preview pretends 0.9.0 is out when its address asks for it (`update=preview`), to try the flow. */
+const previewUpdate = () => !isTauri && location.href.includes('update=preview');
+
+/** Asks whether a newer version exists; null when this is the newest. */
+export function checkUpdate(): Promise<FoundUpdate | null> {
+  return call('check_update', undefined, () =>
+    previewUpdate()
+      ? { version: '0.9.0', current: import.meta.env.VITE_APP_VERSION, date: null, ready: false }
+      : null,
+  );
+}
+
+/** Downloads the update found last; `update-progress` events report how far it is. */
+export function downloadUpdate(): Promise<void> {
+  return call('download_update', undefined, async () => {
+    for (let done = 0; done <= 100; done += 4) {
+      window.dispatchEvent(new CustomEvent('preview-update-progress', { detail: { done, total: 100 } }));
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+  });
+}
+
+/** Installs the downloaded update and reopens on it. Refused, with the reason, while recording or working. */
+export function installUpdate(): Promise<void> {
+  return call('install_update', undefined, () => {
+    throw new Error('The preview can’t install updates.');
+  });
+}
+
+/** Calls `listener` as an update downloads. Returns a function that stops listening. */
+export async function onUpdateProgress(
+  listener: (progress: { done: number; total: number | null }) => void,
+): Promise<() => void> {
+  if (!isTauri) {
+    const handler = (e: Event) => listener((e as CustomEvent<{ done: number; total: number }>).detail);
+    window.addEventListener('preview-update-progress', handler);
+    return () => window.removeEventListener('preview-update-progress', handler);
+  }
+  const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+  return getCurrentWebviewWindow().listen<{ done: number; total: number | null }>(
+    'update-progress',
+    (event) => listener(event.payload),
+  );
+}
+
 // Voice-overs ----------------------------------------------------------------------------------------------------
 
 /** A finished voice-over: its file in the project folder and how long it plays. */

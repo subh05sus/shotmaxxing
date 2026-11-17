@@ -14,11 +14,15 @@
     "macOSPrivateApi": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost; media-src 'self' blob: asset: http://asset.localhost; font-src 'self' data:; connect-src ipc: http://ipc.localhost https://api.github.com",
-      "dangerousDisableAssetCspModification": ["style-src"],
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost; media-src 'self' blob: asset: http://asset.localhost; font-src 'self' data:; connect-src ipc: http://ipc.localhost https://api.github.com https://raw.githubusercontent.com",
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ],
       "assetProtocol": {
         "enable": true,
-        "scope": ["$VIDEO/Shotmaxxing/**"]
+        "scope": [
+          "$VIDEO/Shotmaxxing/**"
+        ]
       }
     }
   },
@@ -69,6 +73,18 @@
       "wix": {
         "bannerPath": "installer/wix-banner.bmp",
         "dialogImagePath": "installer/wix-dialog.bmp"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBNTBBODdEQzYxRDk0NzgKUldSNGxCM0dmYWhReXRjQVY0cnYzVDFZZnBNS2UranFkdURLcU5yRXYwUlZEUk4zKzdFZ1RzblAK",
+      "endpoints": [
+        "https://shotmaxxing.app/updates/latest.json",
+        "https://github.com/subh05sus/shotmaxxing/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

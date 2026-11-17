@@ -253,8 +253,10 @@ No pack or plugin gets unrestricted access to the system: a pack is data, checke
 ## Privacy
 
 Recordings, projects and captions never leave the machine. There is no telemetry, analytics or account. The app
-makes two requests of its own: once a day it asks GitHub's API whether a newer release is out (Settings → Check for
-updates turns that off), and the first time someone asks for captions it downloads the speech model from Hugging
+makes two requests of its own: at launch and every six hours it asks shotmaxxing.app/updates/latest.json (which
+reads GitHub's releases) whether a newer release is out, downloads it, and installs it only if its signature matches
+the updater key in tauri.conf.json, when the person restarts (Settings → Check for updates automatically turns the
+checks off), and the first time someone asks for captions it downloads the speech model from Hugging
 Face, once, checked against a pinned hash. The sound is transcribed on the computer and never sent.
 
 ## Platform support

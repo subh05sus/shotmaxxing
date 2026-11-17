@@ -5,6 +5,11 @@ can change how things work.
 
 ## Unreleased
 
+- **Shotmaxxing updates itself:** it looks for a new version at launch and every six hours and downloads it quietly.
+  **Update to …** appears at the bottom of the sidebar and opens what changed in every version since yours, with
+  **Restart to update** (which waits while you're recording or exporting), **Later** and **Skip this version**.
+  Downloads are checked against Shotmaxxing's own signing key before they're installed. **Settings → About** shows the
+  version and has **Check for updates**, and the first launch of a new version shows what's new.
 - **Agents can style everything the editor can:** `style_project` now sets a built-in photo, a picture file, a solid
   colour or a gradient behind the window, the background blur, and the cursor's style, visibility, click effect, click
   bounce, bounce speed, sway and motion blur.

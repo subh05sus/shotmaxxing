@@ -185,8 +185,8 @@ pnpm bundle                                          # the installable app, with
 ## Privacy
 
 Everything happens on your computer. Recordings, projects and captions are never uploaded, and agents reach the app
-through a local connection only this user can open. The app goes online for two things: once a day it asks GitHub
-whether a newer release is out (you can turn that off in Settings), and the first time you make captions it
+through a local connection only this user can open. The app goes online for two things: at launch and every six hours it
+asks shotmaxxing.app whether a newer release is out, and downloads it (you can turn that off in Settings), and the first time you make captions it
 downloads the 60 MB Whisper model from Hugging Face, checked against a pinned hash.
 
 ## Documentation

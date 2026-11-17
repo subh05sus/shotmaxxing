@@ -11,9 +11,12 @@
   import Learn from './Learn.svelte';
   import Agents from './Agents.svelte';
   import Settings from './Settings.svelte';
-  import { checkForUpdates } from '../../lib/updates';
+  import { startUpdates } from '../../lib/updates.svelte';
+  import UpdatePill from './UpdatePill.svelte';
+  import UpdateSheet from './UpdateSheet.svelte';
+  import WhatsNewSheet from './WhatsNewSheet.svelte';
 
-  onMount(() => void checkForUpdates());
+  onMount(startUpdates);
 
   const page = $derived(route.path[1] ?? 'library');
 
@@ -65,6 +68,7 @@
       {/each}
     </nav>
     <span class="flex-1"></span>
+    <UpdatePill />
     <div class="m-2.5 rounded-[9px] bg-fill px-3 py-2.5">
       <StatusDot tone={lowPower ? 'warning' : 'success'} label={lowPower ? 'Low power on' : 'Running cool'} />
       <p class="mt-1 text-caption text-fg-subtle">
@@ -139,3 +143,6 @@
     </div>
   </main>
 </div>
+
+<UpdateSheet />
+<WhatsNewSheet />

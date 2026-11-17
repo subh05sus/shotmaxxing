@@ -79,8 +79,15 @@ xattr -dr com.apple.quarantine /Applications/Shotmaxxing.app
 
 ## Update
 
-Run the same install line again, or `brew upgrade --cask shotmaxxing` with Homebrew. Shotmaxxing also checks GitHub
-once a day for a newer release and says when one is out; you can turn that off in **Settings → Privacy**.
+Shotmaxxing updates itself. It looks for a newer version when it opens and every six hours, and downloads it in the
+background. **Update to …** then appears at the bottom of the sidebar: it shows what changed in every version since
+yours, and **Restart to update** installs it and opens the new version. It waits while you're recording or exporting,
+**Skip this version** stops it offering that one, and **Settings → About → Check for updates** looks right away. The
+first time the new version opens, it shows what's new. You can turn the automatic checks off in **Settings →
+Privacy**.
+
+Running the install line again, or `brew upgrade --cask shotmaxxing` with Homebrew, updates it too. Versions before
+0.3.1 can't update themselves, so update those once that way.
 
 From 0.2.1 on, the Mac app in every release is signed with the same identity, so macOS keeps Screen Recording and
 Accessibility when Shotmaxxing updates.

@@ -52,6 +52,10 @@ jobs:
     env:
       # Secrets can't be read in an if, so this says whether the signing identity is there.
       HAS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_P12 != '' }}
+      # The key the in-app updater checks downloads against (its public half is in tauri.conf.json). With it, the
+      # build also makes signed update files and latest.json; without it, a tag fails rather than ship a release the
+      # app can't update to.
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v7
       # An ad-hoc build's requirement is its own hash, so after every update the switches in System Settings stay on
@@ -108,9 +112,16 @@ jobs:
           key: ${{ matrix.target }}
       # Agents start the shotmaxxing command, which ships inside the app next to the app's own binary.
       - run: node scripts/build-cli-sidecar.mjs --target ${{ matrix.target }}
+      - name: Update files are signed
+        if: env.TAG != '' && env.HAS_UPDATER_KEY != 'true'
+        run: |
+          echo "::error::TAURI_SIGNING_PRIVATE_KEY isn't set, so this release couldn't update the app. Add it under Settings → Secrets → Actions."
+          exit 1
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           tagName: ${{ env.TAG }}
@@ -118,9 +129,13 @@ jobs:
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           prerelease: true
-          uploadUpdaterJson: false
+          # latest.json lists each platform's signed update; on Windows it's the -setup.exe, as the installer uses.
+          uploadUpdaterJson: ${{ env.HAS_UPDATER_KEY == 'true' }}
+          updaterJsonPreferNsis: true
           uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
-          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+          args: >-
+            --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+            ${{ env.HAS_UPDATER_KEY == 'true' && '--config src-tauri/tauri.updater.conf.json' || '' }}
       - name: The app carries the fixed signing identity, and the disk image isn't signed
         if: runner.os == 'macOS' && env.HAS_SIGNING_IDENTITY == 'true'
         run: |

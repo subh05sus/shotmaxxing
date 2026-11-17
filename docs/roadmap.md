@@ -93,8 +93,8 @@ Shotmaxxing is built in milestones. Each one ships something usable on macOS and
       renderers draw the same), shown in the Background tool, kept with each project that uses them, and checked by
       `shotmaxxing pack check` ([format](content-packs.md))
 - [ ] Packs with cursor sets, device frames and export targets; WASM effect plugins
-- [x] Preview releases on GitHub for macOS (Apple silicon and Intel) and Windows, built by CI from a tag, with a
-      daily check in the app that offers newer ones ([0.3.0](https://github.com/subh05sus/shotmaxxing/releases/tag/v0.3.0))
+- [x] Preview releases on GitHub for macOS (Apple silicon and Intel) and Windows, built by CI from a tag, that
+      update themselves from inside the app ([0.3.0](https://github.com/subh05sus/shotmaxxing/releases/tag/v0.3.0))
 - [x] A Homebrew cask (this repository is its own tap) and winget manifests ready to submit
       ([packaging](../packaging/README.md))
 - [x] One-line installers for macOS and Windows that check the download's SHA-256 and open the app without a

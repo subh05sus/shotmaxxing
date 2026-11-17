@@ -18,6 +18,7 @@ mod shortcuts;
 mod system;
 mod takes;
 mod tray;
+mod updates;
 mod voice_over;
 mod windows;
 
@@ -48,6 +49,7 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(recording::Recordings::default())
         .manage(recording::Notices::default())
@@ -58,6 +60,7 @@ pub fn run() {
         .manage(takes::Trust::default())
         .manage(voice_over::VoiceOvers::default())
         .manage(captions::Captioning::default())
+        .manage(updates::Updates::default())
         .setup(|app| {
             let handle = app.handle();
             tray::create(handle)?;
@@ -119,6 +122,9 @@ pub fn run() {
             projects::choose_music,
             projects::choose_background,
             projects::import_background,
+            updates::check_update,
+            updates::download_update,
+            updates::install_update,
             projects::rename_project,
             projects::duplicate_project,
             projects::trash_project,

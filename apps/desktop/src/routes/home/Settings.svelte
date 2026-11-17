@@ -31,6 +31,7 @@
   } from '../../lib/native';
   import { loadPacks, packs } from '../../lib/packs.svelte';
   import AllowEverything from './AllowEverything.svelte';
+  import { check, updates } from '../../lib/updates.svelte';
 
   const mac = $derived(env.os === 'mac');
   const version = import.meta.env.VITE_APP_VERSION;
@@ -127,6 +128,37 @@
     { label: 'Stop recording', chord: 'alt+shift+5' },
     { label: 'Stop an agent take (press it three times)', chord: 'escape' },
   ];
+
+  // When it last looked, in words: "Up to date · checked 5 min ago".
+  let now = $state(Date.now());
+  onMount(() => {
+    const timer = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(timer);
+  });
+  const checkedAgo = $derived.by(() => {
+    const at = updates.checkedAt || settings.updatesCheckedAt;
+    if (!at) return '';
+    const minutes = Math.round((now - at) / 60_000);
+    if (minutes < 1) return 'checked just now';
+    if (minutes < 60) return `checked ${minutes} min ago`;
+    const hours = Math.round(minutes / 60);
+    return hours < 24 ? `checked ${hours} h ago` : `checked ${Math.round(hours / 24)} d ago`;
+  });
+  const updateLine = $derived(
+    updates.found
+      ? updates.status === 'ready'
+        ? `${updates.found.version} is downloaded and ready to install.`
+        : `${updates.found.version} is out.`
+      : updates.status === 'checking'
+        ? 'Checking…'
+        : updates.status === 'unreachable'
+          ? 'Couldn’t reach the update server.'
+          : updates.status === 'current'
+            ? `Up to date · ${checkedAgo}`
+            : checkedAgo
+              ? `Last ${checkedAgo}.`
+              : 'Look for a newer version now.',
+  );
 </script>
 
 <div class="scroll-room h-full overflow-y-auto px-5 pb-28">
@@ -288,10 +320,10 @@
         description="Recordings, transcripts and AI helpers run locally. Shotmaxxing sends nothing anywhere, and has no account to sign in to."
       />
       <Row
-        label="Check for updates"
-        description="Asks GitHub once a day whether a new version exists. Nothing else is sent."
+        label="Check for updates automatically"
+        description="Asks shotmaxxing.app at launch and every six hours whether a new version exists, and downloads it in the background. Nothing else is sent."
       >
-        <Switch bind:checked={settings.checkUpdates} label="Check for updates" />
+        <Switch bind:checked={settings.checkUpdates} label="Check for updates automatically" />
       </Row>
     </Group>
 
@@ -333,6 +365,15 @@
           iconEnd={ExternalLink}
           onclick={() => openLink('https://github.com/subh05sus/shotmaxxing')}>Source code</Button
         >
+      </Row>
+      <Row label="Updates" description={updateLine}>
+        {#if updates.found}
+          <Button size="sm" onclick={() => (updates.dialog = true)}>See update</Button>
+        {:else}
+          <Button size="sm" loading={updates.status === 'checking'} onclick={() => void check(true)}
+            >Check for updates</Button
+          >
+        {/if}
       </Row>
     </Group>
   </div>
