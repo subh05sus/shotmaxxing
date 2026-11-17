@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs Shotmaxxing on a Mac. Paste this line into Terminal:
 #
-#   curl -fsSL https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.sh | bash
+#   curl -fsSL https://shotmaxxing.app/install | bash
 #
 # It downloads the app from the GitHub release named below, checks it against the SHA-256 written here, puts
 # Shotmaxxing.app in /Applications (in ~/Applications when /Applications isn't yours to change), links the

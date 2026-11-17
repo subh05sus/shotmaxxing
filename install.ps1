@@ -1,6 +1,6 @@
 # Installs Shotmaxxing on Windows 10 (version 2004) or later, 64-bit. Paste this line into PowerShell:
 #
-#   irm https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.ps1 | iex
+#   irm https://shotmaxxing.app/install.ps1 | iex
 #
 # It downloads the setup program from the GitHub release named below, checks it against the SHA-256 written here,
 # installs Shotmaxxing for this Windows user (no administrator rights needed) and opens it. Run the same line again

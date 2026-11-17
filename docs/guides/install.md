@@ -17,11 +17,11 @@ does downloading the installer yourself.
 Paste the line for your computer into Terminal (macOS) or PowerShell (Windows):
 
 ```sh title="macOS"
-curl -fsSL https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.sh | bash
+curl -fsSL https://shotmaxxing.app/install | bash
 ```
 
 ```powershell title="Windows"
-irm https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.ps1 | iex
+irm https://shotmaxxing.app/install.ps1 | iex
 ```
 
 Each line:

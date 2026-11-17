@@ -24,8 +24,8 @@ env:
   RELEASE_BODY: |
     A preview build. Install or update it with one line, which opens the app without a security warning:
 
-    - **macOS 14 or later**, in Terminal: `curl -fsSL https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.sh | bash`
-    - **Windows 10 (version 2004) or later, 64-bit**, in PowerShell: `irm https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.ps1 | iex`
+    - **macOS 14 or later**, in Terminal: `curl -fsSL https://shotmaxxing.app/install | bash`
+    - **Windows 10 (version 2004) or later, 64-bit**, in PowerShell: `irm https://shotmaxxing.app/install.ps1 | iex`
 
     The files below, downloaded in a browser, aren't notarized by Apple or signed for Windows yet: macOS stops the app
     the first time (choose Done, then Open Anyway in System Settings → Privacy & Security), and SmartScreen asks for

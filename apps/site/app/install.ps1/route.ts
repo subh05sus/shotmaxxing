@@ -1,5 +1,5 @@
 /**
- * `irm https://shotmaxxing.com/install.ps1 | iex`: the Windows installer, served from the site so the line is short.
+ * `irm https://shotmaxxing.app/install.ps1 | iex`: the Windows installer, served from the site so the line is short.
  * It's the repository's install.ps1, read when the site is built.
  */
 import { readFileSync } from 'node:fs';

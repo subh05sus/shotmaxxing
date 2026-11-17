@@ -26,13 +26,13 @@
 **macOS 14 or later.** Paste this into Terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.sh | bash
+curl -fsSL https://shotmaxxing.app/install | bash
 ```
 
 **Windows 10 (version 2004) or later, 64-bit.** Paste this into PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/subh05sus/shotmaxxing/main/install.ps1 | iex
+irm https://shotmaxxing.app/install.ps1 | iex
 ```
 
 Each line downloads the current release from GitHub, checks it against its SHA-256, installs it and opens it, with
