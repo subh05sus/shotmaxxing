@@ -3,8 +3,14 @@
 What changed in each release. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version
 can change how things work.
 
-## Unreleased
+## 0.3.1 (2026-11-17)
 
+A fix for Windows, where the New screenshot and New recording windows froze, and Shotmaxxing now updates itself.
+
+- **Windows no longer freezes on a new window:** opening New screenshot or New recording (and the editor and the
+  recording pill) from inside the app stayed white and took Shotmaxxing to Not Responding, because
+  Windows' web view can't build a window from where the app asked for it. Windows are now built from the right place on
+  every system. Install 0.3.1 over 0.3.0 with the same installer or install line; your projects and settings stay.
 - **Shotmaxxing updates itself:** it looks for a new version at launch and every six hours and downloads it quietly.
   **Update to …** appears at the bottom of the sidebar and opens what changed in every version since yours, with
   **Restart to update** (which waits while you're recording or exporting), **Later** and **Skip this version**.

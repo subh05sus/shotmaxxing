@@ -320,8 +320,11 @@ pub async fn list_devices() -> Result<Devices, String> {
     .map_err(|e| e.to_string())
 }
 
+/// Async on purpose: a synchronous command runs on the main thread inside WebView2's message handler, and on
+/// Windows building a webview window there deadlocks it. The new window stayed white and the whole app went
+/// Not Responding. From here Tauri hands the build to the main thread and waits for it, which is safe everywhere.
 #[tauri::command]
-pub fn open_window<R: Runtime>(
+pub async fn open_window<R: Runtime>(
     app: AppHandle<R>,
     kind: String,
     target: Option<String>,
