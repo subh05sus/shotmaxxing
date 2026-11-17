@@ -14,7 +14,7 @@ GitHub release page.
   cask takes the mark off the installed app after Homebrew has checked the download's SHA-256.
 - **winget:** [`winget/manifests`](winget/manifests), laid out as in
   [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). They're ready to submit there, which the
-  maintainers do by hand; until then, `winget install --manifest packaging/winget/manifests/s/subh05sus/Shotmaxxing/0.3.0`
+  maintainers do by hand; until then, `winget install --manifest packaging/winget/manifests/s/subh05sus/Shotmaxxing/0.3.1`
   installs from them on a computer with local manifests allowed.
 
 For a new release, once it's published:

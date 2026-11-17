@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: subh05sus.Shotmaxxing
+PackageVersion: 0.3.1
+PackageLocale: en-US
+Publisher: Shotmaxxing contributors
+PublisherUrl: https://github.com/subh05sus/shotmaxxing
+PublisherSupportUrl: https://github.com/subh05sus/shotmaxxing/issues
+PackageName: Shotmaxxing
+PackageUrl: https://github.com/subh05sus/shotmaxxing
+License: AGPL-3.0-only
+LicenseUrl: https://github.com/subh05sus/shotmaxxing/blob/main/LICENSE
+ShortDescription: Record demos that edit themselves, by hand or with an AI agent filming them.
+Description: Shotmaxxing records your screen, a window or an area, adds zooms where the action is, smooths the cursor and exports a finished MP4, GIF or PNG. AI agents such as Claude Code and Codex can plan and film demos through MCP, after you allow each one.
+Tags:
+  - screen-recorder
+  - screenshots
+  - video-editor
+  - demo
+  - mcp
+ReleaseNotesUrl: https://github.com/subh05sus/shotmaxxing/releases/tag/v0.3.1
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
