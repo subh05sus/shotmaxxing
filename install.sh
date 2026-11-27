@@ -20,9 +20,9 @@
 # .app.tar.gz files; the CI checks that this script, install.ps1, the cask and the README name the same release.
 set -euo pipefail
 
-VERSION="0.3.2"
-SHA256_AARCH64="4540929306ec8158c77c8d35d8aff0b23660ec1f5584512a4eba4fce91d0cfd5"
-SHA256_X64="95522672fde479fb34dfbe10eaeed5913d3985f01fe9a02474ac0c2503a1925f"
+VERSION="0.3.3"
+SHA256_AARCH64="3a3fee34c6da629b8dec0acae57763e9531b84e1a8696f1371b7951097689449"
+SHA256_X64="68af7d9a65f39a394a514c1bca71c0881ad117d70f33fe7dc1abc6d58721245f"
 RELEASES="https://github.com/subh05sus/shotmaxxing/releases/download"
 
 tmp=""
