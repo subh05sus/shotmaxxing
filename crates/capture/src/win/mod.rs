@@ -374,6 +374,108 @@ mod tests {
         assert!(bytes > 1000, "the file has {bytes} bytes");
     }
 
+    /// A window of this test's own that repaints in a new colour about every 8 ms, as a video or a scrolling page
+    /// changes, until `stop` is set. Gives its id.
+    fn animated_window(
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> (u32, std::thread::JoinHandle<()>) {
+        use windows::Win32::Foundation::{COLORREF, LPARAM, LRESULT, WPARAM};
+        use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, GetDC, ReleaseDC};
+        use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, MSG, PM_REMOVE,
+            PeekMessageW, RegisterClassW, TranslateMessage, WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+            WS_VISIBLE,
+        };
+        use windows::core::w;
+
+        unsafe extern "system" fn procedure(window: HWND, message: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+            // SAFETY: hands the message on as Windows gave it.
+            unsafe { DefWindowProcW(window, message, w, l) }
+        }
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            // SAFETY: a window this thread creates, paints through its own device context and destroys.
+            unsafe {
+                let instance = GetModuleHandleW(None).unwrap();
+                let class = w!("ShotmaxxingFrameRateTest");
+                RegisterClassW(&WNDCLASSW {
+                    lpfnWndProc: Some(procedure),
+                    hInstance: instance.into(),
+                    lpszClassName: class,
+                    ..Default::default()
+                });
+                let window = CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    class,
+                    w!("Shotmaxxing frame rate test"),
+                    WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                    80,
+                    80,
+                    800,
+                    500,
+                    None,
+                    None,
+                    Some(instance.into()),
+                    None,
+                )
+                .unwrap();
+                sender.send(window.0 as usize as u32).unwrap();
+                let mut tick = 0u32;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let mut message = MSG::default();
+                    while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                        let _ = TranslateMessage(&message);
+                        DispatchMessageW(&message);
+                    }
+                    let mut area = RECT::default();
+                    let _ = GetClientRect(window, &mut area);
+                    let colour = (tick * 7 % 256) | ((tick * 3 % 256) << 8) | ((255 - tick * 5 % 256) << 16);
+                    let brush = CreateSolidBrush(COLORREF(colour));
+                    let dc = GetDC(Some(window));
+                    FillRect(dc, &area, brush);
+                    ReleaseDC(Some(window), dc);
+                    let _ = DeleteObject(brush.into());
+                    tick = tick.wrapping_add(1);
+                    std::thread::sleep(std::time::Duration::from_millis(8));
+                }
+                let _ = DestroyWindow(window);
+            }
+        });
+        (receiver.recv().unwrap(), handle)
+    }
+
+    /// Records a window that changes all the time, then the display it's on, and says how many frames a second each
+    /// kept. Recordings came out at 4 a second on some computers: this keeps them at the screen's pace.
+    #[test]
+    #[ignore = "records the screen"]
+    fn keeps_up_with_a_screen_that_changes_all_the_time() {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (window, painter) = animated_window(stop.clone());
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let dir = tempfile::tempdir().unwrap();
+        let mut rates = Vec::new();
+        for (name, target) in [("window", Target::Window(window)), ("display", Target::Display(None))] {
+            let output = dir.path().join(format!("{name}.mp4"));
+            let recorder = Recorder::start(crate::RecordOptions::new(target, &output)).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let recording = recorder.stop().unwrap();
+            let seconds = recording.duration_us as f64 / 1e6;
+            let fps = recording.frames as f64 / seconds.max(1e-3);
+            eprintln!(
+                "{name}: {} frames in {seconds:.2} s = {fps:.1} fps, {} dropped, {:?}",
+                recording.frames, recording.dropped, recording.warnings
+            );
+            rates.push((name, fps));
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        painter.join().unwrap();
+        for (name, fps) in rates {
+            assert!(fps >= 24.0, "the {name} recorded at {fps:.1} frames a second");
+        }
+    }
+
     /// Clicks the left button at `(x, y)`, in pixels on the virtual screen, as a person would.
     fn click_at(x: i32, y: i32) {
         use windows::Win32::UI::Input::KeyboardAndMouse::{
