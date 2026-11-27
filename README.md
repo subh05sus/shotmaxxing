@@ -54,10 +54,10 @@ brew install --cask subh05sus/shotmaxxing/shotmaxxing
 
 | Computer | File |
 | --- | --- |
-| Mac with Apple silicon | [Shotmaxxing_0.3.2_aarch64.dmg](https://github.com/subh05sus/shotmaxxing/releases/download/v0.3.2/Shotmaxxing_0.3.2_aarch64.dmg) |
-| Mac with Intel | [Shotmaxxing_0.3.2_x64.dmg](https://github.com/subh05sus/shotmaxxing/releases/download/v0.3.2/Shotmaxxing_0.3.2_x64.dmg) |
-| Windows, setup program | [Shotmaxxing_0.3.2_x64-setup.exe](https://github.com/subh05sus/shotmaxxing/releases/download/v0.3.2/Shotmaxxing_0.3.2_x64-setup.exe) |
-| Windows, MSI | [Shotmaxxing_0.3.2_x64_en-US.msi](https://github.com/subh05sus/shotmaxxing/releases/download/v0.3.2/Shotmaxxing_0.3.2_x64_en-US.msi) |
+| Mac with Apple silicon | [Shotmaxxing_0.3.3_aarch64.dmg](https://github.com/subh05sus/shotmaxxing/releases/download/v0.3.3/Shotmaxxing_0.3.3_aarch64.dmg) |
+| Mac with Intel | [Shotmaxxing_0.3.3_x64.dmg](https://github.com/subh05sus/shotmaxxing/releases/download/v0.3.3/Shotmaxxing_0.3.3_x64.dmg) |
+| Windows, setup program | [Shotmaxxing_0.3.3_x64-setup.exe](https://github.com/subh05sus/shotmaxxing/releases/download/v0.3.3/Shotmaxxing_0.3.3_x64-setup.exe) |
+| Windows, MSI | [Shotmaxxing_0.3.3_x64_en-US.msi](https://github.com/subh05sus/shotmaxxing/releases/download/v0.3.3/Shotmaxxing_0.3.3_x64_en-US.msi) |
 
 The builds aren't notarized (macOS) or signed (Windows) yet, so a file downloaded in a browser gets one warning the
 first time it opens:

@@ -7,9 +7,9 @@
 cask "shotmaxxing" do
   arch arm: "aarch64", intel: "x64"
 
-  version "0.3.2"
-  sha256 arm:   "236ced651e0957de710e0ae07c1ce5c7ca8d36a86e2507352b38ca7a4ccd982d",
-         intel: "348f1d6e565ba4244f27c7fdc3285ccc55e87eb4442b3b337738bb10202b6385"
+  version "0.3.3"
+  sha256 arm:   "4d18d67db7467e7fadcae95a0a9bdc4f3ced98225ef00429da7d38179a33b8fb",
+         intel: "67c3a0f95ff01eeb23f790461d70687ae19e6f8b7dae7e89512b402d66b88e52"
 
   url "https://github.com/subh05sus/shotmaxxing/releases/download/v#{version}/Shotmaxxing_#{version}_#{arch}.dmg"
   name "Shotmaxxing"
