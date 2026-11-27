@@ -325,6 +325,13 @@ pub fn cameras() -> Vec<Device> {
 mod tests {
     use super::*;
 
+    /// The screen is shared: tests that record it or click on it take turns, so one's window doesn't cover another's.
+    static SCREEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn screen() -> std::sync::MutexGuard<'static, ()> {
+        SCREEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn lists_the_displays_with_the_main_one_first() {
         let sources = sources().unwrap();
@@ -353,6 +360,7 @@ mod tests {
     #[test]
     #[ignore = "records the screen"]
     fn records_the_main_display() {
+        let _screen = screen();
         let dir = tempfile::tempdir().unwrap();
         let output = dir.path().join("screen.mp4");
         let mut options = crate::RecordOptions::new(Target::Display(None), &output);
@@ -451,6 +459,7 @@ mod tests {
     #[test]
     #[ignore = "records the screen"]
     fn keeps_up_with_a_screen_that_changes_all_the_time() {
+        let _screen = screen();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (window, painter) = animated_window(stop.clone());
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -510,6 +519,7 @@ mod tests {
     }
 
     fn record_notepad(sound: bool) {
+        let _screen = screen();
         let _ = std::process::Command::new("notepad.exe").spawn();
         let mut found = None;
         for _ in 0..50 {
