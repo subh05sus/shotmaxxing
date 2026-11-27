@@ -38,7 +38,7 @@ body:
     id: version
     attributes:
       label: Shotmaxxing version
-      placeholder: Settings › About, e.g. 0.3.2
+      placeholder: Settings › About, e.g. 0.3.3
   - type: dropdown
     id: agent
     attributes:

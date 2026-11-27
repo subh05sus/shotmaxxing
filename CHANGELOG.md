@@ -3,6 +3,19 @@
 What changed in each release. Versions follow [semantic versioning](https://semver.org); until 1.0, a minor version
 can change how things work.
 
+## 0.3.3 (2026-11-27)
+
+A fix for Windows, where recordings played back at about 4 frames a second.
+
+- **Smooth recordings on Windows:** the picture in the editor and in exports moved at about 4 frames a second while
+  the cursor and clicks stayed smooth, because each frame waited on the encoder, and the encoder converted it on the
+  CPU first. Frames are now converted on the graphics card and handed to the encoder without holding capture up, so a
+  recording keeps the screen's pace, up to the frame rate you chose. A computer without a hardware video encoder
+  records at about 1080p so it stays smooth. If the computer is too busy to keep up, the newest picture is kept and
+  the editor says how many frames were dropped.
+- **The log says more about recordings:** which encoder Windows used, the size recorded, and each recording's frame
+  rate, to send along if a recording still stutters.
+
 ## 0.3.2 (2026-11-18)
 
 A fix for Windows, where Shotmaxxing closed as soon as a recording started.
